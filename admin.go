@@ -229,6 +229,7 @@ func (p *Pool) RemoveBackend(name string) error {
 	}
 	p.backends = append(p.backends[:i:i], p.backends[i+1:]...)
 	log.Printf("backend %s removed via UI (%d running request(s) will finish)", name, b.active)
+	p.dispatchLocked()
 	return p.persistLocked()
 }
 
@@ -240,9 +241,7 @@ func (p *Pool) SetEnabled(name string, en bool) error {
 		return httpErr{404, errNotFound}
 	}
 	b.enabled = en
-	if en {
-		p.dispatchLocked()
-	}
+	p.dispatchLocked() // enabled: it can take work; disabled: waiting requests may escalate to the fallback
 	log.Printf("backend %s %s via UI", name, map[bool]string{true: "enabled", false: "disabled"}[en])
 	return p.persistLocked()
 }

@@ -63,7 +63,8 @@ volumes:
 
 Vollständige Vorlage: `portainer-stack.yml`.
 
-Das Image wird von der GitHub-Action bei jedem Push auf `main` nach `ghcr.io/wakkomon/llm-balancer` gebaut
+Das Image wird von der GitHub-Action bei jedem Push auf `main` nach `ghcr.io/wakkomon/llm-balancer:latest` gebaut,
+zu jeder Version zusätzlich als `ghcr.io/wakkomon/llm-balancer:<version>` (z. B. `:1.0.1`) – damit lässt sich eine Version festnageln
 (beim ersten Mal das Package unter GitHub → Packages auf „public“ stellen oder `docker login ghcr.io`).
 
 ### Ohne Docker
@@ -150,7 +151,7 @@ erzwungene Name dieser Gruppe. In „Letzte Anfragen“ steht der angefragte und
 
 Anfragen ohne Slot (z. B. `GET`) gehen an einen Server und bei einer Fehlerantwort an den nächsten.
 `GET /v1/models/<modell>` beantwortet der Balancer selbst aus den Modellen aller Server. Welche Version läuft, steht oben
-in der Web-UI (Branch · Commit) und in der ersten Log-Zeile.
+in der Web-UI (z. B. `v1.0.1`, Commit im Tooltip) und in der ersten Log-Zeile; Änderungen stehen in `CHANGELOG.md`.
 
 Jeder Server wird pro Anfrage höchstens einmal versucht. Als Fehler gelten Verbindungsfehler, alle 5xx und die Codes aus
 `RETRY_STATUS` (Standard `401,403,404,408,429` – falscher Server-Token, Modell dort nicht geladen, Timeout, überlastet).

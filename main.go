@@ -19,22 +19,25 @@ import (
 //go:embed web/index.html
 var indexHTML []byte
 
+//go:embed VERSION
+var versionFile string
+
 var (
-	version = "dev"
-	commit  = ""
+	commit  = "" // set at build time (-X main.commit=…), shown as detail only
 	started = time.Now()
 )
 
-// versionString: "main · fb02400" – shown in the UI header and logged at start.
-func versionString() string {
-	c := commit
-	if len(c) > 7 {
-		c = c[:7]
+// versionString: the release number from the VERSION file, e.g. "1.0.1".
+func versionString() string { return strings.TrimSpace(versionFile) }
+
+func shortCommit() string {
+	if len(commit) > 7 {
+		return commit[:7]
 	}
-	if c == "" || c == "unknown" {
-		return version
+	if commit == "unknown" {
+		return ""
 	}
-	return version + " · " + c
+	return commit
 }
 
 func main() {
@@ -82,7 +85,7 @@ func main() {
 		// no Read/WriteTimeout: generations can stream for a long time
 	}
 
-	log.Printf("llm-balancer %s (started %s) listening on %s, UI at %s/", versionString(), started.Format(time.RFC3339), cfg.Listen, cfg.UIPrefix)
+	log.Printf("llm-balancer v%s (commit %s, started %s) listening on %s, UI at %s/", versionString(), shortCommit(), started.Format(time.RFC3339), cfg.Listen, cfg.UIPrefix)
 	pool.mu.Lock()
 	if pool.source == "saved" {
 		log.Printf("using backends saved in %s (BACKENDS/config.json ignored until reset in the UI)", pool.store.path)

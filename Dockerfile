@@ -3,10 +3,10 @@ WORKDIR /src
 COPY go.mod ./
 COPY *.go ./
 COPY web ./web
-ARG VERSION=dev
+COPY VERSION ./
 ARG COMMIT=unknown
 RUN apk add --no-cache ca-certificates && mkdir -p /out/data
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o /llm-balancer .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.commit=${COMMIT}" -o /llm-balancer .
 
 FROM scratch
 COPY --from=build /llm-balancer /llm-balancer

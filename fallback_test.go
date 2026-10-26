@@ -132,3 +132,53 @@ func TestForceModelPerGroup(t *testing.T) {
 		}
 	}
 }
+
+func TestFallbackWhenGroupDisabledWhileQueued(t *testing.T) {
+	a := newModelLLM(t, "a", 1500*time.Millisecond, "m")
+	b := newModelLLM(t, "b", 1500*time.Millisecond, "m")
+	f := newModelLLM(t, "f", 10*time.Millisecond, "x")
+	srv, _ := setup(t, func(c *Config) {
+		c.Groups = []GroupConfig{{Name: "g", Models: []string{"m"}, Fallback: "fb", FallbackAfterSec: 60}, {Name: "fb"}}
+		c.Backends = []BackendConfig{{Name: "a", URL: a.srv.URL, Group: "g"}, {Name: "b", URL: b.srv.URL, Group: "g"}, {Name: "f", URL: f.srv.URL, Group: "fb"}}
+	})
+	go chatModel(t, srv.URL, "m", nil)
+	go chatModel(t, srv.URL, "m", nil)
+	time.Sleep(100 * time.Millisecond)
+	done := make(chan string, 1)
+	go func() { _, be := chatModel(t, srv.URL, "m", nil); done <- be }() // waits: a and b busy
+	time.Sleep(100 * time.Millisecond)
+	api(t, "POST", srv.URL+"/balancer/api/backends/a/disable", "", "")
+	start := time.Now()
+	api(t, "POST", srv.URL+"/balancer/api/backends/b/disable", "", "")
+	select {
+	case be := <-done:
+		if be != "f" || time.Since(start) > 500*time.Millisecond {
+			t.Errorf("went to %q after %v", be, time.Since(start))
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("queued request did not move to the fallback group")
+	}
+}
+
+func TestFallbackWhenGroupGoesDownWhileQueued(t *testing.T) {
+	a := newModelLLM(t, "a", 1500*time.Millisecond, "m")
+	f := newModelLLM(t, "f", 10*time.Millisecond, "x")
+	srv, pool := setup(t, func(c *Config) {
+		c.Groups = []GroupConfig{{Name: "g", Models: []string{"m"}, Fallback: "fb", FallbackAfterSec: 60}, {Name: "fb"}}
+		c.Backends = []BackendConfig{{Name: "a", URL: a.srv.URL, Group: "g"}, {Name: "f", URL: f.srv.URL, Group: "fb"}}
+	})
+	go chatModel(t, srv.URL, "m", nil)
+	time.Sleep(100 * time.Millisecond)
+	done := make(chan string, 1)
+	go func() { _, be := chatModel(t, srv.URL, "m", nil); done <- be }()
+	time.Sleep(100 * time.Millisecond)
+	pool.MarkUnhealthy(pool.backends[0], "health check failed")
+	select {
+	case be := <-done:
+		if be != "f" {
+			t.Errorf("went to %q", be)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("queued request did not move to the fallback group")
+	}
+}

@@ -413,6 +413,16 @@ func (p *Pool) dispatchLocked() {
 	for i := 0; i < len(p.queue); {
 		w := p.queue[i]
 		rt := p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), w.level)
+		if rt.Mode == "group" && !p.anyUsableEx(rt, w.exclude) {
+			// While waiting, every server of the group became unusable (disabled, down, removed):
+			// escalate to the fallback group / other servers with the model instead of waiting.
+			for lv := w.level + 1; lv <= 2; lv++ {
+				if rf := p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), lv); p.anyUsableEx(rf, w.exclude) {
+					w.level, rt = lv, rf
+					break
+				}
+			}
+		}
 		b := p.pickFree(w.exclude, rt)
 		if b == nil && len(w.exclude) > 0 {
 			// A retried request avoids the server that just failed/was busy – but if that server
@@ -452,6 +462,7 @@ func (p *Pool) MarkUnhealthy(b *Backend, msg string) {
 	if p.cfg.HealthPath == "" {
 		b.unhealthyTil = time.Now().Add(time.Duration(p.cfg.UnhealthyCooldownSec) * time.Second)
 	}
+	p.dispatchLocked() // waiting requests of its group may now go to the fallback
 }
 
 func (p *Pool) SetHealth(b *Backend, ok bool, msg string, checkedURL string) {
@@ -465,8 +476,8 @@ func (p *Pool) SetHealth(b *Backend, ok bool, msg string, checkedURL string) {
 	b.healthAt = time.Now()
 	if ok {
 		b.unhealthyTil = time.Time{}
-		p.dispatchLocked()
 	}
+	p.dispatchLocked() // up: it can take work; down: waiting requests may escalate to the fallback
 }
 
 // PickPassthroughEx chooses a backend for requests that don't occupy a slot (e.g. GET /v1/models),
@@ -606,6 +617,7 @@ type Status struct {
 	Groups     []GroupStatus   `json:"groups"`
 	Currency   string          `json:"currency"`
 	Version    string          `json:"version"`
+	Commit     string          `json:"commit,omitempty"`
 	States     map[string]int  `json:"states"` // state → number of backends
 	TotalSlots int             `json:"total_slots"`
 }
@@ -664,6 +676,7 @@ func (p *Pool) Status() Status {
 	}
 	st.Currency = p.cfg.Currency
 	st.Version = versionString()
+	st.Commit = shortCommit()
 	st.Groups = []GroupStatus{}
 	for _, g := range p.groups {
 		gs := GroupStatus{Name: g.Name, Models: append([]string{}, g.Models...), Auto: g.auto(), Members: []string{}, Available: []string{},

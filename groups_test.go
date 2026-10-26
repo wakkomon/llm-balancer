@@ -57,7 +57,8 @@ func chatModel(t *testing.T, url, model string, hdr map[string]string) (int, str
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err) // Error, not Fatal: also called from goroutines
+		return 0, ""
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode, resp.Header.Get("X-LLM-Balancer-Backend")
