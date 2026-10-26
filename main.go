@@ -1,0 +1,131 @@
+package main
+
+import (
+	"context"
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+)
+
+//go:embed web/index.html
+var indexHTML []byte
+
+var version = "dev"
+
+func main() {
+	cfg, err := loadConfig()
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+	pool := NewPool(cfg)
+	px := NewProxy(cfg, pool)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go px.healthLoop(ctx)
+
+	srv := &http.Server{
+		Addr:              cfg.Listen,
+		Handler:           newMux(cfg, pool, px),
+		ReadHeaderTimeout: 30 * time.Second,
+		// no Read/WriteTimeout: generations can stream for a long time
+	}
+
+	log.Printf("llm-balancer %s listening on %s, UI at %s/", version, cfg.Listen, cfg.UIPrefix)
+	for _, b := range cfg.Backends {
+		log.Printf("  backend %-20s %s  slots=%d prio=%d", b.Name, b.URL, b.MaxConcurrent, b.Priority)
+	}
+
+	go func() {
+		<-ctx.Done()
+		log.Printf("shutting down, waiting up to 30s for running requests")
+		sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(sctx)
+	}()
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
+}
+
+func newMux(cfg Config, pool *Pool, px *Proxy) http.Handler {
+	ui := http.NewServeMux()
+	pre := cfg.UIPrefix
+
+	ui.HandleFunc("GET "+pre+"/{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Write(indexHTML)
+	})
+	ui.HandleFunc("GET "+pre, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, pre+"/", http.StatusFound)
+	})
+	ui.HandleFunc("GET "+pre+"/api/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		json.NewEncoder(w).Encode(pool.Status())
+	})
+	ui.HandleFunc("POST "+pre+"/api/backends/{name}/{action}", func(w http.ResponseWriter, r *http.Request) {
+		action := r.PathValue("action")
+		if action != "enable" && action != "disable" {
+			http.Error(w, "action must be enable or disable", http.StatusBadRequest)
+			return
+		}
+		if !pool.SetEnabled(r.PathValue("name"), action == "enable") {
+			http.Error(w, "unknown backend", http.StatusNotFound)
+			return
+		}
+		log.Printf("backend %s %sd via UI", r.PathValue("name"), action)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	ui.HandleFunc("GET "+pre+"/metrics", func(w http.ResponseWriter, r *http.Request) {
+		writeMetrics(w, pool.Status())
+	})
+	ui.HandleFunc("GET "+pre+"/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok\n"))
+	})
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == pre || strings.HasPrefix(r.URL.Path, pre+"/") {
+			ui.ServeHTTP(w, r)
+			return
+		}
+		px.ServeHTTP(w, r)
+	})
+}
+
+func writeMetrics(w http.ResponseWriter, st Status) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	fmt.Fprintf(w, "# TYPE llm_balancer_queue_length gauge\nllm_balancer_queue_length %d\n", len(st.Queue))
+	fmt.Fprintf(w, "# TYPE llm_balancer_requests_total counter\nllm_balancer_requests_total %d\n", st.TotalReqs)
+	fmt.Fprintf(w, "# TYPE llm_balancer_rejected_total counter\nllm_balancer_rejected_total %d\n", st.Rejected)
+	b2i := func(b bool) int {
+		if b {
+			return 1
+		}
+		return 0
+	}
+	fmt.Fprintln(w, "# TYPE llm_balancer_backend_active gauge")
+	for _, b := range st.Backends {
+		fmt.Fprintf(w, "llm_balancer_backend_active{backend=%q} %d\n", b.Name, b.Active)
+	}
+	fmt.Fprintln(w, "# TYPE llm_balancer_backend_up gauge")
+	for _, b := range st.Backends {
+		fmt.Fprintf(w, "llm_balancer_backend_up{backend=%q} %d\n", b.Name, b2i(b.Healthy && b.Enabled))
+	}
+	fmt.Fprintln(w, "# TYPE llm_balancer_backend_requests_total counter")
+	for _, b := range st.Backends {
+		fmt.Fprintf(w, "llm_balancer_backend_requests_total{backend=%q} %d\n", b.Name, b.Total)
+	}
+	fmt.Fprintln(w, "# TYPE llm_balancer_backend_errors_total counter")
+	for _, b := range st.Backends {
+		fmt.Fprintf(w, "llm_balancer_backend_errors_total{backend=%q} %d\n", b.Name, b.Errors)
+	}
+}

@@ -1,0 +1,16 @@
+{
+  "listen": ":8080",
+  "ui_prefix": "/balancer",
+  "backends": [
+    { "name": "gpu", "url": "http://192.168.1.50:8080", "max_concurrent": 1, "priority": 0 },
+    { "name": "amd", "url": "http://192.168.1.60:8080", "max_concurrent": 1, "priority": 1 }
+  ],
+  "queue_timeout_sec": 900,
+  "max_queue": 0,
+  "health_path": "/v1/models",
+  "health_interval_sec": 15,
+  "slot_methods": ["POST"],
+  "retry_status": [503],
+  "max_body_mb": 64,
+  "recent_requests": 100
+}

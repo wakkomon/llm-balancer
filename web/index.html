@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM Balancer</title>
+<style>
+:root{
+  --bg:#f4f3ef; --panel:#ffffff; --ink:#1d1f1e; --muted:#6b706c; --line:#e1dfd8;
+  --free:#2f8f5b; --busy:#c7792a; --down:#c2413a; --off:#9a9d98; --accent:#2c5d8f;
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#141615; --panel:#1c1f1d; --ink:#e7e8e4; --muted:#8f948f; --line:#2c302d;
+  --free:#4fbf82; --busy:#e39a4c; --down:#e2665e; --off:#666b66; --accent:#79a8d8;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1280px;margin:0 auto;padding:20px 16px 48px}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 18px;margin-bottom:18px}
+h1{font-size:20px;margin:0;letter-spacing:-.01em}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:28px 0 10px;font-weight:600}
+.sub{color:var(--muted);font-size:13px}
+.live{display:inline-flex;align-items:center;gap:6px}
+.live i{width:7px;height:7px;border-radius:50%;background:var(--free)}
+.live.stale i{background:var(--down)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.tile b{display:block;font:600 24px/1.1 var(--mono)}
+.tile span{color:var(--muted);font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;border-top:4px solid var(--off)}
+.card.free{border-top-color:var(--free)} .card.busy{border-top-color:var(--busy)}
+.card.down{border-top-color:var(--down)} .card.off{border-top-color:var(--off);opacity:.75}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.name{font-weight:650;font-size:15px}
+.url{font:12px var(--mono);color:var(--muted);word-break:break-all}
+.pill{font-size:11px;font-weight:650;padding:2px 8px;border-radius:99px;color:#fff;background:var(--off);white-space:nowrap}
+.free .pill{background:var(--free)} .busy .pill{background:var(--busy)} .down .pill{background:var(--down)}
+.slots{display:flex;gap:4px;margin:12px 0 8px}
+.slot{flex:1;height:8px;border-radius:4px;background:var(--line)}
+.slot.on{background:var(--busy)}
+.run{border:1px dashed var(--line);border-radius:8px;padding:7px 9px;margin-top:6px;font-size:12.5px}
+.run .t{font:600 13px var(--mono)}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.stats div{font-size:11px;color:var(--muted)} .stats b{display:block;font:600 13px var(--mono);color:var(--ink)}
+.err{margin-top:8px;font-size:12px;color:var(--down);word-break:break-word}
+button{font:inherit;font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--ink);cursor:pointer}
+button:hover{border-color:var(--accent);color:var(--accent)}
+.empty{color:var(--muted);font-size:13px;padding:10px 0}
+.q{display:flex;flex-wrap:wrap;gap:8px}
+.qi{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--busy);border-radius:8px;padding:7px 11px;font-size:12.5px}
+.qi b{font-family:var(--mono)}
+.tbl{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-weight:600;color:var(--muted);font-size:11.5px}
+td.n{font-family:var(--mono);text-align:right} th.n{text-align:right}
+tr:last-child td{border-bottom:0}
+.ok{color:var(--free)} .bad{color:var(--down)}
+.muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>LLM Balancer</h1>
+    <span class="sub live" id="live"><i></i><span id="livetxt">verbinde …</span></span>
+    <span class="sub" id="uptime"></span>
+  </header>
+
+  <div class="tiles">
+    <div class="tile"><b id="t-free">–</b><span>freie Slots</span></div>
+    <div class="tile"><b id="t-queue">–</b><span>in Warteschlange</span></div>
+    <div class="tile"><b id="t-total">–</b><span>Anfragen gesamt</span></div>
+    <div class="tile"><b id="t-rej">–</b><span>abgelehnt</span></div>
+  </div>
+
+  <h2>Server</h2>
+  <div class="grid" id="backends"></div>
+
+  <h2>Warteschlange</h2>
+  <div class="q" id="queue"></div>
+
+  <h2>Letzte Anfragen</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Zeit</th><th>#</th><th>Modell</th><th>Pfad</th><th>Server</th><th>Status</th>
+      <th class="n">Wartezeit</th><th class="n">1. Byte</th><th class="n">Dauer</th><th class="n">Daten</th></tr></thead>
+    <tbody id="recent"></tbody>
+  </table></div>
+</main>
+<script>
+const base = location.pathname.replace(/\/$/, '');
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const dur = ms => {
+  if (ms == null || ms === 0) return ms === 0 ? '0 ms' : '–';
+  if (ms < 1000) return ms + ' ms';
+  const s = ms / 1000;
+  if (s < 60) return s.toFixed(1) + ' s';
+  const m = Math.floor(s / 60);
+  return m + ' min ' + Math.round(s % 60) + ' s';
+};
+const bytes = n => n < 1024 ? n + ' B' : n < 1048576 ? (n/1024).toFixed(1) + ' KB' : (n/1048576).toFixed(1) + ' MB';
+const hms = t => t ? new Date(t).toLocaleTimeString('de-DE') : '';
+const up = s => { const d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60); return (d?d+' d ':'') + h+' h '+m+' min'; };
+
+async function toggle(name, enable) {
+  await fetch(`${base}/api/backends/${encodeURIComponent(name)}/${enable ? 'enable' : 'disable'}`, {method:'POST'});
+  refresh();
+}
+
+function backendCard(b) {
+  const state = !b.enabled ? 'off' : !b.healthy ? 'down' : b.active >= b.max ? 'busy' : 'free';
+  const label = {off:'deaktiviert', down:'nicht erreichbar', busy:'belegt', free:b.active ? 'teilweise belegt' : 'frei'}[state];
+  const slots = Array.from({length:b.max}, (_, i) => `<div class="slot ${i < b.active ? 'on' : ''}"></div>`).join('');
+  const runs = b.running.map(r => `
+    <div class="run"><div class="row"><span class="t">#${r.id} · ${dur(r.duration_ms)}</span>
+      <span class="muted">${r.ttfb_ms ? 'streamt · ' + bytes(r.bytes) : 'verarbeitet Prompt …'}</span></div>
+      <div class="muted">${esc(r.model || r.path)}${r.stream ? ' · stream' : ''}${r.attempts > 1 ? ' · Versuch ' + r.attempts : ''}</div></div>`).join('');
+  const err = (state === 'down' && b.health_msg) ? `<div class="err">${esc(b.health_msg)}</div>`
+            : b.last_error ? `<div class="err">Letzter Fehler ${hms(b.last_error_at)}: ${esc(b.last_error)}</div>` : '';
+  return `<div class="card ${state}">
+    <div class="row"><div><div class="name">${esc(b.name)}</div><div class="url">${esc(b.url)}${b.priority ? ' · Prio ' + b.priority : ''}</div></div>
+      <span class="pill">${label}</span></div>
+    <div class="slots" title="${b.active}/${b.max} Slots belegt">${slots}</div>
+    ${runs}
+    <div class="stats">
+      <div><b>${b.total}</b>Anfragen</div><div><b>${b.errors}</b>Fehler</div>
+      <div><b>${dur(b.avg_ttfb_ms)}</b>Ø 1. Byte</div><div><b>${dur(b.avg_duration_ms)}</b>Ø Dauer</div>
+    </div>
+    ${err}
+    <div class="row" style="margin-top:10px;justify-content:flex-end">
+      <button onclick='toggle(${JSON.stringify(b.name)}, ${!b.enabled})'>${b.enabled ? 'Deaktivieren (drain)' : 'Aktivieren'}</button>
+    </div>
+  </div>`;
+}
+
+let lastOk = 0;
+async function refresh() {
+  try {
+    const st = await (await fetch(`${base}/api/status`, {cache:'no-store'})).json();
+    lastOk = Date.now();
+    $('t-free').textContent = `${st.free_slots}/${st.total_slots}`;
+    $('t-queue').textContent = st.queue.length;
+    $('t-total').textContent = st.total_requests;
+    $('t-rej').textContent = st.rejected;
+    $('uptime').textContent = 'Laufzeit ' + up(st.uptime_sec) + ' · max. Queue ' + st.max_queue_seen;
+    $('backends').innerHTML = st.backends.map(backendCard).join('');
+    $('queue').innerHTML = st.queue.length ? st.queue.map((r, i) =>
+      `<div class="qi"><b>${i + 1}.</b> #${r.id} · ${esc(r.model || r.path)} · wartet ${dur(r.queue_ms)}${r.attempts ? ' · Wiederholung' : ''}</div>`).join('')
+      : '<div class="empty">Leer – alle Anfragen werden sofort bedient.</div>';
+    $('recent').innerHTML = st.recent.length ? st.recent.map(r => `<tr>
+      <td>${hms(r.ended_at)}</td><td>${r.id}</td><td>${esc(r.model)}</td><td class="muted">${esc(r.path)}</td>
+      <td>${esc(r.backend || '–')}${r.attempts > 1 ? ' <span class="muted">(' + r.attempts + '×)</span>' : ''}</td>
+      <td class="${r.status >= 200 && r.status < 400 ? 'ok' : 'bad'}" title="${esc(r.error)}">${r.status}${r.error ? ' · ' + esc(r.error.slice(0, 40)) : ''}</td>
+      <td class="n">${dur(r.queue_ms)}</td><td class="n">${dur(r.ttfb_ms)}</td><td class="n">${dur(r.duration_ms)}</td><td class="n">${bytes(r.bytes)}</td></tr>`).join('')
+      : '<tr><td colspan="10" class="empty">Noch keine Anfragen.</td></tr>';
+  } catch (e) { /* shown via live indicator */ }
+  const stale = Date.now() - lastOk > 4000;
+  $('live').classList.toggle('stale', stale);
+  $('livetxt').textContent = stale ? 'keine Verbindung' : 'live';
+}
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>

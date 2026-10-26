@@ -1,0 +1,16 @@
+services:
+  llm-balancer:
+    build: .
+    # oder nach dem ersten CI-Build: image: ghcr.io/wakkomon/llm-balancer:latest
+    container_name: llm-balancer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # name=url[*max_parallel][@priorität]  – kleinere Priorität wird bevorzugt
+      BACKENDS: "gpu=http://192.168.1.50:8080@0,amd=http://192.168.1.60:8080@1"
+      QUEUE_TIMEOUT_SEC: "900"
+      HEALTH_PATH: "/v1/models"
+    # Alternativ statt BACKENDS eine Datei einbinden:
+    # volumes:
+    #   - ./config.json:/config/config.json:ro
