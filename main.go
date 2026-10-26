@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata" // the scratch image has no zoneinfo; TZ=Europe/Berlin still works
 )
 
 //go:embed web/index.html
@@ -28,11 +29,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("saved backends: %v", err)
 	}
+	pool.stats = NewStats(cfg.DataDir, cfg.StatsDays)
 	px := NewProxy(cfg, pool)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go px.healthLoop(ctx)
+	statsDone := make(chan struct{})
+	go pool.stats.loop(ctx.Done())
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,
@@ -63,10 +67,13 @@ func main() {
 		sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(sctx)
+		pool.stats.Flush() // includes requests that finished during shutdown
+		close(statsDone)
 	}()
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+	<-statsDone
 }
 
 func newMux(cfg Config, pool *Pool, px *Proxy) http.Handler {
@@ -87,6 +94,7 @@ func newMux(cfg Config, pool *Pool, px *Proxy) http.Handler {
 		json.NewEncoder(w).Encode(pool.Status())
 	})
 	registerAdmin(ui, pre, pool, cfg.AdminToken)
+	registerStats(ui, pre, pool.stats, cfg.AdminToken)
 	ui.HandleFunc("GET "+pre+"/metrics", func(w http.ResponseWriter, r *http.Request) {
 		writeMetrics(w, pool.Status())
 	})

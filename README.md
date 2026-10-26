@@ -26,6 +26,8 @@ Hermes-Agent ─► LiteLLM ─► llm-balancer :8080 ─┬─► LLM-Server A 
 * Failover: Verbindungsfehler oder HTTP 503 (z. B. llama.cpp „no slot available“ / „loading model“) → automatisch nächster Server; wiederholte Anfragen rücken an die Spitze der Queue
 * Health-Checks (Standard `GET /v1/models` alle 15 s) für **freie** Server; ausgefallene Server werden übersprungen, bis sie wieder antworten
 * `GET`-Anfragen (z. B. `/v1/models`, Health-Checks von LiteLLM) belegen keinen Slot und warten nie
+* Status-Übersicht pro Server: **beschäftigt**, **idle**, **fehlerhaft** (erreichbar, aber letzte Anfrage fehlgeschlagen – bis zur nächsten erfolgreichen, max. 15 min), **down** (Health-Check/Verbindung fehlgeschlagen), **deaktiviert**
+* Statistik pro Tag und Server (7/30/90/365 Tage): Anfragen, Fehler, Abbrüche, Rechenzeit, Ø/Max-Dauer, Ø Zeit bis zum ersten Byte, Ø Wartezeit in der Queue, Datenmenge – als gestapelte Balkengrafik und Tabelle, CSV-Export; gespeichert in `/data/stats.json`
 * Web-UI unter `/balancer/` mit Live-Status: Slots, laufende Anfragen (Prompt-Verarbeitung vs. Streaming, Dauer, Bytes), Warteschlange, letzte Anfragen, Ø Zeit bis zum ersten Byte / Ø Dauer, Server per Klick deaktivieren (drain) und aktivieren
 * Server-Liste **im laufenden Betrieb** in der Web-UI ändern: hinzufügen, bearbeiten (URL, Name, Slots, Priorität), entfernen – ohne Neustart, laufende Anfragen laufen weiter
 * JSON-API `/balancer/api/status`, Prometheus-Metriken `/balancer/metrics`
@@ -91,6 +93,8 @@ Entweder per Umgebungsvariablen oder per `config.json` (Pfad über `CONFIG`, son
 |---|---|---|
 | `BACKENDS` / `backends` | – | Startkonfiguration: `name=url*maxParallel@priorität`, kommagetrennt. Name, `*N` und `@N` sind optional. Darf leer sein, wenn alles in der UI eingetragen wird |
 | `DATA_DIR` / `data_dir` | `data` (Docker: `/data`) | Ablage für die in der UI geänderte Server-Liste |
+| `STATS_DAYS` / `stats_days` | `400` | Aufbewahrung der Tagesstatistik |
+| `TZ` | UTC | Zeitzone für die Tagesgrenzen der Statistik, z. B. `Europe/Berlin` |
 | `ADMIN_TOKEN` / `admin_token` | – | Wenn gesetzt, sind Änderungen in UI/API nur mit diesem Token möglich (Header `X-Admin-Token`) |
 | `LISTEN` / `listen` | `:8080` | Listen-Adresse |
 | `QUEUE_TIMEOUT_SEC` / `queue_timeout_sec` | `900` | Max. Wartezeit in der Queue (0 = unbegrenzt), danach HTTP 504 |
@@ -151,6 +155,8 @@ Die Status-Ansicht ist ohne Anmeldung sichtbar; für Änderungen `ADMIN_TOKEN` s
 | DELETE | `/balancer/api/backends/{name}` | Server entfernen |
 | POST | `/balancer/api/backends/{name}/enable` bzw. `/disable` | aktivieren / drain |
 | POST | `/balancer/api/reset` | zurück zur Startkonfiguration |
+| GET | `/balancer/api/stats?days=30` | Tagesstatistik (`&format=csv` für CSV) |
+| POST | `/balancer/api/stats/reset` | Statistik löschen |
 
 ## Entwicklung
 

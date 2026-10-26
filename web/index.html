@@ -7,12 +7,14 @@
 <style>
 :root{
   --bg:#f4f3ef; --panel:#ffffff; --ink:#1d1f1e; --muted:#6b706c; --line:#e1dfd8;
-  --free:#2f8f5b; --busy:#c7792a; --down:#c2413a; --off:#9a9d98; --accent:#2c5d8f;
+  --free:#2f8f5b; --busy:#2c6fbf; --warn:#b7791f; --down:#c2413a; --off:#9a9d98; --accent:#2c5d8f; --on-accent:#fff;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4; --s6:#008300; --s7:#6250d6; --s8:#e34948; --sx:#a3a6a1;
   --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
 }
 @media (prefers-color-scheme: dark){:root{
   --bg:#141615; --panel:#1c1f1d; --ink:#e7e8e4; --muted:#8f948f; --line:#2c302d;
-  --free:#4fbf82; --busy:#e39a4c; --down:#e2665e; --off:#666b66; --accent:#79a8d8;
+  --free:#4fbf82; --busy:#5b9be6; --warn:#e0a23c; --down:#e2665e; --off:#666b66; --accent:#79a8d8; --on-accent:#0f1720;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767; --sx:#5d615d;
 }}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
@@ -30,13 +32,13 @@ h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--mute
 .tile span{color:var(--muted);font-size:12px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;border-top:4px solid var(--off)}
-.card.free{border-top-color:var(--free)} .card.busy{border-top-color:var(--busy)}
-.card.down{border-top-color:var(--down)} .card.off{border-top-color:var(--off);opacity:.75}
+.card.idle{border-top-color:var(--free)} .card.busy{border-top-color:var(--busy)} .card.error{border-top-color:var(--warn)}
+.card.down{border-top-color:var(--down)} .card.disabled{border-top-color:var(--off);opacity:.75}
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .name{font-weight:650;font-size:15px}
 .url{font:12px var(--mono);color:var(--muted);word-break:break-all}
 .pill{font-size:11px;font-weight:650;padding:2px 8px;border-radius:99px;color:#fff;background:var(--off);white-space:nowrap}
-.free .pill{background:var(--free)} .busy .pill{background:var(--busy)} .down .pill{background:var(--down)}
+.idle .pill{background:var(--free)} .busy .pill{background:var(--busy)} .error .pill{background:var(--warn)} .down .pill{background:var(--down)}
 .slots{display:flex;gap:4px;margin:12px 0 8px}
 .slot{flex:1;height:8px;border-radius:4px;background:var(--line)}
 .slot.on{background:var(--busy)}
@@ -58,11 +60,39 @@ th{font-weight:600;color:var(--muted);font-size:11.5px}
 td.n{font-family:var(--mono);text-align:right} th.n{text-align:right}
 tr:last-child td{border-bottom:0}
 .ok{color:var(--free)} .bad{color:var(--down)}
+/* status overview */
+.overview{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.chip{display:inline-flex;align-items:center;gap:7px;background:var(--panel);border:1px solid var(--line);border-radius:99px;padding:5px 12px 5px 9px;font-size:13px}
+.chip .ic{width:18px;height:18px;border-radius:50%;display:inline-grid;place-items:center;color:#fff;font-size:11px;font-weight:700;flex:none}
+.chip.idle .ic{background:var(--free)} .chip.busy .ic{background:var(--busy)} .chip.error .ic{background:var(--warn)}
+.chip.down .ic{background:var(--down)} .chip.disabled .ic{background:var(--off)}
+.chip .st{color:var(--muted);font-size:12px}
+.counts{display:flex;flex-wrap:wrap;gap:14px;font-size:12.5px;color:var(--muted);margin-top:10px}
+.counts b{color:var(--ink);font-family:var(--mono)}
+/* statistics */
+.stbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.seg button{border:0;border-radius:0;padding:5px 11px}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.on{background:var(--accent);color:var(--on-accent)}
+.chartbox{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px 6px;position:relative}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;margin-bottom:6px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+.charttitle{font-size:13px;font-weight:600;margin-bottom:6px}
+#chart svg{display:block;width:100%;height:auto;overflow:visible}
+#chart .grid line{stroke:var(--line)} #chart text{fill:var(--muted);font-size:11px;font-family:system-ui,sans-serif}
+#chart .hit{fill:transparent;cursor:default} #chart .hit:hover{fill:var(--ink);fill-opacity:.05}
+#tip{position:absolute;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.15);display:none;min-width:170px;z-index:2}
+#tip .r{display:flex;justify-content:space-between;gap:14px} #tip .r b{font-family:var(--mono);font-weight:600}
+#tip i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:6px}
+details{margin-top:12px} summary{cursor:pointer;color:var(--muted);font-size:13px;margin-bottom:8px}
+td.sw i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:7px}
 .muted{color:var(--muted)}
 .btns{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;margin-top:10px}
 button.danger:hover{border-color:var(--down);color:var(--down)}
-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-button.primary:hover{opacity:.9;color:#fff}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+button.primary:hover{opacity:.9;color:var(--on-accent)}
 .sechead{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:28px 0 10px}
 .sechead h2{margin:0}
 .srcnote{font-size:12px;color:var(--muted)}
@@ -97,6 +127,9 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
     <div class="tile"><b id="t-rej">–</b><span>abgelehnt</span></div>
   </div>
 
+  <div class="overview" id="overview"></div>
+  <div class="counts" id="counts"></div>
+
   <div class="sechead">
     <h2>Server</h2>
     <div class="row">
@@ -116,6 +149,40 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
       <th class="n">Wartezeit</th><th class="n">1. Byte</th><th class="n">Dauer</th><th class="n">Daten</th></tr></thead>
     <tbody id="recent"></tbody>
   </table></div>
+  <div class="sechead">
+    <h2>Statistik</h2>
+    <div class="row">
+      <a id="csvlink" href="#"><button>CSV-Export</button></a>
+      <button class="danger" onclick="resetStats()">Statistik löschen</button>
+    </div>
+  </div>
+  <div class="stbar">
+    <div class="seg" id="rangeSeg">
+      <button data-v="7">7 Tage</button><button data-v="30" class="on">30 Tage</button><button data-v="90">90 Tage</button><button data-v="365">1 Jahr</button>
+    </div>
+    <div class="seg" id="metricSeg">
+      <button data-v="requests" class="on">Anfragen</button><button data-v="duration">Rechenzeit</button><button data-v="avg">Ø Dauer</button>
+    </div>
+  </div>
+  <div class="chartbox">
+    <div class="charttitle" id="charttitle"></div>
+    <div class="legend" id="legend"></div>
+    <div id="chart"></div>
+    <div id="tip"></div>
+  </div>
+  <div class="tbl" style="margin-top:12px"><table>
+    <thead><tr><th>Server</th><th class="n">Anfragen</th><th class="n">Anteil</th><th class="n">Fehler</th><th class="n">Abgebr.</th>
+      <th class="n">Rechenzeit</th><th class="n">Ø Dauer</th><th class="n">Max. Dauer</th><th class="n">Ø 1. Byte</th><th class="n">Ø Wartezeit</th><th class="n">Daten</th></tr></thead>
+    <tbody id="sttotals"></tbody>
+  </table></div>
+  <details>
+    <summary>Pro Tag und Server</summary>
+    <div class="tbl"><table>
+      <thead><tr><th>Tag</th><th>Server</th><th class="n">Anfragen</th><th class="n">Fehler</th><th class="n">Abgebr.</th>
+        <th class="n">Rechenzeit</th><th class="n">Ø Dauer</th><th class="n">Max. Dauer</th><th class="n">Ø 1. Byte</th><th class="n">Ø Wartezeit</th><th class="n">Daten</th></tr></thead>
+      <tbody id="stdays"></tbody>
+    </table></div>
+  </details>
 </main>
 <dialog id="dlg">
   <form id="form" method="dialog">
@@ -149,7 +216,9 @@ const dur = ms => {
   const s = ms / 1000;
   if (s < 60) return s.toFixed(1) + ' s';
   const m = Math.floor(s / 60);
-  return m + ' min ' + Math.round(s % 60) + ' s';
+  if (m < 60) return m + ' min ' + Math.floor(s % 60) + ' s';
+  const h = Math.floor(m / 60);
+  return h + ' h ' + (m % 60) + ' min';
 };
 const attr = v => esc(JSON.stringify(v));
 const bytes = n => n < 1024 ? n + ' B' : n < 1048576 ? (n/1024).toFixed(1) + ' KB' : (n/1048576).toFixed(1) + ' MB';
@@ -226,15 +295,32 @@ $('form').addEventListener('submit', async ev => {
   if (ok) { dlg.close(); toast('Gespeichert'); }
 });
 
+const STATE = {
+  idle:     {label:'idle',        icon:'✓', text:'frei, wartet auf Anfragen'},
+  busy:     {label:'beschäftigt', icon:'⟳', text:'bearbeitet Anfragen'},
+  error:    {label:'fehlerhaft',  icon:'!', text:'erreichbar, letzte Anfrage fehlgeschlagen'},
+  down:     {label:'down',        icon:'✕', text:'nicht erreichbar'},
+  disabled: {label:'deaktiviert', icon:'–', text:'bekommt keine neuen Anfragen'},
+};
+const stateLabel = b => STATE[b.state].label + (b.state === 'busy' && b.max > 1 ? ` ${b.active}/${b.max}` : '');
+
+function renderOverview(st) {
+  $('overview').innerHTML = st.backends.map(b => `<span class="chip ${b.state}" title="${esc(STATE[b.state].text)}">
+    <span class="ic">${STATE[b.state].icon}</span><b>${esc(b.name)}</b><span class="st">${esc(stateLabel(b))}</span></span>`).join('');
+  const n = st.states || {};
+  $('counts').innerHTML = ['busy','idle','error','down','disabled']
+    .map(k => `<span><b>${n[k] || 0}</b> ${STATE[k].label}</span>`).join('');
+}
+
 function backendCard(b) {
-  const state = !b.enabled ? 'off' : !b.healthy ? 'down' : b.active >= b.max ? 'busy' : 'free';
-  const label = {off:'deaktiviert', down:'nicht erreichbar', busy:'belegt', free:b.active ? 'teilweise belegt' : 'frei'}[state];
+  const state = b.state;
+  const label = stateLabel(b);
   const slots = Array.from({length:b.max}, (_, i) => `<div class="slot ${i < b.active ? 'on' : ''}"></div>`).join('');
   const runs = b.running.map(r => `
     <div class="run"><div class="row"><span class="t">#${r.id} · ${dur(r.duration_ms)}</span>
       <span class="muted">${r.ttfb_ms ? 'streamt · ' + bytes(r.bytes) : 'verarbeitet Prompt …'}</span></div>
       <div class="muted">${esc(r.model || r.path)}${r.stream ? ' · stream' : ''}${r.attempts > 1 ? ' · Versuch ' + r.attempts : ''}</div></div>`).join('');
-  const err = (state === 'down' && b.health_msg) ? `<div class="err">${esc(b.health_msg)}</div>`
+  const err = ((state === 'down' || !b.healthy) && b.health_msg) ? `<div class="err">${esc(b.health_msg)}</div>`
             : b.last_error ? `<div class="err">Letzter Fehler ${hms(b.last_error_at)}: ${esc(b.last_error)}</div>` : '';
   return `<div class="card ${state}">
     <div class="row"><div><div class="name">${esc(b.name)}</div><div class="url">${esc(b.url)}${b.priority ? ' · Prio ' + b.priority : ''}</div></div>
@@ -269,6 +355,7 @@ async function refresh() {
     $('t-total').textContent = st.total_requests;
     $('t-rej').textContent = st.rejected;
     $('uptime').textContent = 'Laufzeit ' + up(st.uptime_sec) + ' · max. Queue ' + st.max_queue_seen;
+    renderOverview(st);
     $('backends').innerHTML = st.backends.length ? st.backends.map(backendCard).join('')
       : '<div class="empty-card">Noch kein Server eingetragen – „+ Server hinzufügen“.</div>';
     $('queue').innerHTML = st.queue.length ? st.queue.map((r, i) =>
@@ -285,8 +372,166 @@ async function refresh() {
   $('live').classList.toggle('stale', stale);
   $('livetxt').textContent = stale ? 'keine Verbindung' : 'live';
 }
-refresh();
+// ---------------- statistics ----------------
+let stRange = 30, stMetric = 'requests', stData = null;
+const SERIES = 8;
+function colorOrder() {
+  // color follows the server: current servers in list order first, then removed ones; "(kein Server)" stays gray
+  const names = (current?.backends || []).map(b => b.name);
+  for (const n of (stData?.backends || [])) if (!names.includes(n) && n !== '(kein Server)') names.push(n);
+  return names;
+}
+function seriesColor(name) {
+  if (name === '(kein Server)') return 'var(--sx)';
+  const i = colorOrder().indexOf(name);
+  return i >= 0 && i < SERIES ? `var(--s${i + 1})` : 'var(--sx)';
+}
+const metricVal = (st) => !st ? 0 : stMetric === 'requests' ? st.requests : stMetric === 'duration' ? st.duration_ms : (st.requests ? st.duration_ms / st.requests : 0);
+const metricFmt = v => stMetric === 'requests' ? String(Math.round(v)) : dur(Math.round(v));
+const avg = (ms, n) => n ? Math.round(ms / n) : null;
+const dayLabel = d => { const [y, m, dd] = d.split('-'); return `${dd}.${m}.`; };
+const dayLong = d => new Date(d + 'T12:00:00').toLocaleDateString('de-DE', {weekday:'short', day:'2-digit', month:'2-digit', year:'numeric'});
+
+const TIME_STEPS = [1,2,5,10,15,30,60,120,300,600,900,1800,3600,7200,10800,21600,43200,86400].map(s => s * 1000);
+function niceTop(v) {
+  if (stMetric === 'requests') return niceMax(v);
+  const step = TIME_STEPS.find(s => s * 4 >= v) || Math.ceil(v / 4 / 86400000) * 86400000;
+  return step * 4;
+}
+const axisFmt = v => {
+  if (stMetric === 'requests') return String(Math.round(v));
+  if (v === 0) return '0';
+  if (v % 3600000 === 0) return v / 3600000 + ' h';
+  if (v >= 3600000) return (v / 3600000).toFixed(1).replace('.', ',') + ' h';
+  if (v % 60000 === 0) return v / 60000 + ' min';
+  return v / 1000 + ' s';
+};
+function niceMax(v) {
+  if (v <= 0) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v))), f = v / p;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
+}
+
+function renderChart() {
+  const box = $('chart'), d = stData;
+  if (!d) return;
+  const names = colorOrder().filter(n => d.backends.includes(n));
+  if (d.backends.includes('(kein Server)')) names.push('(kein Server)');
+  const stacked = stMetric !== 'avg';
+  if (!stacked) { const k = names.indexOf('(kein Server)'); if (k >= 0) names.splice(k, 1); }
+  $('charttitle').textContent = {requests:'Anfragen pro Tag', duration:'Rechenzeit pro Tag (Summe der Anfragedauer)', avg:'Ø Dauer pro Anfrage und Tag'}[stMetric];
+  $('legend').innerHTML = names.length >= 2 ? names.map(n => `<span><i style="background:${seriesColor(n)}"></i>${esc(n)}</span>`).join('') : '';
+  if (!names.length) { box.innerHTML = '<div class="empty">Keine Anfragen in diesem Zeitraum.</div>'; return; }
+
+  const W = Math.max(320, box.clientWidth), H = 240, L = 54, R = 6, T = 8, B = 26;
+  const pw = W - L - R, ph = H - T - B, n = d.days.length, slot = pw / n;
+  // per day: stacked total, or (avg) one bar per server side by side
+  let maxV = 0;
+  for (const day of d.days) {
+    const row = d.data[day] || {};
+    if (stacked) maxV = Math.max(maxV, names.reduce((a, nm) => a + metricVal(row[nm]), 0));
+    else for (const nm of names) maxV = Math.max(maxV, metricVal(row[nm]));
+  }
+  const top = niceTop(maxV), y = v => T + ph - (v / top) * ph;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc($('charttitle').textContent)}"><g class="grid">`;
+  for (let i = 0; i <= 4; i++) {
+    const v = top * i / 4, yy = y(v);
+    svg += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}"/><text x="${L - 6}" y="${yy + 4}" text-anchor="end">${esc(axisFmt(v))}</text>`;
+  }
+  svg += '</g>';
+  const barW = Math.max(2, Math.min(36, slot * 0.7));
+  const every = Math.ceil(n / Math.max(1, Math.floor(pw / 46)));
+  d.days.forEach((day, i) => {
+    const x0 = L + i * slot + (slot - barW) / 2, row = d.data[day] || {};
+    if (stacked) {
+      let acc = 0;
+      const segs = names.map(nm => ({nm, v: metricVal(row[nm])})).filter(s => s.v > 0);
+      segs.forEach((s, k) => {
+        const y1 = y(acc + s.v), y0 = y(acc); acc += s.v;
+        const h = Math.max(1, y0 - y1 - (k > 0 ? 2 : 0));   // 2px gap between stacked segments
+        const r = k === segs.length - 1 ? Math.min(4, barW / 2, h) : 0;
+        svg += r ? `<path fill="${seriesColor(s.nm)}" d="M${x0},${y1 + h} V${y1 + r} Q${x0},${y1} ${x0 + r},${y1} H${x0 + barW - r} Q${x0 + barW},${y1} ${x0 + barW},${y1 + r} V${y1 + h} Z"/>`
+                 : `<rect fill="${seriesColor(s.nm)}" x="${x0}" y="${y1}" width="${barW}" height="${h}"/>`;
+      });
+    } else {
+      const bw = Math.max(1, (barW - 2 * (names.length - 1)) / names.length);
+      names.forEach((nm, k) => {
+        const v = metricVal(row[nm]); if (!v) return;
+        const xx = x0 + k * (bw + 2), y1 = y(v), h = Math.max(1, T + ph - y1), r = Math.min(3, bw / 2, h);
+        svg += `<path fill="${seriesColor(nm)}" d="M${xx},${y1 + h} V${y1 + r} Q${xx},${y1} ${xx + r},${y1} H${xx + bw - r} Q${xx + bw},${y1} ${xx + bw},${y1 + r} V${y1 + h} Z"/>`;
+      });
+    }
+    if (i % every === 0 || (i === n - 1 && (n - 1) % every >= every * 0.6)) svg += `<text x="${L + i * slot + slot / 2}" y="${H - 8}" text-anchor="middle">${dayLabel(day)}</text>`;
+    svg += `<rect class="hit" data-day="${day}" x="${L + i * slot}" y="${T}" width="${slot}" height="${ph}"/>`;
+  });
+  svg += `<line x1="${L}" x2="${W - R}" y1="${T + ph}" y2="${T + ph}" stroke="var(--muted)" stroke-opacity=".5"/></svg>`;
+  box.innerHTML = svg;
+
+  const tip = $('tip'), cb = box.parentElement;
+  box.querySelectorAll('.hit').forEach(el => {
+    el.addEventListener('mousemove', ev => {
+      const day = el.dataset.day, row = d.data[day] || {};
+      const rows = names.filter(nm => row[nm]).map(nm => `<div class="r"><span><i style="background:${seriesColor(nm)}"></i>${esc(nm)}</span>
+        <b>${row[nm].requests} · ${dur(avg(row[nm].duration_ms, row[nm].requests))}</b></div>`).join('');
+      const tot = names.reduce((a, nm) => a + (row[nm]?.requests || 0), 0);
+      tip.innerHTML = `<div style="font-weight:600;margin-bottom:4px">${dayLong(day)}</div>` +
+        (rows ? rows + `<div class="r muted" style="margin-top:4px"><span>gesamt</span><b>${tot} Anfragen</b></div><div class="muted" style="margin-top:2px;font-size:11px">Anfragen · Ø Dauer</div>` : '<div class="muted">keine Anfragen</div>');
+      tip.style.display = 'block';
+      const r = cb.getBoundingClientRect();
+      let left = ev.clientX - r.left + 14;
+      if (left + tip.offsetWidth > r.width) left = ev.clientX - r.left - tip.offsetWidth - 14;
+      tip.style.left = Math.max(4, left) + 'px';
+      tip.style.top = Math.max(4, ev.clientY - r.top - 20) + 'px';
+    });
+    el.addEventListener('mouseleave', () => tip.style.display = 'none');
+  });
+}
+
+function statRow(st) {
+  return `<td class="n">${st.errors ? `<span class="bad">${st.errors}</span>` : 0}</td><td class="n">${st.cancelled}</td>
+    <td class="n">${dur(st.duration_ms)}</td><td class="n">${dur(avg(st.duration_ms, st.requests))}</td><td class="n">${dur(st.max_duration_ms)}</td>
+    <td class="n">${dur(avg(st.ttfb_ms, st.ttfb_count))}</td><td class="n">${dur(avg(st.queue_ms, st.requests))}</td><td class="n">${bytes(st.bytes)}</td>`;
+}
+function renderStatTables() {
+  const d = stData; if (!d) return;
+  const names = colorOrder().filter(n => d.backends.includes(n));
+  if (d.backends.includes('(kein Server)')) names.push('(kein Server)');
+  const all = names.reduce((a, n) => a + d.totals[n].requests, 0);
+  const sw = n => `<td class="sw"><i style="background:${seriesColor(n)}"></i>${esc(n)}</td>`;
+  $('sttotals').innerHTML = names.length ? names.map(n => { const t = d.totals[n];
+    return `<tr>${sw(n)}<td class="n">${t.requests}</td><td class="n">${all ? Math.round(t.requests * 100 / all) : 0} %</td>${statRow(t)}</tr>`; }).join('')
+    : '<tr><td colspan="11" class="empty">Keine Anfragen in diesem Zeitraum.</td></tr>';
+  const rows = [];
+  for (const day of [...d.days].reverse()) for (const n of names) {
+    const st = d.data[day]?.[n]; if (st) rows.push(`<tr><td>${dayLong(day)}</td>${sw(n)}<td class="n">${st.requests}</td>${statRow(st)}</tr>`);
+  }
+  $('stdays').innerHTML = rows.join('') || '<tr><td colspan="11" class="empty">Keine Daten.</td></tr>';
+}
+
+async function loadStats() {
+  try {
+    stData = await (await fetch(`${base}/api/stats?days=${stRange}`, {cache:'no-store'})).json();
+    $('csvlink').href = `${base}/api/stats?days=${stRange}&format=csv`;
+    renderChart(); renderStatTables();
+  } catch (e) {}
+}
+function segment(id, set) {
+  $(id).addEventListener('click', ev => {
+    const btn = ev.target.closest('button'); if (!btn) return;
+    $(id).querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
+    set(btn.dataset.v);
+  });
+}
+segment('rangeSeg', v => { stRange = +v; loadStats(); });
+segment('metricSeg', v => { stMetric = v; renderChart(); });
+async function resetStats() {
+  if (confirm('Gesamte Statistik unwiderruflich löschen?')) { await call('POST', '/stats/reset'); loadStats(); }
+}
+let rsz; window.addEventListener('resize', () => { clearTimeout(rsz); rsz = setTimeout(renderChart, 150); });
+
+refresh().then(loadStats);
 setInterval(refresh, 1000);
+setInterval(loadStats, 30000);
 </script>
 </body>
 </html>

@@ -33,6 +33,7 @@ type Config struct {
 	MaxBodyMB            int             `json:"max_body_mb"`            // default 64
 	RecentRequests       int             `json:"recent_requests"`        // how many finished requests the UI keeps (default 100)
 	AdminToken           string          `json:"admin_token"`            // if set, changes in the UI/API need this token
+	StatsDays            int             `json:"stats_days"`             // how many days of statistics to keep (default 400)
 	DataDir              string          `json:"data_dir"`               // where backends.json (UI changes) is stored (default "data", Docker: /data)
 	UnhealthyCooldownSec int             `json:"unhealthy_cooldown_sec"` // used when health checks are disabled (default 10)
 }
@@ -50,6 +51,7 @@ func defaultConfig() Config {
 		RecentRequests:       100,
 		UnhealthyCooldownSec: 10,
 		DataDir:              "data",
+		StatsDays:            400,
 	}
 }
 
@@ -102,6 +104,7 @@ func loadConfig() (Config, error) {
 		"QUEUE_TIMEOUT_SEC":   &cfg.QueueTimeoutSec,
 		"MAX_QUEUE":           &cfg.MaxQueue,
 		"HEALTH_INTERVAL_SEC": &cfg.HealthIntervalSec,
+		"STATS_DAYS":          &cfg.StatsDays,
 	} {
 		if err := envInt(name, dst); err != nil {
 			return cfg, err

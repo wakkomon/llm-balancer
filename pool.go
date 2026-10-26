@@ -39,6 +39,7 @@ type Backend struct {
 	finished     int64
 	lastErr      string
 	lastErrAt    time.Time
+	lastOkAt     time.Time
 }
 
 func (b *Backend) usable(now time.Time) bool {
@@ -93,6 +94,7 @@ type Pool struct {
 	initial    []BackendConfig // from BACKENDS / config.json, used for "reset"
 	source     string          // "env" or "saved"
 	healthKick chan struct{}
+	stats      *Stats
 
 	totalReqs     int64
 	totalRejected int64
@@ -283,6 +285,11 @@ func (p *Pool) dispatchLocked() {
 	for i := 0; i < len(p.queue); {
 		w := p.queue[i]
 		b := p.pickFree(w.exclude)
+		if b == nil && len(w.exclude) > 0 {
+			// A retried request avoids the server that just failed/was busy – but if that server
+			// is completely idle again (and healthy), using it beats waiting for the others.
+			b = p.pickIdleExcluded(w.exclude)
+		}
 		if b == nil {
 			if len(w.exclude) == 0 {
 				return // nothing free for a normal waiter → nothing free for anyone after it
@@ -365,6 +372,12 @@ func (p *Pool) Finish(r *ReqInfo, b *Backend, status int, errMsg string) {
 	r.Error = errMsg
 	r.State = "done"
 	delete(p.active, r.ID)
+	if b != nil && r.Status > 0 && r.Status < 500 && r.Status != 499 && errMsg == "" {
+		b.lastOkAt = r.EndedAt
+	}
+	if p.stats != nil {
+		p.stats.Record(r)
+	}
 	if b != nil && !r.StartedAt.IsZero() {
 		b.finished++
 		b.sumDur += r.EndedAt.Sub(r.StartedAt)
@@ -404,6 +417,7 @@ type BackendStatus struct {
 	AvgTTFBMs   int64      `json:"avg_ttfb_ms"`
 	LastError   string     `json:"last_error,omitempty"`
 	LastErrorAt string     `json:"last_error_at,omitempty"`
+	State       string     `json:"state"` // idle | busy | error | down | disabled
 	Running     []*ReqInfo `json:"running"`
 }
 
@@ -420,6 +434,7 @@ type Status struct {
 	Source     string          `json:"config_source"` // env | saved
 	DataFile   string          `json:"data_file,omitempty"`
 	AdminToken bool            `json:"admin_token_required"`
+	States     map[string]int  `json:"states"` // state → number of backends
 	TotalSlots int             `json:"total_slots"`
 }
 
@@ -463,6 +478,7 @@ func (p *Pool) Status() Status {
 		st.DataFile = p.store.path
 	}
 	st.Backends = []BackendStatus{}
+	st.States = map[string]int{"idle": 0, "busy": 0, "error": 0, "down": 0, "disabled": 0}
 	running := map[string][]*ReqInfo{}
 	for _, r := range p.active {
 		if r.State == "running" {
@@ -474,6 +490,8 @@ func (p *Pool) Status() Status {
 			HealthMsg: b.healthMsg, HealthAt: fmtTime(b.healthAt), Active: b.active, Max: b.Max, Priority: b.Priority,
 			Total: b.total, Errors: b.errors, LastError: b.lastErr, LastErrorAt: fmtTime(b.lastErrAt),
 			Running: running[b.Name]}
+		bs.State = backendState(b, now)
+		st.States[bs.State]++
 		if bs.Running == nil {
 			bs.Running = []*ReqInfo{}
 		}
@@ -497,4 +515,35 @@ func (p *Pool) Status() Status {
 		st.Recent = append(st.Recent, snapshot(p.recent[i], now))
 	}
 	return st
+}
+
+// errorWindow: a reachable server whose latest request failed counts as "error" for this long
+// (or until a request succeeds again).
+const errorWindow = 15 * time.Minute
+
+// backendState classifies a backend for the UI. Caller holds p.mu.
+func backendState(b *Backend, now time.Time) string {
+	switch {
+	case !b.enabled:
+		return "disabled"
+	case !b.usable(now):
+		return "down"
+	case b.active > 0:
+		return "busy"
+	case !b.lastErrAt.IsZero() && b.lastErrAt.After(b.lastOkAt) && now.Sub(b.lastErrAt) < errorWindow:
+		return "error"
+	}
+	return "idle"
+}
+
+// pickIdleExcluded returns an excluded but healthy server with no running request. Caller holds p.mu.
+func (p *Pool) pickIdleExcluded(exclude map[*Backend]bool) *Backend {
+	now := time.Now()
+	var best *Backend
+	for _, b := range p.backends {
+		if exclude[b] && b.usable(now) && b.active == 0 && (best == nil || better(b, best)) {
+			best = b
+		}
+	}
+	return best
 }

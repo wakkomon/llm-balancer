@@ -75,6 +75,11 @@ func setup(t *testing.T, mod func(*Config), backends ...*fakeLLM) (*httptest.Ser
 	if err != nil {
 		t.Fatal(err)
 	}
+	statsDir := ""
+	if store != nil {
+		statsDir = cfg.DataDir
+	}
+	pool.stats = NewStats(statsDir, 0)
 	srv := httptest.NewServer(newMux(cfg, pool, NewProxy(cfg, pool)))
 	t.Cleanup(srv.Close)
 	return srv, pool
@@ -265,5 +270,30 @@ func TestParseBackendsEnv(t *testing.T) {
 	if len(bs) != 2 || bs[0].Name != "gpu" || bs[0].MaxConcurrent != 2 || bs[0].Priority != -1 ||
 		bs[0].URL != "http://10.0.0.5:8080" || bs[1].URL != "http://amd.local:11434" {
 		t.Errorf("parsed %+v", bs)
+	}
+}
+
+// A request retried after a 503 must not keep waiting for other busy servers
+// once the server that answered 503 is idle again.
+func TestRetryUsesExcludedServerWhenIdleAgain(t *testing.T) {
+	var calls atomic.Int32
+	flaky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			http.Error(w, "busy", http.StatusServiceUnavailable)
+			return
+		}
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer flaky.Close()
+	slow := newFakeLLM(t, "slow", 1500*time.Millisecond)
+	srv, _ := setup(t, func(c *Config) {
+		c.Backends = append([]BackendConfig{{Name: "flaky", URL: flaky.URL, Priority: -1}}, c.Backends...)
+	}, slow)
+	go post(t, srv.URL) // occupies slow
+	time.Sleep(50 * time.Millisecond)
+	start := time.Now()
+	be, _ := post(t, srv.URL) // flaky → 503 → slow busy → must go back to flaky
+	if be != "flaky" || time.Since(start) > 500*time.Millisecond {
+		t.Errorf("got %s after %v", be, time.Since(start))
 	}
 }
