@@ -89,6 +89,15 @@ tr:last-child td{border-bottom:0}
 details{margin-top:12px} summary{cursor:pointer;color:var(--muted);font-size:13px;margin-bottom:8px}
 td.sw i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:7px}
 .muted{color:var(--muted)}
+.nav{display:flex;gap:4px;margin-left:8px}
+.nav a{color:var(--muted);text-decoration:none;font-size:13.5px;padding:4px 10px;border-radius:7px}
+.nav a.on{background:var(--panel);color:var(--ink);box-shadow:0 0 0 1px var(--line)}
+.tps{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin-top:8px}
+.tps b{font:600 13px var(--mono);color:var(--ink)}
+.warnc{color:var(--warn);font-weight:600}
+td.tagerr{color:var(--warn);cursor:help}
+.fb{font-size:12.5px;margin-top:10px;color:var(--muted)} .fb b{color:var(--ink);font-weight:600}
+.chkf{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)} .chkf input{width:auto}
 .filterbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:-2px 0 12px}
 .filterbar input{width:min(340px,100%)}
 #routeinfo b{color:var(--ink)}
@@ -139,10 +148,12 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
 <main>
   <header>
     <h1>LLM Balancer</h1>
+    <nav class="nav"><a href="#" data-page="main">Übersicht</a><a href="#zugriff" data-page="tokens">API-Zugriff</a></nav>
     <span class="sub live" id="live"><i></i><span id="livetxt">verbinde …</span></span>
     <span class="sub" id="uptime"></span>
   </header>
 
+  <div id="page-main">
   <div class="tiles">
     <div class="tile"><b id="t-free">–</b><span>freie Slots</span></div>
     <div class="tile"><b id="t-queue">–</b><span>in Warteschlange</span></div>
@@ -156,14 +167,12 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
   <div class="sechead">
     <h2>Server</h2>
     <div class="row">
-      <span class="srcnote" id="srcnote"></span>
-      <button id="resetbtn" style="display:none" onclick="resetBackends()">Auf Startkonfiguration zurücksetzen</button>
       <button class="primary" onclick="openEdit(null)">+ Server hinzufügen</button>
     </div>
   </div>
   <div class="filterbar">
     <label for="mfilter" class="srcnote">Modell</label>
-    <input id="mfilter" list="mlist" placeholder="Modell eingeben oder wählen, z. B. qwen3-32b" autocomplete="off">
+    <input id="mfilter" list="mlist" placeholder="Modell wählen oder eingeben …" autocomplete="off">
     <datalist id="mlist"></datalist>
     <button id="mclear" onclick="setFilter('')" style="display:none">✕</button>
     <span id="routeinfo" class="srcnote"></span>
@@ -183,6 +192,63 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
   <div class="q" id="queue"></div>
 
   <div class="sechead">
+    <h2>Statistik</h2>
+    <div class="row">
+      <a id="csvlink" href="#"><button>CSV-Export</button></a>
+      <button class="danger" onclick="resetStats()">Statistik löschen</button>
+    </div>
+  </div>
+  <div class="stbar">
+    <div class="seg" id="rangeSeg">
+      <button data-v="7">7 Tage</button><button data-v="30" class="on">30 Tage</button><button data-v="90">90 Tage</button><button data-v="365">1 Jahr</button>
+    </div>
+    <div class="seg" id="bySeg">
+      <button data-v="server" class="on">nach Server</button><button data-v="model">nach Modell</button>
+    </div>
+    <div class="seg" id="metricSeg">
+      <button data-v="requests" class="on">Anfragen</button><button data-v="duration">Rechenzeit</button><button data-v="avg">Ø Dauer</button><button data-v="tokens">Tokens</button>
+    </div>
+  </div>
+  <div class="chartbox">
+    <div class="charttitle" id="charttitle"></div>
+    <div class="legend" id="legend"></div>
+    <div id="chart"></div>
+    <div id="tip"></div>
+  </div>
+  <div class="tbl" style="margin-top:12px"><table>
+    <thead><tr><th id="stbyhead">Server</th><th class="n">Anfragen</th><th class="n">Anteil</th><th class="n">Fehler</th><th class="n">Abgebr.</th>
+      <th class="n">Rechenzeit</th><th class="n">Ø Dauer</th><th class="n">Max. Dauer</th><th class="n">Ø 1. Byte</th><th class="n">Ø Wartezeit</th>
+      <th class="n">Tokens Ein</th><th class="n">Tokens Aus</th><th class="n">Ø tok/s</th><th class="n">Tag-Fehler</th><th class="n">Daten</th></tr></thead>
+    <tbody id="sttotals"></tbody>
+  </table></div>
+  <h3 class="subhead">Kosten pro API-Token im Zeitraum</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>API-Token</th><th class="n">Anfragen</th><th class="n">Tokens Ein</th><th class="n">Tokens Aus</th><th class="n">Kosten</th></tr></thead>
+    <tbody id="sttokens"></tbody>
+  </table></div>
+  <details>
+    <summary id="stdaysum">Pro Tag und Server</summary>
+    <div class="tbl"><table>
+      <thead><tr><th>Tag</th><th id="stbyhead2">Server</th><th class="n">Anfragen</th><th class="n">Fehler</th><th class="n">Abgebr.</th>
+        <th class="n">Rechenzeit</th><th class="n">Ø Dauer</th><th class="n">Max. Dauer</th><th class="n">Ø 1. Byte</th><th class="n">Ø Wartezeit</th>
+        <th class="n">Tokens Ein</th><th class="n">Tokens Aus</th><th class="n">Ø tok/s</th><th class="n">Tag-Fehler</th><th class="n">Daten</th></tr></thead>
+      <tbody id="stdays"></tbody>
+    </table></div>
+  </details>
+
+  <div class="sechead">
+    <h2>Letzte Anfragen</h2>
+    <div class="row"><label class="chkf"><input type="checkbox" id="onlytag"> nur Antworten mit Tag-Fehlern</label>
+    <span class="srcnote" id="recentnote"></span></div>
+  </div>
+  <div class="tbl scroll"><table>
+    <thead><tr><th>Zeit</th><th>#</th><th>Modell</th><th>Gruppe</th><th>Client</th><th>Server</th><th>Status</th>
+      <th class="n">Wartezeit</th><th class="n">1. Byte</th><th class="n">Dauer</th><th class="n">Tokens Ein / Aus</th><th class="n">Tok/s</th><th class="n">Kosten</th><th>Tags</th></tr></thead>
+    <tbody id="recent"></tbody>
+  </table></div>
+  </div>
+  <div id="page-tokens" hidden>
+  <div class="sechead">
     <h2>API-Zugriff</h2>
     <div class="row">
       <button class="primary" onclick="openToken()">+ Token erstellen</button>
@@ -196,57 +262,8 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
     <tbody id="tokens"></tbody>
   </table></div>
 
-  <div class="sechead">
-    <h2>Statistik</h2>
-    <div class="row">
-      <a id="csvlink" href="#"><button>CSV-Export</button></a>
-      <button class="danger" onclick="resetStats()">Statistik löschen</button>
-    </div>
+  <p class="srcnote">Pro Token lassen sich Preise pro 1 Mio. Input-/Output-Tokens hinterlegen. Die Kosten pro Tag und Token stehen in der Statistik auf der Übersicht.</p>
   </div>
-  <div class="stbar">
-    <div class="seg" id="rangeSeg">
-      <button data-v="7">7 Tage</button><button data-v="30" class="on">30 Tage</button><button data-v="90">90 Tage</button><button data-v="365">1 Jahr</button>
-    </div>
-    <div class="seg" id="metricSeg">
-      <button data-v="requests" class="on">Anfragen</button><button data-v="duration">Rechenzeit</button><button data-v="avg">Ø Dauer</button><button data-v="tokens">Tokens</button>
-    </div>
-  </div>
-  <div class="chartbox">
-    <div class="charttitle" id="charttitle"></div>
-    <div class="legend" id="legend"></div>
-    <div id="chart"></div>
-    <div id="tip"></div>
-  </div>
-  <div class="tbl" style="margin-top:12px"><table>
-    <thead><tr><th>Server</th><th class="n">Anfragen</th><th class="n">Anteil</th><th class="n">Fehler</th><th class="n">Abgebr.</th>
-      <th class="n">Rechenzeit</th><th class="n">Ø Dauer</th><th class="n">Max. Dauer</th><th class="n">Ø 1. Byte</th><th class="n">Ø Wartezeit</th>
-      <th class="n">Tokens Ein</th><th class="n">Tokens Aus</th><th class="n">Daten</th></tr></thead>
-    <tbody id="sttotals"></tbody>
-  </table></div>
-  <h3 class="subhead">Kosten pro API-Token im Zeitraum</h3>
-  <div class="tbl"><table>
-    <thead><tr><th>API-Token</th><th class="n">Anfragen</th><th class="n">Tokens Ein</th><th class="n">Tokens Aus</th><th class="n">Kosten</th></tr></thead>
-    <tbody id="sttokens"></tbody>
-  </table></div>
-  <details>
-    <summary>Pro Tag und Server</summary>
-    <div class="tbl"><table>
-      <thead><tr><th>Tag</th><th>Server</th><th class="n">Anfragen</th><th class="n">Fehler</th><th class="n">Abgebr.</th>
-        <th class="n">Rechenzeit</th><th class="n">Ø Dauer</th><th class="n">Max. Dauer</th><th class="n">Ø 1. Byte</th><th class="n">Ø Wartezeit</th>
-        <th class="n">Tokens Ein</th><th class="n">Tokens Aus</th><th class="n">Daten</th></tr></thead>
-      <tbody id="stdays"></tbody>
-    </table></div>
-  </details>
-
-  <div class="sechead">
-    <h2>Letzte Anfragen</h2>
-    <span class="srcnote" id="recentnote"></span>
-  </div>
-  <div class="tbl scroll"><table>
-    <thead><tr><th>Zeit</th><th>#</th><th>Modell</th><th>Gruppe</th><th>Client</th><th>Server</th><th>Status</th>
-      <th class="n">Wartezeit</th><th class="n">1. Byte</th><th class="n">Dauer</th><th class="n">Tokens Ein / Aus</th><th class="n">Tok/s</th><th class="n">Kosten</th></tr></thead>
-    <tbody id="recent"></tbody>
-  </table></div>
 </main>
 <dialog id="dlg">
   <form id="form" method="dialog">
@@ -307,6 +324,13 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
     <label for="g-models">Modelle (eins pro Zeile, * als Platzhalter)</label>
     <textarea id="g-models" rows="4" placeholder="qwen3-32b&#10;qwen3*"></textarea>
     <label class="chk"><input id="g-auto" type="checkbox" checked> zusätzlich alle Modelle, die die Server der Gruppe melden (/v1/models)</label>
+    <label for="g-fb">Fallback-Gruppe</label>
+    <select id="g-fb"></select>
+    <div class="two" id="g-fbopts">
+      <div><label for="g-fbsec">nach Wartezeit (Sekunden)</label><input id="g-fbsec" type="number" min="0" value="60"></div>
+      <div><label for="g-fbmodel">Modell dort (optional)</label><input id="g-fbmodel" placeholder="unverändert" autocomplete="off"></div>
+    </div>
+    <div class="hint">Wartet eine Anfrage länger als angegeben, darf auch ein Server der Fallback-Gruppe sie übernehmen. Sind alle Server dieser Gruppe down, sofort. Mit „Modell dort“ wird der Modellname für den Fallback ersetzt.</div>
     <label>Server in dieser Gruppe</label>
     <div id="g-members" class="members"></div>
     <div class="hint">Ein Server gehört zu höchstens einer Gruppe; wählst du ihn hier, verlässt er seine bisherige.</div>
@@ -348,6 +372,7 @@ const dur = ms => {
   return h + ' h ' + (m % 60) + ' min';
 };
 const attr = v => esc(JSON.stringify(v));
+const tpsFmt = v => v ? v.toLocaleString('de-DE', {maximumFractionDigits: v < 100 ? 1 : 0}) : '–';
 const num = n => (n ?? 0).toLocaleString('de-DE');
 const ktok = n => !n ? '0' : n < 10000 ? num(n) : n < 1e6 ? (n / 1000).toLocaleString('de-DE', {maximumFractionDigits: 1}) + ' k' : (n / 1e6).toLocaleString('de-DE', {maximumFractionDigits: 2}) + ' Mio.';
 const money = v => {
@@ -401,9 +426,6 @@ function removeBackend(name) {
   const b = current?.backends.find(x => x.name === name);
   const extra = b?.active ? `\n${b.active} laufende Anfrage(n) laufen noch zu Ende.` : '';
   if (confirm(`Server „${name}“ entfernen?${extra}`)) call('DELETE', `/backends/${enc(name)}`);
-}
-function resetBackends() {
-  if (confirm('Alle Änderungen an der Server-Liste verwerfen und wieder BACKENDS / config.json verwenden?')) call('POST', '/reset');
 }
 function openEdit(name) {
   editing = name;
@@ -463,7 +485,7 @@ function backendCard(b) {
   const slots = Array.from({length:b.max}, (_, i) => `<div class="slot ${i < b.active ? 'on' : ''}"></div>`).join('');
   const runs = b.running.map(r => `
     <div class="run"><div class="row"><span class="t">#${r.id} · ${dur(r.duration_ms)}</span>
-      <span class="muted">${r.ttfb_ms ? 'streamt · ' + bytes(r.bytes) : 'verarbeitet Prompt …'}</span></div>
+      <span class="muted">${r.ttfb_ms ? 'streamt' + (r.live_tps ? ' · ≈ ' + r.live_tps.toLocaleString('de-DE', {maximumFractionDigits: 1}) + ' tok/s' : '') + ' · ' + bytes(r.bytes) : 'verarbeitet Prompt …'}</span></div>
       <div class="muted">${esc(r.model || r.path)}${r.stream ? ' · stream' : ''}${r.attempts > 1 ? ' · Versuch ' + r.attempts : ''}</div></div>`).join('');
   const err = ((state === 'down' || !b.healthy) && b.health_msg) ? `<div class="err">${esc(b.health_msg)}</div>`
             : b.last_error ? `<div class="err">Letzter Fehler ${hms(b.last_error_at)}: ${esc(b.last_error)}</div>` : '';
@@ -486,6 +508,11 @@ function backendCard(b) {
       <div><b>${b.total}</b>Anfragen</div><div><b>${b.errors}</b>Fehler</div>
       <div><b>${dur(b.avg_ttfb_ms)}</b>Ø 1. Byte</div><div><b>${dur(b.avg_duration_ms)}</b>Ø Dauer</div>
     </div>
+    <div class="tps">
+      <span><b>${tpsFmt(b.avg_tps)}</b> Ø tok/s</span><span><b>${tpsFmt(b.last_tps)}</b> letzte</span>
+      <span title="Prompt-Verarbeitung: Input-Tokens bis zum ersten Byte"><b>${tpsFmt(b.avg_prompt_tps)}</b> Prompt tok/s</span>
+      ${b.tag_errors ? `<span class="warnc" title="Antworten mit fehlerhaft geöffneten/geschlossenen Tags">⚠ ${b.tag_errors} Tag-Fehler</span>` : ''}
+    </div>
     ${err}
     <div class="btns">
       <button onclick='openEdit(${attr(b.name)})'>Bearbeiten</button>
@@ -501,10 +528,6 @@ async function refresh() {
     const st = await (await fetch(`${base}/api/status`, {cache:'no-store'})).json();
     lastOk = Date.now();
     current = st;
-    $('srcnote').textContent = st.config_source === 'saved'
-      ? 'Liste in der UI geändert' + (st.data_file ? ' · gespeichert in ' + st.data_file : '')
-      : 'Startkonfiguration aus BACKENDS / config.json';
-    $('resetbtn').style.display = st.config_source === 'saved' ? '' : 'none';
     $('t-free').textContent = `${st.free_slots}/${st.total_slots}`;
     $('t-queue').textContent = st.queue.length;
     $('t-total').textContent = st.total_requests;
@@ -515,7 +538,7 @@ async function refresh() {
     $('backends').innerHTML = st.backends.length ? st.backends.map(backendCard).join('')
       : '<div class="empty-card">Noch kein Server eingetragen – „+ Server hinzufügen“.</div>';
     $('queue').innerHTML = st.queue.length ? st.queue.map((r, i) =>
-      `<div class="qi"><b>${i + 1}.</b> #${r.id} · ${esc(r.model || r.path)}${r.group ? ' · ' + esc(r.group) : ''} · wartet ${dur(r.queue_ms)}${r.attempts ? ' · Wiederholung' : ''}</div>`).join('')
+      `<div class="qi"><b>${i + 1}.</b> #${r.id} · ${esc(r.model || r.path)}${r.group ? ' · ' + esc(r.group) : ''} · <span title="API-Token">${r.token ? '🔑 ' + esc(r.token) : esc(r.client)}</span> · wartet ${dur(r.queue_ms)}${r.attempts ? ' · Wiederholung' : ''}</div>`).join('')
       : '<div class="empty">Leer – alle Anfragen werden sofort bedient.</div>';
     renderGroups(st);
     renderModelList(st);
@@ -568,6 +591,7 @@ function renderGroups(st) {
       <div>${g.members.length ? g.members.map(n => `<span class="mem ${stateOf(n)}"><i></i>${esc(n)}</span>`).join('') : '<span class="muted" style="font-size:12.5px">noch keine</span>'}</div>
       <div class="lbl">Modelle${g.auto_models ? ' <span style="text-transform:none;letter-spacing:0">(inkl. von den Servern gemeldete)</span>' : ''}</div>
       <div class="mchips">${chips || '<span class="muted" style="font-size:12.5px">keine – Modelle eintragen oder Server melden lassen</span>'}</div>
+      ${g.fallback ? `<div class="fb">Fallback → <b>${esc(g.fallback)}</b> nach ${g.fallback_after_sec} s Wartezeit${g.fallback_model ? ` · Modell dort: <b>${esc(g.fallback_model)}</b>` : ''}</div>` : ''}
       <div class="btns">
         <button onclick='openGroup(${attr(g.name)})'>Bearbeiten</button>
         <button class="danger" onclick='deleteGroup(${attr(g.name)})'>Löschen</button>
@@ -578,6 +602,7 @@ function renderGroups(st) {
       <div class="hint" style="margin-top:10px">Bekommen Modelle, die sie selbst melden, und Anfragen für Modelle, die keine Gruppe kennt.</div></div>` : '');
 }
 let editingGroup = null;
+$('g-fb').addEventListener('change', () => $('g-fbopts').style.display = $('g-fb').value ? '' : 'none');
 function openGroup(name) {
   editingGroup = name;
   const g = name ? current.groups.find(x => x.name === name) : null;
@@ -585,6 +610,12 @@ function openGroup(name) {
   $('g-name').value = g ? g.name : '';
   $('g-models').value = g ? g.models.join('\n') : (filterModel || '');
   $('g-auto').checked = g ? g.auto_models : true;
+  $('g-fb').innerHTML = '<option value="">– kein Fallback –</option>' + current.groups.filter(x => x.name !== name)
+    .map(x => `<option value="${esc(x.name)}">${esc(x.name)}</option>`).join('');
+  $('g-fb').value = g?.fallback || '';
+  $('g-fbsec').value = g?.fallback ? g.fallback_after_sec : 60;
+  $('g-fbmodel').value = g?.fallback_model || '';
+  $('g-fbopts').style.display = $('g-fb').value ? '' : 'none';
   $('g-members').innerHTML = current.backends.map(b => `<label><input type="checkbox" value="${esc(b.name)}" ${(g ? g.members.includes(b.name) : false) ? 'checked' : ''}>
     ${esc(b.name)} ${b.group && b.group !== name ? `<span class="muted">(jetzt in ${esc(b.group)})</span>` : ''}</label>`).join('') || '<span class="muted">Noch keine Server.</span>';
   $('g-err').textContent = '';
@@ -598,6 +629,7 @@ $('gform').addEventListener('submit', async ev => {
     models: $('g-models').value.split('\n').map(x => x.trim()).filter(Boolean),
     auto_models: $('g-auto').checked,
     members: [...$('g-members').querySelectorAll('input:checked')].map(i => i.value),
+    fallback: $('g-fb').value, fallback_after_sec: parseInt($('g-fbsec').value, 10) || 0, fallback_model: $('g-fbmodel').value.trim(),
   };
   const ok = editingGroup === null ? await call('POST', '/groups', body) : await call('PUT', `/groups/${enc(editingGroup)}`, body);
   if (!ok) { $('g-err').textContent = $('formerr').textContent; return; }
@@ -615,19 +647,26 @@ async function loadRecent() {
   if (!list.length && recent.length) return;
   recent = list.concat(recent).slice(0, 300);
   if (recent.length) lastSeq = recent[0].seq;
-  $('recentnote').textContent = recent.length ? `${recent.length} von max. 300` : '';
-  $('recent').innerHTML = recent.length ? recent.map(r => {
-    const gen = r.duration_ms - (r.ttfb_ms || 0);
-    const tps = r.tokens_out && gen > 0 ? (r.tokens_out / (gen / 1000)).toLocaleString('de-DE', {maximumFractionDigits: 1}) : '–';
+  renderRecent();
+}
+$('onlytag').addEventListener('change', () => renderRecent());
+function renderRecent() {
+  const onlyTag = $('onlytag').checked;
+  const rows = onlyTag ? recent.filter(r => r.tag_issues?.length) : recent;
+  const nTag = recent.filter(r => r.tag_issues?.length).length;
+  $('recentnote').textContent = recent.length ? `${recent.length} von max. 300${nTag ? ` · ${nTag} mit Tag-Fehlern` : ''}` : '';
+  $('recent').innerHTML = rows.length ? rows.map(r => {
+    const tps = tpsFmt(r.gen_tps);
+    const tagCell = r.tag_issues?.length ? `<td class="tagerr" title="${esc(r.tag_issues.join('\n'))}">⚠ ${esc(r.tag_issues[0])}${r.tag_issues.length > 1 ? ` (+${r.tag_issues.length - 1})` : ''}</td>` : '<td class="muted">–</td>';
     return `<tr>
-      <td>${hms(r.ended_at)}</td><td>${r.id}</td><td>${esc(r.model || r.path)}</td><td>${esc(r.group || '–')}</td>
+      <td>${hms(r.ended_at)}</td><td>${r.id}</td><td>${esc(r.model || r.path)}${r.effective_model ? ` <span class="muted">→ ${esc(r.effective_model)}</span>` : ''}</td><td>${esc(r.group || '–')}</td>
       <td>${r.token ? esc(r.token) : '<span class="muted">' + esc(r.client) + '</span>'}</td>
       <td>${esc(r.backend || '–')}${r.attempts > 1 ? ' <span class="muted">(' + r.attempts + '×)</span>' : ''}</td>
       <td class="${r.status >= 200 && r.status < 400 ? 'ok' : 'bad'}" title="${esc(r.error)}">${r.status}${r.error ? ' · ' + esc(r.error.slice(0, 40)) : ''}</td>
       <td class="n">${dur(r.queue_ms)}</td><td class="n">${dur(r.ttfb_ms)}</td><td class="n">${dur(r.duration_ms)}</td>
       <td class="n">${r.tokens_in || r.tokens_out ? num(r.tokens_in) + ' / ' + num(r.tokens_out) : '–'}</td><td class="n">${tps}</td>
-      <td class="n">${r.cost ? money(r.cost) : '–'}</td></tr>`; }).join('')
-    : '<tr><td colspan="13" class="empty">Noch keine Anfragen.</td></tr>';
+      <td class="n">${r.cost ? money(r.cost) : '–'}</td>${tagCell}</tr>`; }).join('')
+    : `<tr><td colspan="14" class="empty">${onlyTag ? 'Keine Antworten mit Tag-Fehlern.' : 'Noch keine Anfragen.'}</td></tr>`;
 }
 
 // ---------------- API access tokens ----------------
@@ -699,7 +738,33 @@ function renderAccessNote(st) {
 }
 
 // ---------------- statistics ----------------
-let stRange = 30, stMetric = 'requests', stData = null;
+let stRange = 30, stMetric = 'requests', stData = null, stBy = 'server';
+const OTHER = 'weitere Modelle';
+const STAT_KEYS = ['requests','errors','cancelled','duration_ms','ttfb_ms','ttfb_count','queue_ms','bytes','tokens_in','tokens_out','gen_ms','gen_tokens','tag_errors'];
+function mergeStat(a, b) {
+  const o = {...a};
+  for (const k of STAT_KEYS) o[k] = (a[k] || 0) + (b[k] || 0);
+  o.max_duration_ms = Math.max(a.max_duration_ms || 0, b.max_duration_ms || 0);
+  return o;
+}
+// stView: the series of the current breakdown (servers, or models with the rarely used ones folded together)
+function stView() {
+  const d = stData;
+  if (stBy === 'server') {
+    const names = colorOrder().filter(n => d.backends.includes(n));
+    if (d.backends.includes('(kein Server)')) names.push('(kein Server)');
+    return {names, all: names, row: day => d.data[day] || {}, raw: day => d.data[day] || {}, totals: d.totals, color: seriesColor};
+  }
+  const models = d.models || [], top = models.slice(0, 7), rest = models.slice(7);
+  const colored = [...top].filter(n => n !== '(ohne Modell)').sort((a, b) => a.localeCompare(b));
+  const color = n => { const i = colored.indexOf(n); return i >= 0 ? `var(--s${i + 1})` : 'var(--sx)'; };
+  const row = day => {
+    const r = {...(d.model_data[day] || {})};
+    if (rest.length) { let o = null; for (const m of rest) if (r[m]) { o = o ? mergeStat(o, r[m]) : {...r[m]}; delete r[m]; } if (o) r[OTHER] = o; }
+    return r;
+  };
+  return {names: top.concat(rest.length ? [OTHER] : []), all: models, row, raw: day => d.model_data[day] || {}, totals: d.model_totals, color};
+}
 const SERIES = 8;
 function colorOrder() {
   // color follows the server: current servers in list order first, then removed ones; "(kein Server)" stays gray
@@ -744,8 +809,7 @@ function niceMax(v) {
 function renderChart() {
   const box = $('chart'), d = stData;
   if (!d) return;
-  const names = colorOrder().filter(n => d.backends.includes(n));
-  if (d.backends.includes('(kein Server)')) names.push('(kein Server)');
+  const V = stView(), names = [...V.names], seriesColor = V.color;
   const stacked = stMetric !== 'avg';
   if (!stacked) { const k = names.indexOf('(kein Server)'); if (k >= 0) names.splice(k, 1); }
   $('charttitle').textContent = {requests:'Anfragen pro Tag', duration:'Rechenzeit pro Tag (Summe der Anfragedauer)', avg:'Ø Dauer pro Anfrage und Tag', tokens:'LLM-Tokens pro Tag (Ein + Aus)'}[stMetric];
@@ -757,7 +821,7 @@ function renderChart() {
   // per day: stacked total, or (avg) one bar per server side by side
   let maxV = 0;
   for (const day of d.days) {
-    const row = d.data[day] || {};
+    const row = V.row(day);
     if (stacked) maxV = Math.max(maxV, names.reduce((a, nm) => a + metricVal(row[nm]), 0));
     else for (const nm of names) maxV = Math.max(maxV, metricVal(row[nm]));
   }
@@ -771,7 +835,7 @@ function renderChart() {
   const barW = Math.max(2, Math.min(36, slot * 0.7));
   const every = Math.ceil(n / Math.max(1, Math.floor(pw / 46)));
   d.days.forEach((day, i) => {
-    const x0 = L + i * slot + (slot - barW) / 2, row = d.data[day] || {};
+    const x0 = L + i * slot + (slot - barW) / 2, row = V.row(day);
     if (stacked) {
       let acc = 0;
       const segs = names.map(nm => ({nm, v: metricVal(row[nm])})).filter(s => s.v > 0);
@@ -799,7 +863,7 @@ function renderChart() {
   const tip = $('tip'), cb = box.parentElement;
   box.querySelectorAll('.hit').forEach(el => {
     el.addEventListener('mousemove', ev => {
-      const day = el.dataset.day, row = d.data[day] || {};
+      const day = el.dataset.day, row = V.row(day);
       const rows = names.filter(nm => row[nm]).map(nm => `<div class="r"><span><i style="background:${seriesColor(nm)}"></i>${esc(nm)}</span>
         <b>${row[nm].requests} · ${dur(avg(row[nm].duration_ms, row[nm].requests))}</b></div>`).join('');
       const tot = names.reduce((a, nm) => a + (row[nm]?.requests || 0), 0);
@@ -820,17 +884,20 @@ function statRow(st) {
   return `<td class="n">${st.errors ? `<span class="bad">${st.errors}</span>` : 0}</td><td class="n">${st.cancelled}</td>
     <td class="n">${dur(st.duration_ms)}</td><td class="n">${dur(avg(st.duration_ms, st.requests))}</td><td class="n">${dur(st.max_duration_ms)}</td>
     <td class="n">${dur(avg(st.ttfb_ms, st.ttfb_count))}</td><td class="n">${dur(avg(st.queue_ms, st.requests))}</td>
-    <td class="n">${ktok(st.tokens_in)}</td><td class="n">${ktok(st.tokens_out)}</td><td class="n">${bytes(st.bytes)}</td>`;
+    <td class="n">${ktok(st.tokens_in)}</td><td class="n">${ktok(st.tokens_out)}</td>
+    <td class="n">${st.gen_ms ? tpsFmt(st.gen_tokens / (st.gen_ms / 1000)) : '–'}</td>
+    <td class="n">${st.tag_errors ? `<span class="warnc">${st.tag_errors}</span>` : 0}</td><td class="n">${bytes(st.bytes)}</td>`;
 }
 function renderStatTables() {
   const d = stData; if (!d) return;
-  const names = colorOrder().filter(n => d.backends.includes(n));
-  if (d.backends.includes('(kein Server)')) names.push('(kein Server)');
-  const all = names.reduce((a, n) => a + d.totals[n].requests, 0);
-  const sw = n => `<td class="sw"><i style="background:${seriesColor(n)}"></i>${esc(n)}</td>`;
-  $('sttotals').innerHTML = names.length ? names.map(n => { const t = d.totals[n];
+  const V = stView(), names = V.all;
+  const label = stBy === 'server' ? 'Server' : 'Modell';
+  $('stbyhead').textContent = label; $('stbyhead2').textContent = label; $('stdaysum').textContent = 'Pro Tag und ' + label;
+  const all = names.reduce((a, n) => a + V.totals[n].requests, 0);
+  const sw = n => `<td class="sw"><i style="background:${V.color(n)}"></i>${esc(n)}</td>`;
+  $('sttotals').innerHTML = names.length ? names.map(n => { const t = V.totals[n];
     return `<tr>${sw(n)}<td class="n">${t.requests}</td><td class="n">${all ? Math.round(t.requests * 100 / all) : 0} %</td>${statRow(t)}</tr>`; }).join('')
-    : '<tr><td colspan="13" class="empty">Keine Anfragen in diesem Zeitraum.</td></tr>';
+    : '<tr><td colspan="15" class="empty">Keine Anfragen in diesem Zeitraum.</td></tr>';
   const toks = d.tokens || [];
   const tsum = toks.reduce((a, n) => a + d.token_totals[n].cost, 0);
   $('sttokens').innerHTML = toks.length ? toks.map(n => { const t = d.token_totals[n];
@@ -839,15 +906,15 @@ function renderStatTables() {
     : '<tr><td colspan="5" class="empty">Keine Anfragen mit API-Token in diesem Zeitraum.</td></tr>';
   const rows = [];
   for (const day of [...d.days].reverse()) for (const n of names) {
-    const st = d.data[day]?.[n]; if (st) rows.push(`<tr><td>${dayLong(day)}</td>${sw(n)}<td class="n">${st.requests}</td>${statRow(st)}</tr>`);
+    const st = V.raw(day)[n]; if (st) rows.push(`<tr><td>${dayLong(day)}</td>${sw(n)}<td class="n">${st.requests}</td>${statRow(st)}</tr>`);
   }
-  $('stdays').innerHTML = rows.join('') || '<tr><td colspan="13" class="empty">Keine Daten.</td></tr>';
+  $('stdays').innerHTML = rows.join('') || '<tr><td colspan="15" class="empty">Keine Daten.</td></tr>';
 }
 
 async function loadStats() {
   try {
     stData = await (await fetch(`${base}/api/stats?days=${stRange}`, {cache:'no-store'})).json();
-    $('csvlink').href = `${base}/api/stats?days=${stRange}&format=csv`;
+    $('csvlink').href = `${base}/api/stats?days=${stRange}&format=csv&by=${stBy}`;
     renderChart(); renderStatTables();
   } catch (e) {}
 }
@@ -860,11 +927,20 @@ function segment(id, set) {
 }
 segment('rangeSeg', v => { stRange = +v; loadStats(); });
 segment('metricSeg', v => { stMetric = v; renderChart(); });
+segment('bySeg', v => { stBy = v; renderChart(); renderStatTables(); $('csvlink').href = `${base}/api/stats?days=${stRange}&format=csv&by=${stBy}`; });
 async function resetStats() {
   if (confirm('Gesamte Statistik unwiderruflich löschen?')) { await call('POST', '/stats/reset'); loadStats(); }
 }
 let rsz; window.addEventListener('resize', () => { clearTimeout(rsz); rsz = setTimeout(renderChart, 150); });
 
+function showPage() {
+  const page = location.hash === '#zugriff' ? 'tokens' : 'main';
+  $('page-main').hidden = page !== 'main'; $('page-tokens').hidden = page !== 'tokens';
+  document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.page === page));
+  if (page === 'tokens') loadTokens(); else { renderChart(); }
+}
+window.addEventListener('hashchange', showPage);
+showPage();
 refresh().then(loadStats);
 loadTokens();
 setInterval(loadTokens, 30000);

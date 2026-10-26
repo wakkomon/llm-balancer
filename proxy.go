@@ -191,7 +191,11 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		lastBackend = b
 
-		out, err := px.upstream(ctx, r, b, body)
+		sendBody := body
+		if req.rewrite != "" {
+			sendBody = withModel(body, req.rewrite)
+		}
+		out, err := px.upstream(ctx, r, b, sendBody)
 		if err != nil {
 			px.pool.Release(b, req, err.Error())
 			jsonError(w, http.StatusInternalServerError, err.Error())
@@ -229,10 +233,16 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		scan := newUsageScanner(resp.Header.Get("Content-Type"))
-		n, copyErr := px.stream(w, resp, req, scan)
-		if u := scan.Finish(); u.Found {
-			px.pool.setUsage(req, u, px.access)
+		if resp.StatusCode < 300 {
+			scan.tags = newTagChecker(px.cfg.TagCheck)
+			scan.onContent = func() {
+				req.chunks.Add(1)
+				req.lastChunk.Store(time.Now().UnixNano())
+			}
 		}
+		n, copyErr := px.stream(w, resp, req, scan)
+		u := scan.Finish()
+		px.pool.setResult(req, u, scan.TagIssues(copyErr == nil && ctx.Err() == nil), px.access)
 		resp.Body.Close()
 		errMsg := ""
 		if copyErr != nil && ctx.Err() == nil {

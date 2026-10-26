@@ -88,6 +88,7 @@ func setup(t *testing.T, mod func(*Config), backends ...*fakeLLM) (*httptest.Ser
 	px.access, pool.access = acc, acc
 	srv := httptest.NewServer(newMux(cfg, pool, px))
 	t.Cleanup(srv.Close)
+	testPools = append(testPools, testPool{srv.URL, pool})
 	return srv, pool
 }
 
@@ -321,3 +322,10 @@ func TestAllDownFailsFast(t *testing.T) {
 		t.Errorf("got %d after %v", resp.StatusCode, time.Since(start))
 	}
 }
+
+type testPool struct {
+	url  string
+	pool *Pool
+}
+
+var testPools []testPool

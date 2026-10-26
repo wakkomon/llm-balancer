@@ -208,6 +208,7 @@ func TestPricesAndTokenCounting(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		chatModel(t, srv.URL, "m", auth)
 	}
+	waitFor(t, func() bool { st := status(t, srv.URL); return len(st.Recent) == 2 })
 	_, list := call(t, "GET", srv.URL+"/balancer/api/tokens", nil, "")
 	var toks []tokenView
 	json.Unmarshal([]byte(list), &toks)

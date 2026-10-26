@@ -141,3 +141,20 @@ func TestDownAndDisabledState(t *testing.T) {
 		t.Errorf("states: %v", st.States)
 	}
 }
+
+func TestStatsPerModel(t *testing.T) {
+	big := newModelLLM(t, "big", 20*time.Millisecond, "qwen3-32b")
+	srv, _ := setup(t, func(c *Config) { c.Backends = []BackendConfig{{Name: "big", URL: big.srv.URL}} })
+	chatModel(t, srv.URL, "qwen3-32b", nil)
+	chatModel(t, srv.URL, "qwen3-32b", nil)
+	chatModel(t, srv.URL, "llama", nil)
+	// the response reaches the client a moment before the request is booked
+	waitFor(t, func() bool { return len(getStats(t, srv.URL, 1).Models) == 2 })
+	rep := getStats(t, srv.URL, 1)
+	if len(rep.Models) != 2 || rep.Models[0] != "qwen3-32b" {
+		t.Fatalf("models: %v", rep.Models)
+	}
+	if m := rep.ModelTotals["qwen3-32b"]; m.Requests != 2 || m.TokensIn != 2000 || m.TokensOut != 1000 {
+		t.Errorf("qwen: %+v", m)
+	}
+}

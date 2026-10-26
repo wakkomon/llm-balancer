@@ -1,0 +1,104 @@
+package main
+
+import (
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+)
+
+func chatBody(t *testing.T, url, model string) (string, string) {
+	t.Helper()
+	resp, err := http.Post(url+"/v1/chat/completions", "application/json", strings.NewReader(`{"model":"`+model+`","messages":[]}`))
+	if err != nil {
+		t.Error(err)
+		return "", ""
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.Header.Get("X-LLM-Balancer-Backend"), string(b)
+}
+
+func TestFallbackGroupAfterWait(t *testing.T) {
+	big := newModelLLM(t, "big", 2500*time.Millisecond, "qwen3-32b")
+	small := newModelLLM(t, "small", 50*time.Millisecond, "llama3.2:3b")
+	srv, _ := setup(t, func(c *Config) {
+		c.Groups = []GroupConfig{
+			{Name: "gross", Fallback: "klein", FallbackAfterSec: 1, FallbackModel: "llama3.2:3b"},
+			{Name: "klein"},
+		}
+		c.Backends = []BackendConfig{
+			{Name: "big", URL: big.srv.URL, Group: "gross"},
+			{Name: "small", URL: small.srv.URL, Group: "klein"},
+		}
+	})
+	discoverAll(t, srv.URL)
+	go chatBody(t, srv.URL, "qwen3-32b") // occupies big for 2.5 s
+	time.Sleep(100 * time.Millisecond)
+	start := time.Now()
+	be, body := chatBody(t, srv.URL, "qwen3-32b")
+	waited := time.Since(start)
+	if be != "small" || waited < 900*time.Millisecond || waited > 2200*time.Millisecond {
+		t.Errorf("expected fallback to small after ~1s, got %s after %v", be, waited)
+	}
+	if !strings.Contains(body, `"model":"llama3.2:3b"`) {
+		t.Errorf("model not replaced: %s", body)
+	}
+	st := status(t, srv.URL)
+	r := st.Recent[0]
+	if r.Group != "gross → klein" || r.Effective != "llama3.2:3b" || r.Model != "qwen3-32b" {
+		t.Errorf("recent: group=%q effective=%q model=%q", r.Group, r.Effective, r.Model)
+	}
+}
+
+func TestFallbackImmediatelyWhenGroupDown(t *testing.T) {
+	big := newModelLLM(t, "big", 10*time.Millisecond, "qwen3-32b")
+	small := newModelLLM(t, "small", 10*time.Millisecond, "llama3.2:3b")
+	srv, pool := setup(t, func(c *Config) {
+		c.Groups = []GroupConfig{{Name: "gross", Models: []string{"qwen3-32b"}, Fallback: "klein", FallbackAfterSec: 60}, {Name: "klein"}}
+		c.Backends = []BackendConfig{{Name: "big", URL: big.srv.URL, Group: "gross"}, {Name: "small", URL: small.srv.URL, Group: "klein"}}
+	})
+	pool.mu.Lock()
+	pool.backends[0].healthy = false
+	pool.mu.Unlock()
+	start := time.Now()
+	be, body := chatBody(t, srv.URL, "qwen3-32b")
+	if be != "small" || time.Since(start) > 300*time.Millisecond || !strings.Contains(body, `"model":"qwen3-32b"`) {
+		t.Errorf("got %s after %v: %s", be, time.Since(start), body)
+	}
+}
+
+func TestFallbackGroupValidation(t *testing.T) {
+	a := newModelLLM(t, "a", 10*time.Millisecond)
+	srv, _ := setup(t, func(c *Config) { c.Backends = []BackendConfig{{Name: "a", URL: a.srv.URL}} })
+	if c := api(t, "POST", srv.URL+"/balancer/api/groups", `{"name":"x","fallback":"nope"}`, ""); c != 400 {
+		t.Errorf("unknown fallback: %d", c)
+	}
+	api(t, "POST", srv.URL+"/balancer/api/groups", `{"name":"b"}`, "")
+	if c := api(t, "POST", srv.URL+"/balancer/api/groups", `{"name":"x","fallback":"b","fallback_after_sec":30}`, ""); c != 204 {
+		t.Fatalf("add: %d", c)
+	}
+	if c := api(t, "PUT", srv.URL+"/balancer/api/groups/x", `{"name":"x","fallback":"x"}`, ""); c != 400 {
+		t.Errorf("self fallback: %d", c)
+	}
+	api(t, "PUT", srv.URL+"/balancer/api/groups/b", `{"name":"b2"}`, "")
+	st := status(t, srv.URL)
+	if st.Groups[0].Fallback != "b2" && st.Groups[1].Fallback != "b2" {
+		t.Errorf("rename not followed: %+v", st.Groups)
+	}
+	api(t, "DELETE", srv.URL+"/balancer/api/groups/b2", "", "")
+	if st := status(t, srv.URL); st.Groups[0].Fallback != "" {
+		t.Errorf("delete not followed: %+v", st.Groups)
+	}
+}
+
+// discoverAll triggers model discovery through the pool behind a test server.
+func discoverAll(t *testing.T, url string) {
+	t.Helper()
+	for _, p := range testPools {
+		if p.url == url {
+			discover(t, p.pool)
+		}
+	}
+}

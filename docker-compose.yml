@@ -11,7 +11,7 @@ services:
       # Startkonfiguration: name=url[*parallele_slots][@priorität], kommagetrennt.
       # Wird nur verwendet, solange die Server-Liste nicht in der Web-UI geändert wurde.
       # Danach gilt die gespeicherte Liste im Volume (/data/backends.json);
-      # "Auf Startkonfiguration zurücksetzen" in der UI kehrt zu diesem Wert zurück.
+      # Zurück zu diesem Wert: POST /balancer/api/reset (oder /data/backends.json löschen).
       BACKENDS: "gpu=http://192.168.1.50:8080@0,amd=http://192.168.1.60:8080@1"
       # Optional: Bearer-Tokens der LLM-Server (name=token, Namen wie in BACKENDS).
       # Auch später in der Web-UI pro Server einstellbar.
@@ -26,6 +26,7 @@ services:
       CURRENCY: "€"              # Währung für die Preise pro API-Token
       # UNKNOWN_MODEL: "reject"  # Modelle, die keine Gruppe/kein Server kennt: 404 statt an alle Server
       # STREAM_USAGE: "false"    # Stream-Anfragen nicht um stream_options.include_usage ergänzen
+      # TAG_CHECK: "think,tool_call"  # Tags, die im generierten Text geprüft werden ("*" = alle, "off" = aus)
       STATS_DAYS: "400"          # wie viele Tage Statistik aufbewahrt werden
       QUEUE_TIMEOUT_SEC: "900"   # max. Wartezeit in der Queue (0 = unbegrenzt)
       MAX_QUEUE: "0"             # max. Anzahl wartender Anfragen (0 = unbegrenzt)

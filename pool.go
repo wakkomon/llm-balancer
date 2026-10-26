@@ -46,6 +46,13 @@ type Backend struct {
 	lastErr      string
 	lastErrAt    time.Time
 	lastOkAt     time.Time
+	// tokens per second
+	genTokens    int64
+	genTime      time.Duration
+	promptTokens int64
+	promptTime   time.Duration
+	lastTPS      float64
+	tagErrors    int64
 }
 
 func (b *Backend) usable(now time.Time) bool {
@@ -54,27 +61,36 @@ func (b *Backend) usable(now time.Time) bool {
 
 // ReqInfo tracks one client request for the status UI.
 type ReqInfo struct {
-	ID        uint64    `json:"id"`
-	Method    string    `json:"method"`
-	Path      string    `json:"path"`
-	Model     string    `json:"model,omitempty"`
-	Stream    bool      `json:"stream"`
-	Client    string    `json:"client"`
-	Token     string    `json:"token,omitempty"` // name of the client access token
-	Group     string    `json:"group,omitempty"`
-	TokensIn  int64     `json:"tokens_in,omitempty"`
-	TokensOut int64     `json:"tokens_out,omitempty"`
-	Cost      float64   `json:"cost,omitempty"`
-	Seq       uint64    `json:"seq,omitempty"` // order in which requests finished
-	State     string    `json:"state"`         // queued | running | done
-	Backend   string    `json:"backend,omitempty"`
-	Attempts  int       `json:"attempts"`
-	QueuedAt  time.Time `json:"queued_at"`
-	StartedAt time.Time `json:"started_at,omitempty"`
-	FirstByte time.Time `json:"-"`
-	EndedAt   time.Time `json:"ended_at,omitempty"`
-	Status    int       `json:"status,omitempty"`
-	Error     string    `json:"error,omitempty"`
+	ID        uint64   `json:"id"`
+	Method    string   `json:"method"`
+	Path      string   `json:"path"`
+	Model     string   `json:"model,omitempty"`
+	Stream    bool     `json:"stream"`
+	Client    string   `json:"client"`
+	Token     string   `json:"token,omitempty"` // name of the client access token
+	Group     string   `json:"group,omitempty"`
+	TokensIn  int64    `json:"tokens_in,omitempty"`
+	TokensOut int64    `json:"tokens_out,omitempty"`
+	Cost      float64  `json:"cost,omitempty"`
+	Seq       uint64   `json:"seq,omitempty"` // order in which requests finished
+	TagIssues []string `json:"tag_issues,omitempty"`
+	// tokens per second: generation (output tokens / time after the first byte) and prompt processing
+	GenTPS    float64 `json:"gen_tps,omitempty"`
+	PromptTPS float64 `json:"prompt_tps,omitempty"`
+	LiveTPS   float64 `json:"live_tps,omitempty"`        // running requests: estimate from streamed chunks
+	Effective string  `json:"effective_model,omitempty"` // model actually sent (fallback with replacement model)
+	chunks    atomic.Int64
+	lastChunk atomic.Int64 // unix nano of the latest content chunk
+	rewrite   string       // model to send instead (fallback)
+	State     string       `json:"state"` // queued | running | done
+	Backend   string       `json:"backend,omitempty"`
+	Attempts  int          `json:"attempts"`
+	QueuedAt  time.Time    `json:"queued_at"`
+	StartedAt time.Time    `json:"started_at,omitempty"`
+	FirstByte time.Time    `json:"-"`
+	EndedAt   time.Time    `json:"ended_at,omitempty"`
+	Status    int          `json:"status,omitempty"`
+	Error     string       `json:"error,omitempty"`
 	bytes     atomic.Int64
 
 	// derived for JSON output
@@ -87,6 +103,7 @@ type ReqInfo struct {
 type waiter struct {
 	req     *ReqInfo
 	model   string // routing is re-evaluated on every dispatch (groups/servers can change while waiting)
+	force   bool   // fallback allowed right away (all servers of the group were down)
 	exclude map[*Backend]bool
 	ch      chan *Backend // buffered(1); written under Pool.mu
 }
@@ -126,6 +143,7 @@ func NewPool(cfg Config, initial []BackendConfig, store *Store) (*Pool, error) {
 		initialGroups: append([]GroupConfig{}, cfg.Groups...)}
 	list := initial
 	p.groups = append([]GroupConfig{}, cfg.Groups...)
+	go p.tick()
 	if store != nil {
 		saved, ok, err := store.Load()
 		if err != nil {
@@ -192,6 +210,16 @@ func (p *Pool) pickFree(exclude map[*Backend]bool, rt Route) *Backend {
 		if exclude[b] || !rt.allows(b) || !b.usable(now) || b.active >= b.Max {
 			continue
 		}
+		if best != nil {
+			_, bFb := rt.fallback[b]
+			_, bestFb := rt.fallback[best]
+			if bFb != bestFb { // a free server of the requested group always beats a fallback server
+				if bestFb {
+					best = b
+				}
+				continue
+			}
+		}
 		if best == nil || better(b, best) {
 			best = b
 		}
@@ -211,6 +239,17 @@ func better(a, b *Backend) bool {
 	return a.lastAssigned.Before(b.lastAssigned)
 }
 
+// assignRoute assigns b and records whether it was taken as a fallback (and which model to send).
+func (p *Pool) assignRoute(b *Backend, r *ReqInfo, rt Route) {
+	r.Group, r.rewrite, r.Effective = rt.Group, "", ""
+	if m, ok := rt.fallback[b]; ok {
+		r.Group = rt.Group + " → " + b.group
+		r.rewrite = m
+		r.Effective = m
+	}
+	p.assign(b, r)
+}
+
 func (p *Pool) assign(b *Backend, r *ReqInfo) {
 	b.active++
 	b.total++
@@ -227,7 +266,14 @@ func (p *Pool) assign(b *Backend, r *ReqInfo) {
 // waiting in the FIFO queue if necessary.
 func (p *Pool) Acquire(ctx context.Context, r *ReqInfo, exclude map[*Backend]bool) (*Backend, error) {
 	p.mu.Lock()
-	rt := p.routeLocked(r.Model)
+	rt := p.routeWaitLocked(r.Model, 0, false)
+	force := false
+	if rt.Mode == "group" && !p.anyUsable(rt) {
+		// every server of the group is down/disabled: use the fallback right away
+		if rf := p.routeWaitLocked(r.Model, 0, true); p.anyUsable(rf) {
+			rt, force = rf, true
+		}
+	}
 	r.Group = rt.Group
 	if rt.Mode == "reject" {
 		p.totalRejected++
@@ -240,7 +286,7 @@ func (p *Pool) Acquire(ctx context.Context, r *ReqInfo, exclude map[*Backend]boo
 	}
 	// Take a free slot directly unless an earlier waiter could use that very server (FIFO fairness).
 	if b := p.pickFree(exclude, rt); b != nil && !p.someWaiterWants(b) {
-		p.assign(b, r)
+		p.assignRoute(b, r, rt)
 		p.mu.Unlock()
 		return b, nil
 	}
@@ -255,7 +301,7 @@ func (p *Pool) Acquire(ctx context.Context, r *ReqInfo, exclude map[*Backend]boo
 		p.mu.Unlock()
 		return nil, ErrQueueFull
 	}
-	w := &waiter{req: r, model: r.Model, exclude: exclude, ch: make(chan *Backend, 1)}
+	w := &waiter{req: r, model: r.Model, force: force, exclude: exclude, ch: make(chan *Backend, 1)}
 	r.State = "queued"
 	if len(exclude) > 0 {
 		// retries already waited once: put them at the front of the queue
@@ -316,7 +362,7 @@ func (p *Pool) anyCandidate(exclude map[*Backend]bool, rt Route) bool {
 // someWaiterWants: could a queued request use server b? Caller holds p.mu.
 func (p *Pool) someWaiterWants(b *Backend) bool {
 	for _, w := range p.queue {
-		if !w.exclude[b] && p.routeLocked(w.model).allows(b) {
+		if !w.exclude[b] && p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), w.force).allows(b) {
 			return true
 		}
 	}
@@ -328,7 +374,7 @@ func (p *Pool) someWaiterWants(b *Backend) bool {
 func (p *Pool) dispatchLocked() {
 	for i := 0; i < len(p.queue); {
 		w := p.queue[i]
-		rt := p.routeLocked(w.model)
+		rt := p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), w.force)
 		b := p.pickFree(w.exclude, rt)
 		if b == nil && len(w.exclude) > 0 {
 			// A retried request avoids the server that just failed/was busy – but if that server
@@ -340,8 +386,7 @@ func (p *Pool) dispatchLocked() {
 			continue
 		}
 		p.queue = append(p.queue[:i], p.queue[i+1:]...)
-		w.req.Group = rt.Group
-		p.assign(b, w.req)
+		p.assignRoute(b, w.req, rt)
 		w.ch <- b
 	}
 }
@@ -420,6 +465,18 @@ func (p *Pool) Finish(r *ReqInfo, b *Backend, status int, errMsg string) {
 	if b != nil && r.Status > 0 && r.Status < 500 && r.Status != 499 && r.Status != 401 && r.Status != 403 && errMsg == "" {
 		b.lastOkAt = r.EndedAt
 	}
+	if b != nil && r.GenTPS > 0 {
+		b.genTokens += r.TokensOut
+		b.genTime += r.EndedAt.Sub(r.FirstByte)
+		b.lastTPS = r.GenTPS
+	}
+	if b != nil && r.PromptTPS > 0 {
+		b.promptTokens += r.TokensIn
+		b.promptTime += r.FirstByte.Sub(r.StartedAt)
+	}
+	if b != nil && len(r.TagIssues) > 0 {
+		b.tagErrors++
+	}
 	if p.stats != nil {
 		p.stats.Record(r)
 	}
@@ -462,7 +519,11 @@ type BackendStatus struct {
 	AvgTTFBMs   int64      `json:"avg_ttfb_ms"`
 	LastError   string     `json:"last_error,omitempty"`
 	LastErrorAt string     `json:"last_error_at,omitempty"`
-	State       string     `json:"state"` // idle | busy | error | down | disabled
+	State       string     `json:"state"`          // idle | busy | error | down | disabled
+	AvgTPS      float64    `json:"avg_tps"`        // output tokens/s over all requests with usage
+	LastTPS     float64    `json:"last_tps"`       // of the last request
+	PromptTPS   float64    `json:"avg_prompt_tps"` // prompt tokens/s (prompt processing until the first byte)
+	TagErrors   int64      `json:"tag_errors"`
 	HasAPIKey   bool       `json:"has_api_key"`
 	Group       string     `json:"group"`
 	Models      []string   `json:"models"`
@@ -493,10 +554,19 @@ func snapshot(r *ReqInfo, now time.Time) *ReqInfo {
 	c := &ReqInfo{
 		ID: r.ID, Method: r.Method, Path: r.Path, Model: r.Model, Stream: r.Stream, Client: r.Client, Token: r.Token,
 		Group: r.Group, TokensIn: r.TokensIn, TokensOut: r.TokensOut, Cost: r.Cost, Seq: r.Seq,
+		TagIssues: r.TagIssues, GenTPS: r.GenTPS, PromptTPS: r.PromptTPS, Effective: r.Effective,
 		State: r.State, Backend: r.Backend, Attempts: r.Attempts, QueuedAt: r.QueuedAt,
 		StartedAt: r.StartedAt, EndedAt: r.EndedAt, Status: r.Status, Error: r.Error,
 	}
 	c.Bytes = r.bytes.Load()
+	if r.State == "running" && !r.FirstByte.IsZero() {
+		if n := r.chunks.Load(); n > 1 {
+			last := time.Unix(0, r.lastChunk.Load())
+			if d := last.Sub(r.FirstByte).Seconds(); d > 0.2 {
+				c.LiveTPS = float64(n-1) / d // ≈ one token per streamed chunk
+			}
+		}
+	}
 	end := now
 	if !r.EndedAt.IsZero() {
 		end = r.EndedAt
@@ -535,7 +605,8 @@ func (p *Pool) Status() Status {
 	st.Currency = p.cfg.Currency
 	st.Groups = []GroupStatus{}
 	for _, g := range p.groups {
-		gs := GroupStatus{Name: g.Name, Models: append([]string{}, g.Models...), Auto: g.auto(), Members: []string{}, Available: []string{}}
+		gs := GroupStatus{Name: g.Name, Models: append([]string{}, g.Models...), Auto: g.auto(), Members: []string{}, Available: []string{},
+			Fallback: g.Fallback, FallbackAfterSec: g.FallbackAfterSec, FallbackModel: g.FallbackModel}
 		seen := map[string]bool{}
 		for _, m := range g.Models {
 			if !strings.Contains(m, "*") && !seen[strings.ToLower(m)] {
@@ -574,6 +645,13 @@ func (p *Pool) Status() Status {
 			Total: b.total, Errors: b.errors, LastError: b.lastErr, LastErrorAt: fmtTime(b.lastErrAt),
 			Running: running[b.Name]}
 		bs.State = backendState(b, now)
+		if b.genTime > 0 {
+			bs.AvgTPS = float64(b.genTokens) / b.genTime.Seconds()
+		}
+		if b.promptTime > 0 {
+			bs.PromptTPS = float64(b.promptTokens) / b.promptTime.Seconds()
+		}
+		bs.LastTPS, bs.TagErrors = b.lastTPS, b.tagErrors
 		bs.HasAPIKey = b.apiKey != ""
 		bs.Group = b.group
 		bs.Models = append([]string{}, b.models...)
@@ -645,24 +723,16 @@ func (p *Pool) anyUsable(rt Route) bool {
 	return false
 }
 
-// setUsage stores the token counts of a request and books its cost on the client token.
-func (p *Pool) setUsage(r *ReqInfo, u Usage, acc *Access) {
-	cost := 0.0
-	if acc != nil {
-		cost = acc.AddUsage(r.Token, u)
-	}
-	p.mu.Lock()
-	r.TokensIn, r.TokensOut, r.Cost = u.In, u.Out, cost
-	p.mu.Unlock()
-}
-
 type GroupStatus struct {
-	Name      string   `json:"name"`
-	Models    []string `json:"models"` // configured names/patterns
-	Auto      bool     `json:"auto_models"`
-	Members   []string `json:"members"`
-	Available []string `json:"available"` // concrete models this group routes
-	Queued    int      `json:"queued"`
+	Fallback         string   `json:"fallback,omitempty"`
+	FallbackAfterSec int      `json:"fallback_after_sec"`
+	FallbackModel    string   `json:"fallback_model,omitempty"`
+	Name             string   `json:"name"`
+	Models           []string `json:"models"` // configured names/patterns
+	Auto             bool     `json:"auto_models"`
+	Members          []string `json:"members"`
+	Available        []string `json:"available"` // concrete models this group routes
+	Queued           int      `json:"queued"`
 }
 
 func matchesAny(patterns []string, model string) bool {
@@ -684,4 +754,41 @@ func (p *Pool) RecentAfter(after uint64) []*ReqInfo {
 		out = append(out, snapshot(p.recent[i], now))
 	}
 	return out
+}
+
+// setResult stores usage, token rates and tag issues of a finished response.
+func (p *Pool) setResult(r *ReqInfo, u Usage, issues []string, acc *Access) {
+	cost := 0.0
+	if acc != nil && u.Found {
+		cost = acc.AddUsage(r.Token, u)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	r.TagIssues = issues
+	if !u.Found {
+		return
+	}
+	r.TokensIn, r.TokensOut, r.Cost = u.In, u.Out, cost
+	now := time.Now()
+	if !r.FirstByte.IsZero() {
+		if gen := now.Sub(r.FirstByte).Seconds(); u.Out > 1 && gen > 0.05 && r.Stream {
+			r.GenTPS = float64(u.Out) / gen
+		}
+		if pp := r.FirstByte.Sub(r.StartedAt).Seconds(); u.In > 0 && pp > 0.01 && r.Stream {
+			r.PromptTPS = float64(u.In) / pp
+		}
+	}
+}
+
+// tick re-runs the dispatcher every second so waiting requests reach their fallback group in time.
+func (p *Pool) tick() {
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for range t.C {
+		p.mu.Lock()
+		if len(p.queue) > 0 {
+			p.dispatchLocked()
+		}
+		p.mu.Unlock()
+	}
 }

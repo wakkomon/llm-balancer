@@ -18,6 +18,11 @@ type GroupConfig struct {
 	Name       string   `json:"name"`
 	Models     []string `json:"models"`      // model names or patterns with *, e.g. "qwen3*"
 	AutoModels *bool    `json:"auto_models"` // also route models the members report via /v1/models (default true)
+	// Fallback: if a request for this group waits longer than FallbackAfterSec in the queue (or every
+	// server of the group is down), the servers of the Fallback group may take it as well.
+	Fallback         string `json:"fallback,omitempty"`
+	FallbackAfterSec int    `json:"fallback_after_sec,omitempty"`
+	FallbackModel    string `json:"fallback_model,omitempty"` // optional: model name to send to the fallback servers
 }
 
 func (g GroupConfig) auto() bool { return g.AutoModels == nil || *g.AutoModels }
@@ -41,6 +46,14 @@ func normalizeGroup(g *GroupConfig) error {
 	g.Models = ms
 	if g.Models == nil {
 		g.Models = []string{}
+	}
+	g.Fallback = strings.TrimSpace(g.Fallback)
+	g.FallbackModel = strings.TrimSpace(g.FallbackModel)
+	if g.FallbackAfterSec < 0 {
+		return errors.New("Fallback-Wartezeit darf nicht negativ sein")
+	}
+	if g.Fallback == g.Name {
+		return errors.New("eine Gruppe kann nicht ihr eigener Fallback sein")
 	}
 	return nil
 }
@@ -96,9 +109,40 @@ func (p *Pool) membersLocked(group string) []*Backend {
 
 // Route describes which servers may handle a model.
 type Route struct {
-	allow map[*Backend]bool // nil = every server
-	Group string            // matching group(s), comma separated
-	Mode  string            // group | model | all | reject
+	allow    map[*Backend]bool // nil = every server
+	Group    string            // matching group(s), comma separated
+	Mode     string            // group | model | all | reject
+	groups   []string
+	fallback map[*Backend]string // servers added as fallback → model to send instead ("" = unchanged)
+}
+
+// routeWaitLocked is routeLocked plus fallback groups: their servers are added once the request has
+// waited long enough (or force, when every server of the group is down). Caller holds p.mu.
+func (p *Pool) routeWaitLocked(model string, waited time.Duration, force bool) Route {
+	rt := p.routeLocked(model)
+	if rt.Mode != "group" {
+		return rt
+	}
+	for _, name := range rt.groups {
+		g := p.groupLocked(name)
+		if g == nil || g.Fallback == "" || p.groupLocked(g.Fallback) == nil {
+			continue
+		}
+		if !force && waited < time.Duration(g.FallbackAfterSec)*time.Second {
+			continue
+		}
+		for _, b := range p.membersLocked(g.Fallback) {
+			if rt.allow[b] {
+				continue
+			}
+			if rt.fallback == nil {
+				rt.fallback = map[*Backend]string{}
+			}
+			rt.allow[b] = true
+			rt.fallback[b] = g.FallbackModel
+		}
+	}
+	return rt
 }
 
 // routeLocked resolves a model name to the servers that may handle it. Caller holds p.mu.
@@ -136,7 +180,7 @@ func (p *Pool) routeLocked(model string) Route {
 		}
 	}
 	if len(names) > 0 {
-		return Route{allow: allow, Group: strings.Join(names, ","), Mode: "group"}
+		return Route{allow: allow, Group: strings.Join(names, ","), Mode: "group", groups: names}
 	}
 	for _, b := range p.backends {
 		if b.reports(model) {
@@ -307,6 +351,9 @@ func (p *Pool) AddGroup(g GroupConfig, members []string) error {
 	if p.groupLocked(g.Name) != nil {
 		return httpErr{409, fmt.Errorf("Gruppe %q gibt es schon", g.Name)}
 	}
+	if g.Fallback != "" && p.groupLocked(g.Fallback) == nil {
+		return httpErr{400, fmt.Errorf("unbekannte Fallback-Gruppe %q", g.Fallback)}
+	}
 	p.groups = append(p.groups, g)
 	if err := p.setMembersLocked(g.Name, members); err != nil {
 		p.groups = p.groups[:len(p.groups)-1]
@@ -331,6 +378,12 @@ func (p *Pool) UpdateGroup(name string, g GroupConfig, members []string) error {
 	if g.Name != name && p.groupLocked(g.Name) != nil {
 		return httpErr{409, fmt.Errorf("Gruppe %q gibt es schon", g.Name)}
 	}
+	if g.Fallback != "" && g.Fallback != name && p.groupLocked(g.Fallback) == nil {
+		return httpErr{400, fmt.Errorf("unbekannte Fallback-Gruppe %q", g.Fallback)}
+	}
+	if g.Fallback == name { // renamed group pointing to its old name
+		return httpErr{400, errors.New("eine Gruppe kann nicht ihr eigener Fallback sein")}
+	}
 	if members != nil {
 		for _, m := range members {
 			if _, b := p.findLocked(m); b == nil {
@@ -342,6 +395,11 @@ func (p *Pool) UpdateGroup(name string, g GroupConfig, members []string) error {
 	for _, b := range p.backends {
 		if b.group == name {
 			b.group = g.Name
+		}
+	}
+	for i := range p.groups { // other groups that use this one as fallback follow the rename
+		if p.groups[i].Fallback == name {
+			p.groups[i].Fallback = g.Name
 		}
 	}
 	if members != nil {
@@ -363,6 +421,11 @@ func (p *Pool) DeleteGroup(name string) error {
 					b.group = ""
 				}
 			}
+			for k := range p.groups {
+				if p.groups[k].Fallback == name {
+					p.groups[k].Fallback = ""
+				}
+			}
 			log.Printf("group %s deleted via UI", name)
 			p.dispatchLocked()
 			return p.persistLocked()
@@ -372,10 +435,13 @@ func (p *Pool) DeleteGroup(name string) error {
 }
 
 type groupInput struct {
-	Name       string    `json:"name"`
-	Models     []string  `json:"models"`
-	AutoModels *bool     `json:"auto_models"`
-	Members    *[]string `json:"members"`
+	Name             string    `json:"name"`
+	Models           []string  `json:"models"`
+	AutoModels       *bool     `json:"auto_models"`
+	Members          *[]string `json:"members"`
+	Fallback         string    `json:"fallback"`
+	FallbackAfterSec int       `json:"fallback_after_sec"`
+	FallbackModel    string    `json:"fallback_model"`
 }
 
 func registerGroups(mux *http.ServeMux, pre string, pool *Pool, token string) {
@@ -390,7 +456,8 @@ func registerGroups(mux *http.ServeMux, pre string, pool *Pool, token string) {
 		if in.Members != nil {
 			members = append([]string{}, (*in.Members)...)
 		}
-		return GroupConfig{Name: in.Name, Models: in.Models, AutoModels: in.AutoModels}, members, nil
+		return GroupConfig{Name: in.Name, Models: in.Models, AutoModels: in.AutoModels,
+			Fallback: in.Fallback, FallbackAfterSec: in.FallbackAfterSec, FallbackModel: in.FallbackModel}, members, nil
 	}
 	mux.HandleFunc("POST "+pre+"/api/groups", adminAuth(token, func(w http.ResponseWriter, r *http.Request) {
 		g, members, err := decode(r)

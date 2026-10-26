@@ -29,9 +29,13 @@ Hermes-Agent ─► LiteLLM ─► llm-balancer :8080 ─┬─► LLM-Server A 
 * **Servergruppen mit Routing nach Modell**: Anfragen gehen nur an die Server, die das angefragte Modell bedienen – pro Gruppe mit eigener, fairer Warteschlange (ist die eine Gruppe ausgelastet, warten Anfragen für andere Gruppen nicht mit)
 * Modellerkennung: die Modelle jedes Servers werden per `/v1/models` abgefragt; `GET /v1/models` am Balancer liefert die Modelle aller Server
 * **Token-Zählung und Preise**: Input-/Output-Tokens jeder Anfrage aus der Antwort (OpenAI, Anthropic, Ollama, llama.cpp), Preis pro 1 Mio. Tokens je API-Token, Kosten pro Token und Tag
+* **Fallback-Gruppe** pro Gruppe: wartet eine Anfrage länger als eingestellt (oder ist die ganze Gruppe down), dürfen Server einer anderen Gruppe sie übernehmen – optional mit ersetztem Modellnamen
+* **Prüfung des generierten Texts**: Tags wie `<think>` oder `<tool_call>` müssen korrekt geöffnet und geschlossen sein, Fehler werden pro Anfrage, Server, Modell und Tag angezeigt
+* **Tokens pro Sekunde** pro Anfrage und Server (Generierung und Prompt-Verarbeitung), live geschätzt während des Streams
+* Statistik auch **nach Modell**
 * Status-Übersicht pro Server: **beschäftigt**, **idle**, **fehlerhaft** (erreichbar, aber letzte Anfrage fehlgeschlagen – bis zur nächsten erfolgreichen, max. 15 min), **down** (Health-Check/Verbindung fehlgeschlagen), **deaktiviert**
 * Statistik pro Tag und Server (7/30/90/365 Tage): Anfragen, Fehler, Abbrüche, Rechenzeit, Ø/Max-Dauer, Ø Zeit bis zum ersten Byte, Ø Wartezeit in der Queue, Datenmenge – als gestapelte Balkengrafik und Tabelle, CSV-Export; gespeichert in `/data/stats.json`
-* Web-UI unter `/balancer/` mit Live-Status: Slots, laufende Anfragen (Prompt-Verarbeitung vs. Streaming, Dauer, Bytes), Warteschlange, letzte Anfragen, Ø Zeit bis zum ersten Byte / Ø Dauer, Server per Klick deaktivieren (drain) und aktivieren
+* Web-UI unter `/balancer/` (Übersicht und eigene Seite „API-Zugriff“ unter `/balancer/#zugriff`) mit Live-Status: Slots, laufende Anfragen (Prompt-Verarbeitung vs. Streaming, Dauer, Bytes), Warteschlange, letzte Anfragen, Ø Zeit bis zum ersten Byte / Ø Dauer, Server per Klick deaktivieren (drain) und aktivieren
 * Server-Liste **im laufenden Betrieb** in der Web-UI ändern: hinzufügen, bearbeiten (URL, Name, Slots, Priorität), entfernen – ohne Neustart, laufende Anfragen laufen weiter
 * Bearer-Token pro LLM-Server (z. B. für vLLM `--api-key` oder einen vorgeschalteten Proxy), in der UI hinterlegbar
 * Zugriffsschutz für die LLM-API des Balancers mit eigenen Tokens (aus `API_KEYS` oder in der UI erzeugt, nur als Hash gespeichert)
@@ -75,7 +79,7 @@ BACKENDS="http://host-a:8080,http://host-b:8080" ./llm-balancer
 `BACKENDS` (bzw. `backends` in `config.json`) ist nur die **Startkonfiguration**. Sobald du die Liste in der
 Web-UI änderst, wird sie in `DATA_DIR/backends.json` gespeichert (im Container `/data/backends.json`) und hat ab
 dann Vorrang – auch nach Neustarts und Image-Updates, solange `/data` auf einem Volume liegt.
-„Auf Startkonfiguration zurücksetzen“ in der UI löscht die Datei und lädt wieder `BACKENDS`.
+Zurück zu `BACKENDS` geht es per `POST /balancer/api/reset` (löscht die Datei; Gruppen werden dabei aus `config.json` übernommen).
 
 Änderungen wirken sofort:
 
@@ -105,6 +109,34 @@ neu abgefragt. Im Feld **Modell** über der Serverliste lässt sich ein Modell a
 und welche Server es bekommen, und blendet die übrigen Server aus. `GET /balancer/api/route?model=…` liefert dasselbe als JSON.
 
 Ohne Gruppen verhält sich der Balancer wie bisher (alle Server bedienen alle Modelle).
+
+### Fallback-Gruppe
+
+Im Dialog einer Gruppe lassen sich eine **Fallback-Gruppe**, eine **Wartezeit** und optional ein **Modell dort** einstellen.
+Wartet eine Anfrage dieser Gruppe länger als die Wartezeit in der Queue, dürfen zusätzlich die Server der Fallback-Gruppe
+sie übernehmen – ein freier Server der eigenen Gruppe hat dabei immer Vorrang. Sind alle Server der Gruppe down oder
+deaktiviert, wird sofort auf die Fallback-Gruppe ausgewichen. Mit „Modell dort“ ersetzt der Balancer das Feld `model`
+der Anfrage für den Fallback-Server (z. B. `qwen3-32b` → `llama3.2:3b`), sonst geht der Modellname unverändert durch.
+Die Queue wird jede Sekunde neu geprüft. In „Letzte Anfragen“ erscheint so eine Anfrage als `qwen-gross → klein` und
+`qwen3-32b → llama3.2:3b`. Der Fallback reicht eine Stufe weit (der Fallback des Fallbacks wird nicht verwendet).
+
+### Prüfung der Tags im generierten Text
+
+Der Balancer liest den Text mit, den das Modell erzeugt (Streams und normale Antworten, OpenAI-, Anthropic- und Ollama-Format),
+und prüft, ob Tags korrekt geöffnet und geschlossen werden. Gemeldet werden: nicht geschlossene Tags, schließende Tags ohne
+öffnendes, falsche Reihenfolge (`<a><b></a></b>`) und ein noch offenes Tag, das erneut geöffnet wird. Standardmäßig geprüft
+werden `think, thinking, reasoning, tool_call, tool_calls, function_call, answer` (`TAG_CHECK`, `*` = alle Tags, `off` = aus);
+anderes HTML in Antworten wird ignoriert. Ein `</think>` ohne öffnendes Tag am Anfang der Antwort gilt nicht als Fehler,
+weil Chat-Templates von Reasoning-Modellen (Qwen3, DeepSeek-R1) das `<think>` in den Prompt schreiben. Bricht ein Stream
+vorzeitig ab, werden offene Tags nicht gemeldet. Fehler stehen in „Letzte Anfragen“ (Filter „nur Antworten mit Tag-Fehlern“),
+als Zähler auf der Server-Karte und in der Statistik pro Server und Modell. Der Inhalt wird nicht gespeichert.
+
+### Tokens pro Sekunde
+
+Pro Anfrage: Output-Tokens geteilt durch die Zeit vom ersten Byte bis zum Ende (Generierung) und Input-Tokens geteilt durch
+die Zeit bis zum ersten Byte (Prompt-Verarbeitung) – nur bei Streams mit Token-Angaben. Die Server-Karte zeigt den
+Durchschnitt, den letzten Wert und die Prompt-Geschwindigkeit; laufende Anfragen zeigen einen Live-Schätzwert
+(≈ ein Token pro gestreamtem Chunk). Die Statistik zeigt Ø tok/s pro Server, Modell und Tag.
 
 ### Token-Zählung und Preise
 
@@ -152,6 +184,7 @@ Entweder per Umgebungsvariablen oder per `config.json` (Pfad über `CONFIG`, son
 | `UNKNOWN_MODEL` / `unknown_model` | `all` | `reject`: Modelle, die keine Gruppe und kein Server kennt, mit 404 ablehnen (nur wenn Gruppen existieren) |
 | `STREAM_USAGE` / `stream_usage` | `true` | Stream-Anfragen um `stream_options.include_usage` ergänzen, damit Tokens gezählt werden |
 | `CURRENCY` / `currency` | `€` | Währung der Preise |
+| `TAG_CHECK` / `tag_check` | `think,thinking,reasoning,tool_call,tool_calls,function_call,answer` | Geprüfte Tags im generierten Text; `*` = alle, `off` = aus |
 | `ADMIN_TOKEN` / `admin_token` | – | Wenn gesetzt, sind Änderungen in UI/API nur mit diesem Token möglich (Header `X-Admin-Token`) |
 | `LISTEN` / `listen` | `:8080` | Listen-Adresse |
 | `QUEUE_TIMEOUT_SEC` / `queue_timeout_sec` | `900` | Max. Wartezeit in der Queue (0 = unbegrenzt), danach HTTP 504 |
@@ -215,11 +248,11 @@ Die Status-Ansicht ist ohne Anmeldung sichtbar; für Änderungen `ADMIN_TOKEN` s
 | GET/POST | `/balancer/api/tokens` | Client-Tokens auflisten / erzeugen (`{"name","token"?}`) |
 | PUT | `/balancer/api/tokens/{name}` | Preis setzen: `{"price_in":0.4,"price_out":1.6}` (pro 1 Mio. Tokens) |
 | DELETE | `/balancer/api/tokens/{name}` | Client-Token löschen |
-| POST | `/balancer/api/groups` | Gruppe anlegen: `{"name","models":[…],"auto_models","members":[…]}` |
+| POST | `/balancer/api/groups` | Gruppe anlegen: `{"name","models":[…],"auto_models","members":[…],"fallback","fallback_after_sec","fallback_model"}` |
 | PUT / DELETE | `/balancer/api/groups/{name}` | Gruppe ändern (umbenennen erlaubt; `members` weglassen = unverändert) / löschen |
 | GET | `/balancer/api/route?model=…` | Welche Gruppe/Server bekämen dieses Modell? |
 | GET | `/balancer/api/recent?after=<seq>` | Letzte Anfragen (max. 300), nur neuere als `seq` |
-| GET | `/balancer/api/stats?days=30` | Tagesstatistik (`&format=csv` für CSV) |
+| GET | `/balancer/api/stats?days=30` | Tagesstatistik pro Server, Modell und API-Token (`&format=csv`, `&by=model` für CSV nach Modell) |
 | POST | `/balancer/api/stats/reset` | Statistik löschen |
 
 ## Entwicklung

@@ -39,6 +39,7 @@ type Config struct {
 	AdminToken           string          `json:"admin_token"`            // if set, changes in the UI/API need this token
 	StatsDays            int             `json:"stats_days"`             // how many days of statistics to keep (default 400)
 	APIKeys              string          `json:"api_keys"`               // client tokens for the LLM API, "name=token,..." (env API_KEYS)
+	TagCheck             string          `json:"tag_check"`              // tags to check in generated text, "*" = all, "off" (default: DefaultTagCheck)
 	StreamUsage          bool            `json:"stream_usage"`           // add stream_options.include_usage to streaming requests (default true)
 	Currency             string          `json:"currency"`               // shown next to prices (default "€")
 	DataDir              string          `json:"data_dir"`               // where backends.json (UI changes) is stored (default "data", Docker: /data)
@@ -60,6 +61,7 @@ func defaultConfig() Config {
 		DataDir:              "data",
 		StatsDays:            400,
 		StreamUsage:          true,
+		TagCheck:             DefaultTagCheck,
 		Currency:             "€",
 	}
 }
@@ -121,6 +123,9 @@ func loadConfig() (Config, error) {
 	}
 	if v := os.Getenv("UNKNOWN_MODEL"); v != "" {
 		cfg.UnknownModel = strings.ToLower(v)
+	}
+	if v, ok := os.LookupEnv("TAG_CHECK"); ok {
+		cfg.TagCheck = v
 	}
 	if v := os.Getenv("STREAM_USAGE"); v != "" {
 		cfg.StreamUsage = v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
@@ -294,6 +299,11 @@ func validateSetup(bs []BackendConfig, gs []GroupConfig) error {
 			return fmt.Errorf("doppelte Gruppe %q", gs[i].Name)
 		}
 		names[gs[i].Name] = true
+	}
+	for _, g := range gs {
+		if g.Fallback != "" && !names[g.Fallback] {
+			return fmt.Errorf("Gruppe %q: unbekannte Fallback-Gruppe %q", g.Name, g.Fallback)
+		}
 	}
 	for _, b := range bs {
 		if b.Group != "" && !names[b.Group] {
