@@ -4,6 +4,7 @@ services:
     image: ghcr.io/wakkomon/llm-balancer:latest
     container_name: llm-balancer
     restart: unless-stopped
+    stop_grace_period: 40s   # laufende Generierungen beim Stoppen/Update bis zu 30 s zu Ende laufen lassen
     ports:
       - "8080:8080"          # API für LiteLLM + Web-UI unter http://<host>:8080/balancer/
     environment:
@@ -32,7 +33,7 @@ services:
       HEALTH_PATH: "/v1/models"  # für llama.cpp alternativ "/health"
       HEALTH_INTERVAL_SEC: "15"
     volumes:
-      - llm-balancer-data:/data  # Server-Liste aus der UI + Statistik, überlebt Updates/Neustarts
+      - llm-balancer-data:/data  # Server-Liste, Gruppen, Statistik und Zähler – überleben Updates/Neustarts
     # Läuft LiteLLM im selben Docker-Netz, das Netz hier eintragen, dann ist
     # der Balancer für LiteLLM unter http://llm-balancer:8080/v1 erreichbar:
     # networks: [litellm]

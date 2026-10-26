@@ -126,6 +126,8 @@ type Pool struct {
 	source        string          // "env" or "saved"
 	healthKick    chan struct{}
 	stats         *Stats
+	countersPath  string
+	countersSaved []byte
 	groups        []GroupConfig
 	initialGroups []GroupConfig
 	access        *Access

@@ -110,6 +110,24 @@ und welche Server es bekommen, und blendet die übrigen Server aus. `GET /balanc
 
 Ohne Gruppen verhält sich der Balancer wie bisher (alle Server bedienen alle Modelle).
 
+### Was wird wann gespeichert?
+
+Alles liegt im Volume `/data` (`DATA_DIR`):
+
+| Datei | Inhalt | Geschrieben |
+|---|---|---|
+| `backends.json` | Server, Gruppen, Server-Tokens | sofort bei jeder Änderung |
+| `access.json` | API-Tokens (Hash), Preise, verbrauchte Tokens und Kosten | sofort bei Änderungen, Zähler jede Minute |
+| `stats.json` | Tagesstatistik pro Server, Modell und API-Token | jede Minute |
+| `counters.json` | Zähler der Server-Karten (Anfragen, Fehler, Ø Dauer, tok/s, Tag-Fehler, letzter Fehler) und der Kacheln oben | jede Minute |
+
+Minütlich wird nur geschrieben, was sich geändert hat, jeweils über eine temporäre Datei und Umbenennen (kein halb
+geschriebener Stand nach einem Absturz). Beim Stoppen (SIGTERM) schreibt der Balancer sofort alles, wartet dann bis zu 30 s
+auf laufende Anfragen und schreibt danach noch einmal. Damit Docker so lange wartet, steht in der Stack-Vorlage
+`stop_grace_period: 40s` (Docker-Standard sind 10 s; ohne die Zeile gehen nur die Anfragen verloren, die beim Stoppen noch liefen).
+Nach einem Absturz oder Stromausfall fehlt höchstens die letzte Minute. Nur die Liste „Letzte Anfragen“ liegt ausschließlich
+im Speicher. „Statistik löschen“ setzt auch die Zähler der Server-Karten und Kacheln zurück.
+
 ### Fallback-Gruppe
 
 Im Dialog einer Gruppe lassen sich eine **Fallback-Gruppe**, eine **Wartezeit** und optional ein **Modell dort** einstellen.

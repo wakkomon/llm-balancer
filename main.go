@@ -35,6 +35,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("access tokens: %v", err)
 	}
+	if err := pool.LoadCounters(cfg.DataDir); err != nil {
+		log.Printf("counters: %v (starting from zero)", err)
+	}
 	px := NewProxy(cfg, pool)
 	px.access = access
 	pool.access = access
@@ -43,14 +46,13 @@ func main() {
 	defer stop()
 	go px.healthLoop(ctx)
 	statsDone := make(chan struct{})
-	go pool.stats.loop(ctx.Done())
-	go func() {
+	go func() { // statistics, token usage and counters: every minute (only what changed)
 		t := time.NewTicker(time.Minute)
 		defer t.Stop()
 		for {
 			select {
 			case <-t.C:
-				access.Flush()
+				persistAll(pool, access)
 			case <-ctx.Done():
 				return
 			}
@@ -87,12 +89,12 @@ func main() {
 
 	go func() {
 		<-ctx.Done()
+		persistAll(pool, access) // right away: Docker may kill the container before running requests finish
 		log.Printf("shutting down, waiting up to 30s for running requests")
 		sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(sctx)
-		pool.stats.Flush() // includes requests that finished during shutdown
-		access.Flush()
+		persistAll(pool, access) // again, including requests that finished during shutdown
 		close(statsDone)
 	}()
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -119,7 +121,7 @@ func newMux(cfg Config, pool *Pool, px *Proxy) http.Handler {
 		json.NewEncoder(w).Encode(pool.Status())
 	})
 	registerAdmin(ui, pre, pool, cfg.AdminToken)
-	registerStats(ui, pre, pool.stats, cfg.AdminToken)
+	registerStats(ui, pre, pool.stats, cfg.AdminToken, pool.ResetCounters)
 	registerGroups(ui, pre, pool, cfg.AdminToken)
 	if px.access != nil {
 		registerAccess(ui, pre, px.access, cfg.AdminToken)

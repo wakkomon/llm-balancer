@@ -334,21 +334,7 @@ func (s *Stats) Report(days int, now time.Time) StatsReport {
 	return rep
 }
 
-func (s *Stats) loop(stop <-chan struct{}) {
-	t := time.NewTicker(time.Minute)
-	defer t.Stop()
-	for {
-		select {
-		case <-t.C:
-			s.Flush()
-		case <-stop:
-			s.Flush()
-			return
-		}
-	}
-}
-
-func registerStats(mux *http.ServeMux, pre string, stats *Stats, token string) {
+func registerStats(mux *http.ServeMux, pre string, stats *Stats, token string, onReset func()) {
 	mux.HandleFunc("GET "+pre+"/api/stats", func(w http.ResponseWriter, r *http.Request) {
 		days, _ := strconv.Atoi(r.URL.Query().Get("days"))
 		if days > 3660 {
@@ -395,6 +381,9 @@ func registerStats(mux *http.ServeMux, pre string, stats *Stats, token string) {
 	})
 	mux.HandleFunc("POST "+pre+"/api/stats/reset", adminAuth(token, func(w http.ResponseWriter, r *http.Request) {
 		stats.Reset()
+		if onReset != nil {
+			onReset()
+		}
 		log.Printf("statistics reset via UI")
 		w.WriteHeader(http.StatusNoContent)
 	}))
