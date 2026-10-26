@@ -1,0 +1,9 @@
+# CI on a private GitLab instance. Runs on the docker runner
+# (tags: docker, linux) — disables the default Auto DevOps stages.
+default:
+  tags: [docker, linux]
+
+test:
+  image: golang:1.22
+  script:
+    - go test -race ./...
