@@ -35,7 +35,7 @@ Hermes-Agent ─► LiteLLM ─► llm-balancer :8080 ─┬─► LLM-Server A 
 * Statistik auch **nach Modell**
 * Status-Übersicht pro Server: **beschäftigt**, **idle**, **fehlerhaft** (erreichbar, aber letzte Anfrage fehlgeschlagen – bis zur nächsten erfolgreichen, max. 15 min), **down** (Health-Check/Verbindung fehlgeschlagen), **deaktiviert**
 * Statistik pro Tag und Server (7/30/90/365 Tage): Anfragen, Fehler, Abbrüche, Rechenzeit, Ø/Max-Dauer, Ø Zeit bis zum ersten Byte, Ø Wartezeit in der Queue, Datenmenge – als gestapelte Balkengrafik und Tabelle, CSV-Export; gespeichert in `/data/stats.json`
-* Web-UI unter `/balancer/` (Übersicht und eigene Seite „API-Zugriff“ unter `/balancer/#zugriff`) mit Live-Status: Slots, laufende Anfragen (Prompt-Verarbeitung vs. Streaming, Dauer, Bytes), Warteschlange, letzte Anfragen, Ø Zeit bis zum ersten Byte / Ø Dauer, Server per Klick deaktivieren (drain) und aktivieren
+* Web-UI unter `/balancer/` mit Tabs Übersicht, Gruppen (`#gruppen`), Statistik (`#statistik`), Letzte Anfragen (`#anfragen`) und API-Zugriff (`#zugriff`); Server als Kacheln mit fester Größe oder als kompakte Liste (eine Zeile pro Server, nach Gruppen, auf-/zuklappbar): Slots, laufende Anfragen (Prompt-Verarbeitung vs. Streaming, Dauer, Bytes), Warteschlange, letzte Anfragen, Ø Zeit bis zum ersten Byte / Ø Dauer, Server per Klick deaktivieren (drain) und aktivieren
 * Server-Liste **im laufenden Betrieb** in der Web-UI ändern: hinzufügen, bearbeiten (URL, Name, Slots, Priorität), entfernen – ohne Neustart, laufende Anfragen laufen weiter
 * Bearer-Token pro LLM-Server (z. B. für vLLM `--api-key` oder einen vorgeschalteten Proxy), in der UI hinterlegbar
 * Zugriffsschutz für die LLM-API des Balancers mit eigenen Tokens (aus `API_KEYS` oder in der UI erzeugt, nur als Hash gespeichert)
@@ -164,6 +164,15 @@ Pro Anfrage: Output-Tokens geteilt durch die Zeit vom ersten Byte bis zum Ende (
 die Zeit bis zum ersten Byte (Prompt-Verarbeitung) – nur bei Streams mit Token-Angaben. Die Server-Karte zeigt den
 Durchschnitt, den letzten Wert und die Prompt-Geschwindigkeit; laufende Anfragen zeigen einen Live-Schätzwert
 (≈ ein Token pro gestreamtem Chunk). Die Statistik zeigt Ø tok/s pro Server, Modell und Tag.
+
+### Eingehende und ausgehende Preise
+
+* **Eingehend (API-Tokens):** was ein Client pro 1 Mio. Input-/Output-Tokens bezahlt – Tab API-Zugriff → „Preis“.
+* **Ausgehend (Server):** was ein Server pro 1 Mio. Input-/Output-Tokens kostet (Strom, Hardware, bezahlter Anbieter) –
+  im Dialog „Bearbeiten“ des Servers.
+
+Pro Anfrage werden beide Beträge berechnet („Einnahme“ und „Kosten Server“ in Letzte Anfragen). Die Statistik zeigt pro
+Server, Modell und Tag **Einnahmen**, **Kosten Server** und den **Saldo**; der CSV-Export enthält beide Spalten.
 
 ### Token-Zählung und Preise
 

@@ -20,20 +20,22 @@ const NoBackend = "(kein Server)"
 
 // DayStat aggregates the requests of one backend on one day.
 type DayStat struct {
-	Requests  int64 `json:"requests"`
-	Errors    int64 `json:"errors"`    // upstream errors, 5xx, queue timeouts
-	Cancelled int64 `json:"cancelled"` // client went away
-	DurMs     int64 `json:"duration_ms"`
-	MaxDurMs  int64 `json:"max_duration_ms"`
-	TTFBMs    int64 `json:"ttfb_ms"`
-	TTFBCount int64 `json:"ttfb_count"`
-	QueueMs   int64 `json:"queue_ms"`
-	Bytes     int64 `json:"bytes"`
-	TokensIn  int64 `json:"tokens_in"`
-	TokensOut int64 `json:"tokens_out"`
-	GenMs     int64 `json:"gen_ms"`     // generation time (after the first byte) of requests with known output tokens
-	GenTokens int64 `json:"gen_tokens"` // their output tokens → tokens/s = GenTokens / GenMs
-	TagErrors int64 `json:"tag_errors"`
+	Requests  int64   `json:"requests"`
+	Errors    int64   `json:"errors"`    // upstream errors, 5xx, queue timeouts
+	Cancelled int64   `json:"cancelled"` // client went away
+	DurMs     int64   `json:"duration_ms"`
+	MaxDurMs  int64   `json:"max_duration_ms"`
+	TTFBMs    int64   `json:"ttfb_ms"`
+	TTFBCount int64   `json:"ttfb_count"`
+	QueueMs   int64   `json:"queue_ms"`
+	Bytes     int64   `json:"bytes"`
+	TokensIn  int64   `json:"tokens_in"`
+	TokensOut int64   `json:"tokens_out"`
+	GenMs     int64   `json:"gen_ms"`     // generation time (after the first byte) of requests with known output tokens
+	GenTokens int64   `json:"gen_tokens"` // their output tokens → tokens/s = GenTokens / GenMs
+	TagErrors int64   `json:"tag_errors"`
+	Revenue   float64 `json:"revenue"` // incoming: API token prices
+	Cost      float64 `json:"cost"`    // outgoing: server prices
 }
 
 // NoModel is the stats key for requests without a model field.
@@ -69,6 +71,8 @@ func (d *DayStat) add(o *DayStat) {
 	d.GenMs += o.GenMs
 	d.GenTokens += o.GenTokens
 	d.TagErrors += o.TagErrors
+	d.Revenue += o.Revenue
+	d.Cost += o.Cost
 }
 
 // Stats keeps per-day, per-backend counters and persists them to DATA_DIR/stats.json.
@@ -117,7 +121,8 @@ func (s *Stats) Record(r *ReqInfo) {
 	if backend == "" {
 		backend = NoBackend
 	}
-	d := DayStat{Requests: 1, Bytes: r.bytes.Load(), TokensIn: r.TokensIn, TokensOut: r.TokensOut}
+	d := DayStat{Requests: 1, Bytes: r.bytes.Load(), TokensIn: r.TokensIn, TokensOut: r.TokensOut,
+		Revenue: r.Cost, Cost: r.BackendCost}
 	if len(r.TagIssues) > 0 {
 		d.TagErrors = 1
 	}
@@ -350,7 +355,7 @@ func registerStats(mux *http.ServeMux, pre string, stats *Stats, token string, o
 			if r.URL.Query().Get("by") == "model" {
 				by = "Modell"
 			}
-			cw.Write([]string{"Tag", by, "Anfragen", "Fehler", "Abgebrochen", "Gesamtdauer_s", "Avg_Dauer_s", "Max_Dauer_s", "Avg_1.Byte_s", "Avg_Wartezeit_s", "Bytes", "Tokens_Ein", "Tokens_Aus", "Tokens_pro_s", "Tag_Fehler"})
+			cw.Write([]string{"Tag", by, "Anfragen", "Fehler", "Abgebrochen", "Gesamtdauer_s", "Avg_Dauer_s", "Max_Dauer_s", "Avg_1.Byte_s", "Avg_Wartezeit_s", "Bytes", "Tokens_Ein", "Tokens_Aus", "Tokens_pro_s", "Tag_Fehler", "Einnahmen_API", "Kosten_Server"})
 			sec := func(ms, n int64) string {
 				if n == 0 {
 					return "0"
@@ -369,7 +374,7 @@ func registerStats(mux *http.ServeMux, pre string, stats *Stats, token string, o
 					}
 					cw.Write([]string{day, name, itoa(st.Requests), itoa(st.Errors), itoa(st.Cancelled),
 						sec(st.DurMs, 1), sec(st.DurMs, st.Requests), sec(st.MaxDurMs, 1),
-						sec(st.TTFBMs, st.TTFBCount), sec(st.QueueMs, st.Requests), itoa(st.Bytes), itoa(st.TokensIn), itoa(st.TokensOut), tps(st), itoa(st.TagErrors)})
+						sec(st.TTFBMs, st.TTFBCount), sec(st.QueueMs, st.Requests), itoa(st.Bytes), itoa(st.TokensIn), itoa(st.TokensOut), tps(st), itoa(st.TagErrors), money(st.Revenue), money(st.Cost)})
 				}
 			}
 			cw.Flush()
@@ -397,3 +402,5 @@ func tps(st *DayStat) string {
 	}
 	return strconv.FormatFloat(float64(st.GenTokens)/(float64(st.GenMs)/1000), 'f', 1, 64)
 }
+
+func money(v float64) string { return strconv.FormatFloat(v, 'f', 6, 64) }

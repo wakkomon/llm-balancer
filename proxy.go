@@ -254,7 +254,7 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		n, copyErr := px.stream(w, resp, req, scan)
 		u := scan.Finish()
-		px.pool.setResult(req, u, scan.TagIssues(copyErr == nil && ctx.Err() == nil), px.access)
+		px.pool.setResult(req, b, u, scan.TagIssues(copyErr == nil && ctx.Err() == nil), px.access)
 		resp.Body.Close()
 		errMsg := ""
 		if copyErr != nil && ctx.Err() == nil {

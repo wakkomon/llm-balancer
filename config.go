@@ -20,6 +20,10 @@ type BackendConfig struct {
 	APIKey        string `json:"api_key,omitempty"`         // sent as "Authorization: Bearer <key>" to this server
 	Group         string `json:"group,omitempty"`           // name of the server group (see Config.Groups)
 	TLSSkipVerify bool   `json:"tls_skip_verify,omitempty"` // https with a self-signed certificate: don't verify it
+	// Outgoing prices: what this server costs per 1M input/output tokens (for the cost statistics)
+	PriceIn  float64 `json:"price_in,omitempty"`
+	PriceOut float64 `json:"price_out,omitempty"`
+	keep     int     // API update: fields not sent (keep current value)
 }
 
 // Config is the full balancer configuration.
@@ -243,6 +247,9 @@ func normalizeBackend(b *BackendConfig) error {
 	}
 	if b.MaxConcurrent <= 0 {
 		b.MaxConcurrent = 1
+	}
+	if b.PriceIn < 0 || b.PriceOut < 0 || b.PriceIn > 1e6 || b.PriceOut > 1e6 {
+		return fmt.Errorf("Preis muss zwischen 0 und 1.000.000 liegen")
 	}
 	return nil
 }

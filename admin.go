@@ -79,6 +79,8 @@ func newBackend(bc BackendConfig) *Backend {
 		apiKey:   bc.APIKey,
 		group:    bc.Group,
 		insecure: bc.TLSSkipVerify,
+		priceIn:  bc.PriceIn,
+		priceOut: bc.PriceOut,
 		enabled:  bc.Enabled == nil || *bc.Enabled,
 		healthy:  true, // optimistic until the first health check says otherwise
 	}
@@ -86,7 +88,7 @@ func newBackend(bc BackendConfig) *Backend {
 
 func (b *Backend) config() BackendConfig {
 	en := b.enabled
-	return BackendConfig{Name: b.Name, URL: b.URL, MaxConcurrent: b.Max, Priority: b.Priority, Enabled: &en, APIKey: b.apiKey, Group: b.group, TLSSkipVerify: b.insecure}
+	return BackendConfig{Name: b.Name, URL: b.URL, MaxConcurrent: b.Max, Priority: b.Priority, Enabled: &en, APIKey: b.apiKey, Group: b.group, TLSSkipVerify: b.insecure, PriceIn: b.priceIn, PriceOut: b.priceOut}
 }
 
 // configsLocked returns the current list as config entries. Caller holds p.mu.
@@ -182,12 +184,23 @@ func (p *Pool) UpdateBackend(name string, bc BackendConfig, key, group *string) 
 		b.healthy, b.healthMsg, b.unhealthyTil = true, "", time.Time{}
 		defer p.kickHealth()
 	}
+	// fields the client left out keep their current value
+	if bc.keep&keepTLS != 0 {
+		bc.TLSSkipVerify = b.insecure
+	}
+	if bc.keep&keepPriceIn != 0 {
+		bc.PriceIn = b.priceIn
+	}
+	if bc.keep&keepPriceOut != 0 {
+		bc.PriceOut = b.priceOut
+	}
 	if b.insecure != bc.TLSSkipVerify || (key != nil && strings.TrimSpace(*key) != b.apiKey) {
 		// connection settings changed: give the server a fresh chance and check it right away
 		b.healthy, b.healthMsg, b.unhealthyTil = true, "", time.Time{}
 		defer p.kickHealth()
 	}
 	b.Name, b.Max, b.Priority, b.insecure = bc.Name, bc.MaxConcurrent, bc.Priority, bc.TLSSkipVerify
+	b.priceIn, b.priceOut = bc.PriceIn, bc.PriceOut
 	if key != nil { // nil = keep the stored token
 		b.apiKey = strings.TrimSpace(*key)
 	}
@@ -246,6 +259,7 @@ func (p *Pool) ResetBackends() error {
 		if b, ok := old[bc.Name]; ok && b.URL == bc.URL {
 			// keep runtime state (active slots, stats) of unchanged servers
 			b.Max, b.Priority, b.enabled, b.apiKey, b.group, b.insecure = bc.MaxConcurrent, bc.Priority, bc.Enabled == nil || *bc.Enabled, bc.APIKey, bc.Group, bc.TLSSkipVerify
+			b.priceIn, b.priceOut = bc.PriceIn, bc.PriceOut
 			next = append(next, b)
 		} else {
 			next = append(next, newBackend(bc))
@@ -299,14 +313,16 @@ func writeResult(w http.ResponseWriter, err error) {
 
 // backendInput is the API body; api_key absent = keep the stored token, "" = remove it.
 type backendInput struct {
-	Name          string  `json:"name"`
-	URL           string  `json:"url"`
-	MaxConcurrent int     `json:"max_concurrent"`
-	Priority      int     `json:"priority"`
-	Enabled       *bool   `json:"enabled"`
-	APIKey        *string `json:"api_key"`
-	Group         *string `json:"group"`
-	TLSSkipVerify *bool   `json:"tls_skip_verify"`
+	Name          string   `json:"name"`
+	URL           string   `json:"url"`
+	MaxConcurrent int      `json:"max_concurrent"`
+	Priority      int      `json:"priority"`
+	Enabled       *bool    `json:"enabled"`
+	APIKey        *string  `json:"api_key"`
+	Group         *string  `json:"group"`
+	TLSSkipVerify *bool    `json:"tls_skip_verify"`
+	PriceIn       *float64 `json:"price_in"`
+	PriceOut      *float64 `json:"price_out"`
 }
 
 func decodeBackend(r *http.Request) (BackendConfig, *string, *string, error) {
@@ -319,6 +335,18 @@ func decodeBackend(r *http.Request) (BackendConfig, *string, *string, error) {
 	bc := BackendConfig{Name: in.Name, URL: in.URL, MaxConcurrent: in.MaxConcurrent, Priority: in.Priority, Enabled: in.Enabled}
 	if in.TLSSkipVerify != nil {
 		bc.TLSSkipVerify = *in.TLSSkipVerify
+	} else {
+		bc.keep |= keepTLS
+	}
+	if in.PriceIn != nil {
+		bc.PriceIn = *in.PriceIn
+	} else {
+		bc.keep |= keepPriceIn
+	}
+	if in.PriceOut != nil {
+		bc.PriceOut = *in.PriceOut
+	} else {
+		bc.keep |= keepPriceOut
 	}
 	if in.APIKey != nil {
 		bc.APIKey = strings.TrimSpace(*in.APIKey)
@@ -331,14 +359,16 @@ func decodeBackend(r *http.Request) (BackendConfig, *string, *string, error) {
 
 // backendView is a BackendConfig without the secret.
 type backendView struct {
-	Name          string `json:"name"`
-	URL           string `json:"url"`
-	MaxConcurrent int    `json:"max_concurrent"`
-	Priority      int    `json:"priority"`
-	Enabled       bool   `json:"enabled"`
-	HasAPIKey     bool   `json:"has_api_key"`
-	Group         string `json:"group"`
-	TLSSkipVerify bool   `json:"tls_skip_verify"`
+	Name          string  `json:"name"`
+	URL           string  `json:"url"`
+	MaxConcurrent int     `json:"max_concurrent"`
+	Priority      int     `json:"priority"`
+	Enabled       bool    `json:"enabled"`
+	HasAPIKey     bool    `json:"has_api_key"`
+	Group         string  `json:"group"`
+	TLSSkipVerify bool    `json:"tls_skip_verify"`
+	PriceIn       float64 `json:"price_in"`
+	PriceOut      float64 `json:"price_out"`
 }
 
 func registerAdmin(mux *http.ServeMux, pre string, pool *Pool, token string) {
@@ -346,7 +376,7 @@ func registerAdmin(mux *http.ServeMux, pre string, pool *Pool, token string) {
 		pool.mu.Lock()
 		list := []backendView{}
 		for _, bc := range pool.configsLocked() {
-			list = append(list, backendView{bc.Name, bc.URL, bc.MaxConcurrent, bc.Priority, *bc.Enabled, bc.APIKey != "", bc.Group, bc.TLSSkipVerify})
+			list = append(list, backendView{bc.Name, bc.URL, bc.MaxConcurrent, bc.Priority, *bc.Enabled, bc.APIKey != "", bc.Group, bc.TLSSkipVerify, bc.PriceIn, bc.PriceOut})
 		}
 		pool.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
@@ -384,3 +414,9 @@ func registerAdmin(mux *http.ServeMux, pre string, pool *Pool, token string) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 }
+
+const (
+	keepTLS = 1 << iota
+	keepPriceIn
+	keepPriceOut
+)

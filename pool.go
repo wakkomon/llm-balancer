@@ -26,7 +26,9 @@ type Backend struct {
 	Max      int
 	Priority int
 	apiKey   string
-	insecure bool     // don't verify the TLS certificate (self-signed)
+	insecure bool // don't verify the TLS certificate (self-signed)
+	priceIn  float64
+	priceOut float64
 	group    string   // guarded by Pool.mu
 	models   []string // reported by the server via /v1/models
 	modelsAt time.Time
@@ -62,19 +64,20 @@ func (b *Backend) usable(now time.Time) bool {
 
 // ReqInfo tracks one client request for the status UI.
 type ReqInfo struct {
-	ID        uint64   `json:"id"`
-	Method    string   `json:"method"`
-	Path      string   `json:"path"`
-	Model     string   `json:"model,omitempty"`
-	Stream    bool     `json:"stream"`
-	Client    string   `json:"client"`
-	Token     string   `json:"token,omitempty"` // name of the client access token
-	Group     string   `json:"group,omitempty"`
-	TokensIn  int64    `json:"tokens_in,omitempty"`
-	TokensOut int64    `json:"tokens_out,omitempty"`
-	Cost      float64  `json:"cost,omitempty"`
-	Seq       uint64   `json:"seq,omitempty"` // order in which requests finished
-	TagIssues []string `json:"tag_issues,omitempty"`
+	ID          uint64   `json:"id"`
+	Method      string   `json:"method"`
+	Path        string   `json:"path"`
+	Model       string   `json:"model,omitempty"`
+	Stream      bool     `json:"stream"`
+	Client      string   `json:"client"`
+	Token       string   `json:"token,omitempty"` // name of the client access token
+	Group       string   `json:"group,omitempty"`
+	TokensIn    int64    `json:"tokens_in,omitempty"`
+	TokensOut   int64    `json:"tokens_out,omitempty"`
+	Cost        float64  `json:"cost,omitempty"`         // incoming: API token prices
+	BackendCost float64  `json:"backend_cost,omitempty"` // outgoing: server prices
+	Seq         uint64   `json:"seq,omitempty"`          // order in which requests finished
+	TagIssues   []string `json:"tag_issues,omitempty"`
 	// tokens per second: generation (output tokens / time after the first byte) and prompt processing
 	GenTPS    float64 `json:"gen_tps,omitempty"`
 	PromptTPS float64 `json:"prompt_tps,omitempty"`
@@ -544,6 +547,8 @@ type BackendStatus struct {
 	TagErrors   int64      `json:"tag_errors"`
 	HasAPIKey   bool       `json:"has_api_key"`
 	TLSSkip     bool       `json:"tls_skip_verify"`
+	PriceIn     float64    `json:"price_in"`
+	PriceOut    float64    `json:"price_out"`
 	Group       string     `json:"group"`
 	Models      []string   `json:"models"`
 	Running     []*ReqInfo `json:"running"`
@@ -572,7 +577,7 @@ type Status struct {
 func snapshot(r *ReqInfo, now time.Time) *ReqInfo {
 	c := &ReqInfo{
 		ID: r.ID, Method: r.Method, Path: r.Path, Model: r.Model, Stream: r.Stream, Client: r.Client, Token: r.Token,
-		Group: r.Group, TokensIn: r.TokensIn, TokensOut: r.TokensOut, Cost: r.Cost, Seq: r.Seq,
+		Group: r.Group, TokensIn: r.TokensIn, TokensOut: r.TokensOut, Cost: r.Cost, BackendCost: r.BackendCost, Seq: r.Seq,
 		TagIssues: r.TagIssues, GenTPS: r.GenTPS, PromptTPS: r.PromptTPS, Effective: r.Effective,
 		State: r.State, Backend: r.Backend, Attempts: r.Attempts, QueuedAt: r.QueuedAt,
 		StartedAt: r.StartedAt, EndedAt: r.EndedAt, Status: r.Status, Error: r.Error,
@@ -676,6 +681,7 @@ func (p *Pool) Status() Status {
 		bs.LastTPS, bs.TagErrors = b.lastTPS, b.tagErrors
 		bs.HasAPIKey = b.apiKey != ""
 		bs.TLSSkip = b.insecure
+		bs.PriceIn, bs.PriceOut = b.priceIn, b.priceOut
 		bs.Group = b.group
 		bs.Models = append([]string{}, b.models...)
 		st.States[bs.State]++
@@ -781,7 +787,7 @@ func (p *Pool) RecentAfter(after uint64) []*ReqInfo {
 }
 
 // setResult stores usage, token rates and tag issues of a finished response.
-func (p *Pool) setResult(r *ReqInfo, u Usage, issues []string, acc *Access) {
+func (p *Pool) setResult(r *ReqInfo, b *Backend, u Usage, issues []string, acc *Access) {
 	cost := 0.0
 	if acc != nil && u.Found {
 		cost = acc.AddUsage(r.Token, u)
@@ -793,6 +799,9 @@ func (p *Pool) setResult(r *ReqInfo, u Usage, issues []string, acc *Access) {
 		return
 	}
 	r.TokensIn, r.TokensOut, r.Cost = u.In, u.Out, cost
+	if b != nil {
+		r.BackendCost = (float64(u.In)*b.priceIn + float64(u.Out)*b.priceOut) / 1e6
+	}
 	now := time.Now()
 	if !r.FirstByte.IsZero() {
 		if gen := now.Sub(r.FirstByte).Seconds(); u.Out > 1 && gen > 0.05 && r.Stream {

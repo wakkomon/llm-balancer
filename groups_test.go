@@ -229,3 +229,40 @@ func TestPricesAndTokenCounting(t *testing.T) {
 		t.Errorf("token stats: %+v", ts)
 	}
 }
+
+func TestServerPricesAndMargin(t *testing.T) {
+	a := newModelLLM(t, "a", 10*time.Millisecond, "m") // reports 1000 in / 500 out per request
+	dir := t.TempDir()
+	srv, _ := setup(t, func(c *Config) {
+		c.DataDir = dir
+		c.APIKeys = "litellm=sk-litellm-0123456789"
+		c.Backends = []BackendConfig{{Name: "a", URL: a.srv.URL}}
+	})
+	api(t, "PUT", srv.URL+"/balancer/api/tokens/litellm", `{"price_in":1,"price_out":4}`, "")
+	if c := api(t, "PUT", srv.URL+"/balancer/api/backends/a", `{"name":"a","url":"`+a.srv.URL+`","price_in":0.2,"price_out":0.6}`, ""); c != 204 {
+		t.Fatalf("set server price: %d", c)
+	}
+	auth := map[string]string{"Authorization": "Bearer sk-litellm-0123456789"}
+	chatModel(t, srv.URL, "m", auth)
+	chatModel(t, srv.URL, "m", auth)
+	waitFor(t, func() bool { return len(status(t, srv.URL).Recent) == 2 })
+	st := status(t, srv.URL)
+	// per request: in (1000*1 + 500*4)/1e6 = 0.003, out (1000*0.2 + 500*0.6)/1e6 = 0.0005
+	if r := st.Recent[0]; fmt.Sprintf("%.4f/%.4f", r.Cost, r.BackendCost) != "0.0030/0.0005" {
+		t.Errorf("request: %+v", r)
+	}
+	if b := st.Backends[0]; b.PriceIn != 0.2 || b.PriceOut != 0.6 {
+		t.Errorf("status prices: %+v", b)
+	}
+	rep := getStats(t, srv.URL, 1)
+	s := rep.Totals["a"]
+	if fmt.Sprintf("%.4f/%.4f", s.Revenue, s.Cost) != "0.0060/0.0010" {
+		t.Errorf("stats: revenue=%v cost=%v", s.Revenue, s.Cost)
+	}
+	// editing without price fields keeps the prices; persisted in backends.json
+	api(t, "PUT", srv.URL+"/balancer/api/backends/a", `{"name":"a","url":"`+a.srv.URL+`","priority":2}`, "")
+	srv2, _ := setup(t, func(c *Config) { c.DataDir = dir })
+	if b := status(t, srv2.URL).Backends[0]; b.PriceIn != 0.2 || b.PriceOut != 0.6 || b.Priority != 2 {
+		t.Errorf("not kept/persisted: %+v", b)
+	}
+}
