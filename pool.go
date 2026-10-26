@@ -26,6 +26,7 @@ type Backend struct {
 	Max      int
 	Priority int
 	apiKey   string
+	insecure bool     // don't verify the TLS certificate (self-signed)
 	group    string   // guarded by Pool.mu
 	models   []string // reported by the server via /v1/models
 	modelsAt time.Time
@@ -176,9 +177,16 @@ func (p *Pool) count() int {
 }
 
 type healthTarget struct {
-	b   *Backend
-	url string
-	key string
+	b        *Backend
+	url      string
+	key      string
+	insecure bool
+}
+
+func (p *Pool) skipVerify(b *Backend) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return b.insecure
 }
 
 // idleTargets lists backends without running requests for the health checker.
@@ -188,7 +196,7 @@ func (p *Pool) idleTargets() []healthTarget {
 	var out []healthTarget
 	for _, b := range p.backends {
 		if b.active == 0 {
-			out = append(out, healthTarget{b, b.URL, b.apiKey})
+			out = append(out, healthTarget{b, b.URL, b.apiKey, b.insecure})
 		}
 	}
 	return out
@@ -527,6 +535,7 @@ type BackendStatus struct {
 	PromptTPS   float64    `json:"avg_prompt_tps"` // prompt tokens/s (prompt processing until the first byte)
 	TagErrors   int64      `json:"tag_errors"`
 	HasAPIKey   bool       `json:"has_api_key"`
+	TLSSkip     bool       `json:"tls_skip_verify"`
 	Group       string     `json:"group"`
 	Models      []string   `json:"models"`
 	Running     []*ReqInfo `json:"running"`
@@ -655,6 +664,7 @@ func (p *Pool) Status() Status {
 		}
 		bs.LastTPS, bs.TagErrors = b.lastTPS, b.tagErrors
 		bs.HasAPIKey = b.apiKey != ""
+		bs.TLSSkip = b.insecure
 		bs.Group = b.group
 		bs.Models = append([]string{}, b.models...)
 		st.States[bs.State]++

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,21 +27,32 @@ type Proxy struct {
 	pool      *Pool
 	access    *Access
 	transport *http.Transport
+	insecure  *http.Transport // for servers with "tls_skip_verify" (self-signed certificates)
+}
+
+func newTransport(skipVerify bool) *http.Transport {
+	return &http.Transport{
+		Proxy:               nil, // talk to the LLM servers directly
+		DialContext:         (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		TLSHandshakeTimeout: 10 * time.Second,
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: skipVerify},
+		ForceAttemptHTTP2:   true,
+		MaxIdleConnsPerHost: 16,
+		IdleConnTimeout:     90 * time.Second,
+		DisableCompression:  true, // pass Accept-Encoding / Content-Encoding through untouched
+		// no ResponseHeaderTimeout: prompt processing on a local LLM can take minutes before the first byte
+	}
 }
 
 func NewProxy(cfg Config, pool *Pool) *Proxy {
-	return &Proxy{
-		cfg:  cfg,
-		pool: pool,
-		transport: &http.Transport{
-			Proxy:               nil, // talk to the LLM servers directly
-			DialContext:         (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-			MaxIdleConnsPerHost: 16,
-			IdleConnTimeout:     90 * time.Second,
-			DisableCompression:  true, // pass Accept-Encoding / Content-Encoding through untouched
-			// no ResponseHeaderTimeout: prompt processing on a local LLM can take minutes before the first byte
-		},
+	return &Proxy{cfg: cfg, pool: pool, transport: newTransport(false), insecure: newTransport(true)}
+}
+
+func (px *Proxy) transportFor(skipVerify bool) *http.Transport {
+	if skipVerify {
+		return px.insecure
 	}
+	return px.transport
 }
 
 func copyHeaders(dst, src http.Header) {
@@ -202,14 +214,14 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			px.pool.Finish(req, b, 500, err.Error())
 			return
 		}
-		resp, err := px.transport.RoundTrip(out)
+		resp, err := px.transportFor(px.pool.skipVerify(b)).RoundTrip(out)
 		if err != nil {
 			if ctx.Err() != nil { // client gone, not the backend's fault
 				px.pool.Release(b, req, "")
 				px.pool.Finish(req, b, 499, "client disconnected")
 				return
 			}
-			msg := fmt.Sprintf("connect %s: %v", req.Backend, err)
+			msg := fmt.Sprintf("connect %s: %s", req.Backend, explainNetErr(err))
 			log.Printf("req %d: %s", req.ID, msg)
 			px.pool.MarkUnhealthy(b, err.Error())
 			px.pool.Release(b, req, msg)
@@ -315,7 +327,7 @@ func (px *Proxy) passthrough(w http.ResponseWriter, r *http.Request, body []byte
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	resp, err := px.transport.RoundTrip(out)
+	resp, err := px.transportFor(px.pool.skipVerify(b)).RoundTrip(out)
 	if err != nil {
 		jsonError(w, http.StatusBadGateway, fmt.Sprintf("%s: %v", name, err))
 		return
@@ -333,18 +345,18 @@ func (px *Proxy) healthLoop(ctx context.Context) {
 	if px.cfg.HealthPath == "" {
 		return
 	}
-	client := &http.Client{Transport: px.transport, Timeout: 5 * time.Second}
 	check := func() {
 		for _, ht := range px.pool.idleTargets() {
 			// busy servers are skipped: a single-slot server might not answer quickly, and it is obviously alive
 			go func(ht healthTarget) {
+				client := &http.Client{Transport: px.transportFor(ht.insecure), Timeout: 5 * time.Second}
 				hreq, _ := http.NewRequest(http.MethodGet, ht.url+px.cfg.HealthPath, nil)
 				if ht.key != "" {
 					hreq.Header.Set("Authorization", "Bearer "+ht.key)
 				}
 				resp, err := client.Do(hreq)
 				if err != nil {
-					px.pool.SetHealth(ht.b, false, err.Error(), ht.url)
+					px.pool.SetHealth(ht.b, false, explainNetErr(err), ht.url)
 					return
 				}
 				hbody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
@@ -377,4 +389,23 @@ func (px *Proxy) healthLoop(ctx context.Context) {
 			check()
 		}
 	}
+}
+
+// explainNetErr adds a hint in plain words to typical connection errors (shown in the UI).
+func explainNetErr(err error) string {
+	msg := err.Error()
+	var dnsErr *net.DNSError
+	var certErr *tls.CertificateVerificationError
+	switch {
+	case errors.As(err, &dnsErr):
+		return msg + " – DNS-Auflösung im Container fehlgeschlagen (Docker-DNS 127.0.0.11). " +
+			"Abhilfe: im Stack „dns:“ auf den DNS-Server des Netzes setzen oder „extra_hosts: name:IP“ eintragen."
+	case errors.As(err, &certErr):
+		return msg + " – Zertifikat nicht vertrauenswürdig. Bei selbstsignierten Zertifikaten beim Server „Zertifikat nicht prüfen“ aktivieren."
+	case strings.Contains(msg, "server gave HTTP response to HTTPS client"):
+		return msg + " – Der Server spricht http, nicht https: URL mit http:// eintragen."
+	case strings.Contains(msg, "first record does not look like a TLS handshake"):
+		return msg + " – Der Server spricht http, nicht https: URL mit http:// eintragen."
+	}
+	return msg
 }

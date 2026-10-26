@@ -33,6 +33,12 @@ services:
       MAX_QUEUE: "0"             # max. Anzahl wartender Anfragen (0 = unbegrenzt)
       HEALTH_PATH: "/v1/models"  # für llama.cpp alternativ "/health"
       HEALTH_INTERVAL_SEC: "15"
+    # Falls Servernamen im Container nicht aufgelöst werden („lookup … on 127.0.0.11:53“),
+    # den DNS-Server des eigenen Netzes eintragen oder Namen fest zuordnen:
+    # dns:
+    #   - 192.168.1.1
+    # extra_hosts:
+    #   - "llm.example.lan:192.168.1.50"
     volumes:
       - llm-balancer-data:/data  # Server-Liste, Gruppen, Statistik und Zähler – überleben Updates/Neustarts
     # Läuft LiteLLM im selben Docker-Netz, das Netz hier eintragen, dann ist

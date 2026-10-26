@@ -40,6 +40,7 @@ Hermes-Agent ─► LiteLLM ─► llm-balancer :8080 ─┬─► LLM-Server A 
 * Bearer-Token pro LLM-Server (z. B. für vLLM `--api-key` oder einen vorgeschalteten Proxy), in der UI hinterlegbar
 * Zugriffsschutz für die LLM-API des Balancers mit eigenen Tokens (aus `API_KEYS` oder in der UI erzeugt, nur als Hash gespeichert)
 * JSON-API `/balancer/api/status`, Prometheus-Metriken `/balancer/metrics`
+* https-Server mit öffentlichen Zertifikaten oder (per Option „TLS-Zertifikat nicht prüfen“) selbstsignierten
 * Eine statische Go-Binary ohne Abhängigkeiten, Docker-Image `FROM scratch` (~7 MB)
 
 ## Start
@@ -272,6 +273,22 @@ Die Status-Ansicht ist ohne Anmeldung sichtbar; für Änderungen `ADMIN_TOKEN` s
 | GET | `/balancer/api/recent?after=<seq>` | Letzte Anfragen (max. 300), nur neuere als `seq` |
 | GET | `/balancer/api/stats?days=30` | Tagesstatistik pro Server, Modell und API-Token (`&format=csv`, `&by=model` für CSV nach Modell) |
 | POST | `/balancer/api/stats/reset` | Statistik löschen |
+
+## Fehlersuche
+
+**`lookup <name> on 127.0.0.11:53: server misbehaving` / `no such host`** – Der Name des Servers lässt sich *im Container*
+nicht auflösen (127.0.0.11 ist der DNS-Server, den Docker im Container bereitstellt; er fragt die DNS-Server des Hosts).
+Häufige Ursachen: der Name ist nur lokal bekannt (Router, Pi-hole, `/etc/hosts` des Hosts, `.local` per mDNS) oder der
+Host nutzt `systemd-resolved` (127.0.0.53), das Docker nicht erreicht. Mit http oder https hat das nichts zu tun.
+Abhilfe im Stack: `dns:` auf den DNS-Server des Netzes setzen (z. B. den Router) oder `extra_hosts: ["name:IP"]` eintragen.
+Prüfen lässt sich die Auflösung so (gleiches Netz wie der Balancer):
+`docker run --rm --network <netz-des-stacks> busybox nslookup <name>`.
+
+**`certificate signed by unknown authority`** – Der Server nutzt ein selbstsigniertes Zertifikat oder eines einer eigenen CA.
+Beim Server „TLS-Zertifikat nicht prüfen“ aktivieren. (Öffentliche Zertifikate, z. B. Let's Encrypt, werden geprüft und
+funktionieren ohne die Option.)
+
+**`server gave HTTP response to HTTPS client`** – Der Server spricht http: URL mit `http://` eintragen.
 
 ## Entwicklung
 

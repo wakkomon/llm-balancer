@@ -247,6 +247,9 @@ func (p *Pool) SetModels(b *Backend, models []string, checkedURL string) {
 
 // discoverModels fetches /v1/models from a server (reusing the health check response when possible).
 func (px *Proxy) discoverModels(client *http.Client, ht healthTarget, body []byte) {
+	if client == nil {
+		client = &http.Client{Transport: px.transportFor(ht.insecure), Timeout: 5 * time.Second}
+	}
 	if body == nil {
 		req, _ := http.NewRequest(http.MethodGet, ht.url+"/v1/models", nil)
 		if ht.key != "" {

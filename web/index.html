@@ -284,6 +284,7 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
     <input id="f-key" type="password" autocomplete="new-password" spellcheck="false">
     <div class="hint" id="f-keyhint">Wird als „Authorization: Bearer …“ an diesen Server geschickt.</div>
     <label class="chk" id="f-keydel-row" style="display:none"><input id="f-keydel" type="checkbox"> gespeicherten Token entfernen</label>
+    <label class="chk" id="f-tls-row"><input id="f-tls" type="checkbox"> TLS-Zertifikat nicht prüfen (selbstsigniert / interne CA)</label>
     <label class="chk"><input id="f-en" type="checkbox" checked> aktiv</label>
     <div class="formerr" id="formerr"></div>
     <div class="btns">
@@ -436,6 +437,8 @@ function openEdit(name) {
   $('f-max').value = b ? b.max : 1;
   $('f-prio').value = b ? b.priority : 0;
   $('f-en').checked = b ? b.enabled : true;
+  $('f-tls').checked = b ? !!b.tls_skip_verify : false;
+  $('f-tls-row').style.display = (b ? b.url : '').startsWith('https') || $('f-tls').checked ? '' : 'none';
   $('f-group').innerHTML = '<option value="">– keine Gruppe –</option>' +
     (current.groups || []).map(g => `<option value="${esc(g.name)}">${esc(g.name)}</option>`).join('');
   $('f-group').value = b ? (b.group || '') : '';
@@ -453,7 +456,7 @@ $('form').addEventListener('submit', async ev => {
   const body = {
     name: $('f-name').value.trim(), url: $('f-url').value.trim(),
     max_concurrent: parseInt($('f-max').value, 10) || 1, priority: parseInt($('f-prio').value, 10) || 0,
-    enabled: $('f-en').checked, group: $('f-group').value,
+    enabled: $('f-en').checked, group: $('f-group').value, tls_skip_verify: $('f-tls').checked,
   };
   const key = $('f-key').value.trim();
   if (key) body.api_key = key;
@@ -500,6 +503,7 @@ function backendCard(b) {
       <span class="gbadge" title="Kleinere Priorität wird bevorzugt">Prio ${b.priority}</span>
       ${b.group ? `<span class="gbadge">Gruppe ${esc(b.group)}</span>` : ''}
       ${b.has_api_key ? '<span class="gbadge" title="Bearer-Token hinterlegt">🔑 Token</span>' : ''}
+      ${b.tls_skip_verify ? '<span class="gbadge" title="TLS-Zertifikat wird nicht geprüft">⚠ TLS ungeprüft</span>' : ''}
     </div>
     ${models}
     <div class="slots" title="${b.active}/${b.max} Slots belegt">${slots}</div>
@@ -602,6 +606,7 @@ function renderGroups(st) {
       <div class="hint" style="margin-top:10px">Bekommen Modelle, die sie selbst melden, und Anfragen für Modelle, die keine Gruppe kennt.</div></div>` : '');
 }
 let editingGroup = null;
+$('f-url').addEventListener('input', () => { if ($('f-url').value.trim().toLowerCase().startsWith('https')) $('f-tls-row').style.display = ''; });
 $('g-fb').addEventListener('change', () => $('g-fbopts').style.display = $('g-fb').value ? '' : 'none');
 function openGroup(name) {
   editingGroup = name;

@@ -76,16 +76,17 @@ func newBackend(bc BackendConfig) *Backend {
 	u, _ := url.Parse(bc.URL)
 	return &Backend{
 		Name: bc.Name, URL: bc.URL, target: u, Max: bc.MaxConcurrent, Priority: bc.Priority,
-		apiKey:  bc.APIKey,
-		group:   bc.Group,
-		enabled: bc.Enabled == nil || *bc.Enabled,
-		healthy: true, // optimistic until the first health check says otherwise
+		apiKey:   bc.APIKey,
+		group:    bc.Group,
+		insecure: bc.TLSSkipVerify,
+		enabled:  bc.Enabled == nil || *bc.Enabled,
+		healthy:  true, // optimistic until the first health check says otherwise
 	}
 }
 
 func (b *Backend) config() BackendConfig {
 	en := b.enabled
-	return BackendConfig{Name: b.Name, URL: b.URL, MaxConcurrent: b.Max, Priority: b.Priority, Enabled: &en, APIKey: b.apiKey, Group: b.group}
+	return BackendConfig{Name: b.Name, URL: b.URL, MaxConcurrent: b.Max, Priority: b.Priority, Enabled: &en, APIKey: b.apiKey, Group: b.group, TLSSkipVerify: b.insecure}
 }
 
 // configsLocked returns the current list as config entries. Caller holds p.mu.
@@ -181,7 +182,12 @@ func (p *Pool) UpdateBackend(name string, bc BackendConfig, key, group *string) 
 		b.healthy, b.healthMsg, b.unhealthyTil = true, "", time.Time{}
 		defer p.kickHealth()
 	}
-	b.Name, b.Max, b.Priority = bc.Name, bc.MaxConcurrent, bc.Priority
+	if b.insecure != bc.TLSSkipVerify || (key != nil && strings.TrimSpace(*key) != b.apiKey) {
+		// connection settings changed: give the server a fresh chance and check it right away
+		b.healthy, b.healthMsg, b.unhealthyTil = true, "", time.Time{}
+		defer p.kickHealth()
+	}
+	b.Name, b.Max, b.Priority, b.insecure = bc.Name, bc.MaxConcurrent, bc.Priority, bc.TLSSkipVerify
 	if key != nil { // nil = keep the stored token
 		b.apiKey = strings.TrimSpace(*key)
 	}
@@ -239,7 +245,7 @@ func (p *Pool) ResetBackends() error {
 	for _, bc := range p.initial {
 		if b, ok := old[bc.Name]; ok && b.URL == bc.URL {
 			// keep runtime state (active slots, stats) of unchanged servers
-			b.Max, b.Priority, b.enabled, b.apiKey, b.group = bc.MaxConcurrent, bc.Priority, bc.Enabled == nil || *bc.Enabled, bc.APIKey, bc.Group
+			b.Max, b.Priority, b.enabled, b.apiKey, b.group, b.insecure = bc.MaxConcurrent, bc.Priority, bc.Enabled == nil || *bc.Enabled, bc.APIKey, bc.Group, bc.TLSSkipVerify
 			next = append(next, b)
 		} else {
 			next = append(next, newBackend(bc))
@@ -300,6 +306,7 @@ type backendInput struct {
 	Enabled       *bool   `json:"enabled"`
 	APIKey        *string `json:"api_key"`
 	Group         *string `json:"group"`
+	TLSSkipVerify *bool   `json:"tls_skip_verify"`
 }
 
 func decodeBackend(r *http.Request) (BackendConfig, *string, *string, error) {
@@ -310,6 +317,9 @@ func decodeBackend(r *http.Request) (BackendConfig, *string, *string, error) {
 		return BackendConfig{}, nil, nil, httpErr{400, fmt.Errorf("ungültiges JSON: %v", err)}
 	}
 	bc := BackendConfig{Name: in.Name, URL: in.URL, MaxConcurrent: in.MaxConcurrent, Priority: in.Priority, Enabled: in.Enabled}
+	if in.TLSSkipVerify != nil {
+		bc.TLSSkipVerify = *in.TLSSkipVerify
+	}
 	if in.APIKey != nil {
 		bc.APIKey = strings.TrimSpace(*in.APIKey)
 	}
@@ -328,6 +338,7 @@ type backendView struct {
 	Enabled       bool   `json:"enabled"`
 	HasAPIKey     bool   `json:"has_api_key"`
 	Group         string `json:"group"`
+	TLSSkipVerify bool   `json:"tls_skip_verify"`
 }
 
 func registerAdmin(mux *http.ServeMux, pre string, pool *Pool, token string) {
@@ -335,7 +346,7 @@ func registerAdmin(mux *http.ServeMux, pre string, pool *Pool, token string) {
 		pool.mu.Lock()
 		list := []backendView{}
 		for _, bc := range pool.configsLocked() {
-			list = append(list, backendView{bc.Name, bc.URL, bc.MaxConcurrent, bc.Priority, *bc.Enabled, bc.APIKey != "", bc.Group})
+			list = append(list, backendView{bc.Name, bc.URL, bc.MaxConcurrent, bc.Priority, *bc.Enabled, bc.APIKey != "", bc.Group, bc.TLSSkipVerify})
 		}
 		pool.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")

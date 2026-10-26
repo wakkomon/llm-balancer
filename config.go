@@ -14,11 +14,12 @@ import (
 type BackendConfig struct {
 	Name          string `json:"name"`
 	URL           string `json:"url"`
-	MaxConcurrent int    `json:"max_concurrent"`    // parallel requests the server can handle (default 1)
-	Priority      int    `json:"priority"`          // lower = preferred when several are free (default 0)
-	Enabled       *bool  `json:"enabled"`           // default true
-	APIKey        string `json:"api_key,omitempty"` // sent as "Authorization: Bearer <key>" to this server
-	Group         string `json:"group,omitempty"`   // name of the server group (see Config.Groups)
+	MaxConcurrent int    `json:"max_concurrent"`            // parallel requests the server can handle (default 1)
+	Priority      int    `json:"priority"`                  // lower = preferred when several are free (default 0)
+	Enabled       *bool  `json:"enabled"`                   // default true
+	APIKey        string `json:"api_key,omitempty"`         // sent as "Authorization: Bearer <key>" to this server
+	Group         string `json:"group,omitempty"`           // name of the server group (see Config.Groups)
+	TLSSkipVerify bool   `json:"tls_skip_verify,omitempty"` // https with a self-signed certificate: don't verify it
 }
 
 // Config is the full balancer configuration.
