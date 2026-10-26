@@ -64,7 +64,7 @@ volumes:
 Vollständige Vorlage: `portainer-stack.yml`.
 
 Das Image wird von der GitHub-Action bei jedem Push auf `main` nach `ghcr.io/wakkomon/llm-balancer:latest` gebaut,
-zu jeder Version zusätzlich als `ghcr.io/wakkomon/llm-balancer:<version>` (z. B. `:1.0.1`) – damit lässt sich eine Version festnageln
+zusätzlich als `ghcr.io/wakkomon/llm-balancer:<version>` laut Datei `VERSION` (z. B. `:1.0.1`, dazu Git-Tag `v1.0.1`) – damit lässt sich eine Version festnageln
 (beim ersten Mal das Package unter GitHub → Packages auf „public“ stellen oder `docker login ghcr.io`).
 
 ### Ohne Docker
