@@ -277,6 +277,39 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			exclude[b] = true
 			continue
 		}
+		// HTTP 200 doesn't mean success yet: check the start of the answer before sending anything
+		var prefix []byte
+		if resp.StatusCode < 300 && attempt < maxAttempts {
+			var bad string
+			var perr error
+			prefix, bad, perr = peekStart(resp, func() { px.pool.setFirstByte(req) })
+			if perr != nil || bad != "" {
+				resp.Body.Close()
+				if req.stopped.Load() {
+					px.pool.Release(b, req, "")
+					jsonError(w, 499, errStopped.Error())
+					px.pool.Finish(req, b, 499, stoppedMsg)
+					return
+				}
+				if ctx.Err() != nil {
+					px.pool.Release(b, req, "")
+					px.pool.Finish(req, b, 499, "client disconnected")
+					return
+				}
+				if perr != nil {
+					bad = "Verbindung vor der ersten Antwort abgebrochen: " + perr.Error()
+				}
+				lastFail = &upstreamFail{status: resp.StatusCode, header: resp.Header.Clone(), body: prefix, backend: req.Backend}
+				msg := fmt.Sprintf("%s: %s", req.Backend, bad)
+				log.Printf("req %d: %s – trying another server", req.ID, msg)
+				px.pool.Release(b, req, msg)
+				px.pool.failedAttempt(req.Backend)
+				px.pool.setSoftRetry(req, b, false)
+				px.pool.addTrail(req, fmt.Sprintf("%s: %d, %s", label, resp.StatusCode, shortText(bad, 60)))
+				exclude[b] = true
+				continue
+			}
+		}
 		if req.Attempts > 1 {
 			px.pool.addTrail(req, fmt.Sprintf("%s: %d", label, resp.StatusCode))
 		}
@@ -289,7 +322,7 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				req.lastChunk.Store(time.Now().UnixNano())
 			}
 		}
-		n, copyErr := px.stream(w, resp, req, scan)
+		n, copyErr := px.stream(w, resp, req, scan, prefix)
 		if req.stopped.Load() {
 			// tell a streaming client why the answer ends here (OpenAI clients raise this as an API error)
 			if strings.Contains(resp.Header.Get("Content-Type"), "event-stream") {
@@ -312,6 +345,12 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if resp.StatusCode >= 500 && errMsg == "" {
 			errMsg = fmt.Sprintf("upstream status %d", resp.StatusCode)
 		}
+		if errMsg == "" && scan.streamErr != "" {
+			errMsg = "Fehler im Stream nach Beginn der Antwort (nicht mehr umleitbar): " + shortText(scan.streamErr, 160)
+		}
+		if errMsg == "" && resp.StatusCode >= 400 {
+			errMsg = fmt.Sprintf("Fehler an den Client weitergegeben: %d", resp.StatusCode)
+		}
 		if (resp.StatusCode == 401 || resp.StatusCode == 403) && errMsg == "" {
 			errMsg = fmt.Sprintf("Server lehnt den Bearer-Token ab (%d)", resp.StatusCode)
 		}
@@ -326,17 +365,29 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // stream copies the upstream response to the client, flushing after every chunk (SSE friendly).
-func (px *Proxy) stream(w http.ResponseWriter, resp *http.Response, req *ReqInfo, scan *usageScanner) (int64, error) {
+func (px *Proxy) stream(w http.ResponseWriter, resp *http.Response, req *ReqInfo, scan *usageScanner, prefix []byte) (int64, error) {
 	stripHop(resp.Header)
 	copyHeaders(w.Header(), resp.Header)
 	w.Header().Set("X-LLM-Balancer-Backend", req.Backend)
+	if req.Attempts > 1 {
+		w.Header().Set("X-LLM-Balancer-Attempts", strconv.Itoa(req.Attempts))
+	}
 	w.WriteHeader(resp.StatusCode)
 	rc := http.NewResponseController(w)
 	_ = rc.Flush()
+	var total int64
+	if len(prefix) > 0 { // the part already read while checking the start of the answer
+		if _, werr := w.Write(prefix); werr != nil {
+			return 0, werr
+		}
+		total = int64(len(prefix))
+		req.bytes.Add(total)
+		scan.Write(prefix)
+		_ = rc.Flush()
+	}
 
 	buf := make([]byte, 32*1024)
-	var total int64
-	first := true
+	first := len(prefix) == 0
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
@@ -509,7 +560,17 @@ type upstreamFail struct {
 // loaded there, timeout, overloaded). Other 4xx (400, 413, 422 …) are problems of the request itself
 // and are passed on right away.
 func (px *Proxy) retryable(code int) bool {
+	if px.cfg.RetryAll {
+		return code >= 400
+	}
 	return code >= 500 || slices.Contains(px.cfg.RetryStatus, code)
+}
+
+func shortText(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
 }
 
 func shortBody(b []byte) string {

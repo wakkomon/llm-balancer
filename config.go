@@ -38,6 +38,7 @@ type Config struct {
 	HealthPath           string          `json:"health_path"`         // default "/v1/models", "" disables active checks
 	HealthIntervalSec    int             `json:"health_interval_sec"` // default 15
 	SlotMethods          []string        `json:"slot_methods"`        // methods that occupy a slot (default ["POST"])
+	RetryAll             bool            `json:"retry_all"`           // every error answer (>= 400) makes the balancer try another server (default true)
 	RetryStatus          []int           `json:"retry_status"`        // besides every 5xx: status codes that make the balancer try another server (default 401,403,404,408,429)
 	MaxBodyMB            int             `json:"max_body_mb"`         // default 64
 	RecentRequests       int             `json:"recent_requests"`     // how many finished requests the UI keeps (default 300)
@@ -61,6 +62,7 @@ func defaultConfig() Config {
 		HealthPath:           "/v1/models",
 		HealthIntervalSec:    15,
 		SlotMethods:          []string{"POST"},
+		RetryAll:             true,
 		RetryStatus:          []int{401, 403, 404, 408, 429},
 		MaxBodyMB:            64,
 		RecentRequests:       300,
@@ -134,7 +136,10 @@ func loadConfig() (Config, error) {
 	if v, ok := os.LookupEnv("TAG_CHECK"); ok {
 		cfg.TagCheck = v
 	}
-	if v, ok := os.LookupEnv("RETRY_STATUS"); ok {
+	if v, ok := os.LookupEnv("RETRY_STATUS"); ok && strings.EqualFold(strings.TrimSpace(v), "all") {
+		cfg.RetryAll = true
+	} else if ok {
+		cfg.RetryAll = false
 		cfg.RetryStatus = nil
 		for _, f := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' }) {
 			n, err := strconv.Atoi(f)

@@ -153,9 +153,11 @@ Anfragen ohne Slot (z. B. `GET`) gehen an einen Server und bei einer Fehlerantwo
 `GET /v1/models/<modell>` beantwortet der Balancer selbst aus den Modellen aller Server. Welche Version läuft, steht oben
 in der Web-UI (z. B. `v1.0.1`, Commit im Tooltip) und in der ersten Log-Zeile; Änderungen stehen in `CHANGELOG.md`.
 
-Jeder Server wird pro Anfrage höchstens einmal versucht. Als Fehler gelten Verbindungsfehler, alle 5xx und die Codes aus
-`RETRY_STATUS` (Standard `401,403,404,408,429` – falscher Server-Token, Modell dort nicht geladen, Timeout, überlastet).
-Andere 4xx wie 400, 413 oder 422 sind Fehler der Anfrage selbst und werden sofort durchgereicht. Ein Server, der nur
+Jeder Server wird pro Anfrage höchstens einmal versucht. Als Fehler gelten Verbindungsfehler, **jeder Statuscode ab 400**
+(auch 400 „Kontext zu groß“ – ein Server mit mehr Kontext kann es schaffen) und **Antworten mit HTTP 200, deren Anfang ein
+Fehler ist** (llama.cpp schickt ein SSE-Event `{"error":…}`, Ollama eine Fehlerzeile) oder die leer sind: Der Balancer prüft
+den Anfang jeder Antwort, bevor er etwas an den Client schickt – das verzögert nichts, der erste Token geht sofort durch.
+Mit `RETRY_STATUS=404,429` (Liste) werden nur 5xx und die genannten Codes wiederholt, andere 4xx sofort durchgereicht. Ein Server, der nur
 „belegt“ meldet (503/429), zählt nicht als fehlerhaft und darf dieselbe Anfrage wieder bekommen, sobald er frei ist.
 Läuft die Antwort schon (Stream begonnen), ist kein Wechsel mehr möglich. In „Letzte Anfragen“ zeigt `↻ 3×` mit Tooltip
 den Weg, z. B. `gpu: 500 → amd: 503 → nuc (Fallback): 200`; fehlgeschlagene Versuche zählen beim jeweiligen Server als Fehler.
@@ -254,7 +256,7 @@ Entweder per Umgebungsvariablen oder per `config.json` (Pfad über `CONFIG`, son
 | `UNKNOWN_MODEL` / `unknown_model` | `all` | `reject`: Modelle, die keine Gruppe und kein Server kennt, mit 404 ablehnen (nur wenn Gruppen existieren) |
 | `STREAM_USAGE` / `stream_usage` | `true` | Stream-Anfragen um `stream_options.include_usage` ergänzen, damit Tokens gezählt werden |
 | `CURRENCY` / `currency` | `€` | Währung der Preise |
-| `RETRY_STATUS` / `retry_status` | `401,403,404,408,429` | Zusätzlich zu allen 5xx: Statuscodes, bei denen ein anderer Server versucht wird |
+| `RETRY_STATUS` / `retry_status` | `all` | `all`: jeder Fehler ab 400 wird auf anderen Servern wiederholt; Liste (z. B. `404,429`): nur 5xx und diese Codes |
 | `TAG_CHECK` / `tag_check` | `think,thinking,reasoning,tool_call,tool_calls,function_call,answer` | Geprüfte Tags im generierten Text; `*` = alle, `off` = aus |
 | `DNS_SERVERS` / `dns_servers` | – | DNS-Server (IPs, optional mit Port) für die Namen der LLM-Server; danach Fallback auf den Container-Resolver |
 | `ADMIN_TOKEN` / `admin_token` | – | Wenn gesetzt, sind Änderungen in UI/API nur mit diesem Token möglich (Header `X-Admin-Token`) |

@@ -110,10 +110,22 @@ func TestPassLastErrorWhenEverythingFails(t *testing.T) {
 	}
 }
 
-func TestClientErrorIsNotRetried(t *testing.T) {
-	a, b, f := newCodeServer(t, 400, `{"error":"context too long"}`), newCodeServer(t, 200, `{}`), newCodeServer(t, 200, `{}`)
+func TestClientErrorRetriedByDefault(t *testing.T) {
+	// e.g. llama.cpp "request exceeds the available context size": a server with more context may succeed
+	a, b, f := newCodeServer(t, 400, `{"error":"context too long"}`), newCodeServer(t, 200, `{"ok":"b"}`), newCodeServer(t, 200, `{}`)
 	srv := groupSetup(t, a, b, f)
-	if code, body, _ := doChat(t, srv.URL); code != 400 || body != `{"error":"context too long"}` || b.calls.Load() != 0 {
+	if code, body, _ := doChat(t, srv.URL); code != 200 || body != `{"ok":"b"}` {
+		t.Errorf("400 should be retried: %d %s", code, body)
+	}
+}
+
+func TestRetryStatusListDisablesRetryAll(t *testing.T) {
+	a, b, f := newCodeServer(t, 400, `{"error":"bad request"}`), newCodeServer(t, 200, `{}`), newCodeServer(t, 200, `{}`)
+	srv, _ := setup(t, func(c *Config) {
+		c.RetryAll = false // as with RETRY_STATUS="404,429"
+		c.Backends = []BackendConfig{{Name: "a", URL: a.srv.URL}, {Name: "b", URL: b.srv.URL, Priority: 1}, {Name: "f", URL: f.srv.URL, Priority: 2}}
+	})
+	if code, body, _ := doChat(t, srv.URL); code != 400 || body != `{"error":"bad request"}` || b.calls.Load() != 0 {
 		t.Errorf("400 must be passed on directly: %d %s (b calls %d)", code, body, b.calls.Load())
 	}
 }

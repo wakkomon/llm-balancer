@@ -27,6 +27,7 @@ type usageScanner struct {
 	onContent func() // called for every chunk that carries generated text (live tokens/s)
 	content   bool   // any generated text seen
 	done      bool   // stream end marker seen ([DONE], finish_reason, done:true, message_stop)
+	streamErr string // an error the server reported inside the answer
 }
 
 const maxUsageBody = 8 << 20
@@ -75,7 +76,7 @@ func (s *usageScanner) handleLine(l []byte) {
 	if len(l) == 0 || l[0] != '{' {
 		return
 	}
-	if s.tags == nil && s.onContent == nil && !bytes.Contains(l, []byte(`"usage"`)) &&
+	if s.tags == nil && s.onContent == nil && !bytes.Contains(l, []byte(`"error"`)) && !bytes.Contains(l, []byte(`"usage"`)) &&
 		!bytes.Contains(l, []byte(`eval_count"`)) && !bytes.Contains(l, []byte(`"timings"`)) {
 		return
 	}
@@ -143,6 +144,7 @@ func (s *usageScanner) parse(b []byte) {
 		Response *string         `json:"response"` // Ollama /api/generate
 		Done     *bool           `json:"done"`
 		Type     string          `json:"type"`
+		Error    json.RawMessage `json:"error"`
 	}
 	if json.Unmarshal(b, &m) != nil {
 		return
@@ -188,6 +190,9 @@ func (s *usageScanner) parse(b []byte) {
 			}
 			s.done = true
 		}
+	}
+	if len(m.Error) > 0 && string(m.Error) != "null" && s.streamErr == "" {
+		s.streamErr = errorText(m.Error)
 	}
 	if (m.Done != nil && *m.Done) || m.Type == "message_stop" {
 		s.done = true
