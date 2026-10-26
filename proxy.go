@@ -30,10 +30,10 @@ type Proxy struct {
 	insecure  *http.Transport // for servers with "tls_skip_verify" (self-signed certificates)
 }
 
-func newTransport(skipVerify bool) *http.Transport {
+func newTransport(skipVerify bool, dns []string) *http.Transport {
 	return &http.Transport{
 		Proxy:               nil, // talk to the LLM servers directly
-		DialContext:         (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:         newDialer(dns),
 		TLSHandshakeTimeout: 10 * time.Second,
 		TLSClientConfig:     &tls.Config{InsecureSkipVerify: skipVerify},
 		ForceAttemptHTTP2:   true,
@@ -45,7 +45,7 @@ func newTransport(skipVerify bool) *http.Transport {
 }
 
 func NewProxy(cfg Config, pool *Pool) *Proxy {
-	return &Proxy{cfg: cfg, pool: pool, transport: newTransport(false), insecure: newTransport(true)}
+	return &Proxy{cfg: cfg, pool: pool, transport: newTransport(false, cfg.dnsServers), insecure: newTransport(true, cfg.dnsServers)}
 }
 
 func (px *Proxy) transportFor(skipVerify bool) *http.Transport {
@@ -398,8 +398,8 @@ func explainNetErr(err error) string {
 	var certErr *tls.CertificateVerificationError
 	switch {
 	case errors.As(err, &dnsErr):
-		return msg + " – DNS-Auflösung im Container fehlgeschlagen (Docker-DNS 127.0.0.11). " +
-			"Abhilfe: im Stack „dns:“ auf den DNS-Server des Netzes setzen oder „extra_hosts: name:IP“ eintragen."
+		return msg + " – DNS-Auflösung im Container fehlgeschlagen. " +
+			"Abhilfe: DNS_SERVERS (z. B. die IP des Routers) setzen, oder im Stack „dns:“ bzw. „extra_hosts: name:IP“ eintragen."
 	case errors.As(err, &certErr):
 		return msg + " – Zertifikat nicht vertrauenswürdig. Bei selbstsignierten Zertifikaten beim Server „Zertifikat nicht prüfen“ aktivieren."
 	case strings.Contains(msg, "server gave HTTP response to HTTPS client"):

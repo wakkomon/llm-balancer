@@ -27,24 +27,26 @@ type Config struct {
 	Listen               string          `json:"listen"`    // default ":8080"
 	UIPrefix             string          `json:"ui_prefix"` // default "/balancer"
 	Backends             []BackendConfig `json:"backends"`
-	Groups               []GroupConfig   `json:"groups"`                 // server groups, routed by model name
-	UnknownModel         string          `json:"unknown_model"`          // "all" (default): models no group/server knows go to every server; "reject": 404
-	QueueTimeoutSec      int             `json:"queue_timeout_sec"`      // max wait in queue, 0 = unlimited (default 900)
-	MaxQueue             int             `json:"max_queue"`              // max queued requests, 0 = unlimited
-	HealthPath           string          `json:"health_path"`            // default "/v1/models", "" disables active checks
-	HealthIntervalSec    int             `json:"health_interval_sec"`    // default 15
-	SlotMethods          []string        `json:"slot_methods"`           // methods that occupy a slot (default ["POST"])
-	RetryStatus          []int           `json:"retry_status"`           // upstream status codes that trigger a retry on another backend (default [503])
-	MaxBodyMB            int             `json:"max_body_mb"`            // default 64
-	RecentRequests       int             `json:"recent_requests"`        // how many finished requests the UI keeps (default 300)
-	AdminToken           string          `json:"admin_token"`            // if set, changes in the UI/API need this token
-	StatsDays            int             `json:"stats_days"`             // how many days of statistics to keep (default 400)
-	APIKeys              string          `json:"api_keys"`               // client tokens for the LLM API, "name=token,..." (env API_KEYS)
-	TagCheck             string          `json:"tag_check"`              // tags to check in generated text, "*" = all, "off" (default: DefaultTagCheck)
-	StreamUsage          bool            `json:"stream_usage"`           // add stream_options.include_usage to streaming requests (default true)
-	Currency             string          `json:"currency"`               // shown next to prices (default "€")
-	DataDir              string          `json:"data_dir"`               // where backends.json (UI changes) is stored (default "data", Docker: /data)
-	UnhealthyCooldownSec int             `json:"unhealthy_cooldown_sec"` // used when health checks are disabled (default 10)
+	Groups               []GroupConfig   `json:"groups"`              // server groups, routed by model name
+	UnknownModel         string          `json:"unknown_model"`       // "all" (default): models no group/server knows go to every server; "reject": 404
+	QueueTimeoutSec      int             `json:"queue_timeout_sec"`   // max wait in queue, 0 = unlimited (default 900)
+	MaxQueue             int             `json:"max_queue"`           // max queued requests, 0 = unlimited
+	HealthPath           string          `json:"health_path"`         // default "/v1/models", "" disables active checks
+	HealthIntervalSec    int             `json:"health_interval_sec"` // default 15
+	SlotMethods          []string        `json:"slot_methods"`        // methods that occupy a slot (default ["POST"])
+	RetryStatus          []int           `json:"retry_status"`        // upstream status codes that trigger a retry on another backend (default [503])
+	MaxBodyMB            int             `json:"max_body_mb"`         // default 64
+	RecentRequests       int             `json:"recent_requests"`     // how many finished requests the UI keeps (default 300)
+	AdminToken           string          `json:"admin_token"`         // if set, changes in the UI/API need this token
+	StatsDays            int             `json:"stats_days"`          // how many days of statistics to keep (default 400)
+	APIKeys              string          `json:"api_keys"`            // client tokens for the LLM API, "name=token,..." (env API_KEYS)
+	TagCheck             string          `json:"tag_check"`           // tags to check in generated text, "*" = all, "off" (default: DefaultTagCheck)
+	StreamUsage          bool            `json:"stream_usage"`        // add stream_options.include_usage to streaming requests (default true)
+	Currency             string          `json:"currency"`            // shown next to prices (default "€")
+	DNSServers           string          `json:"dns_servers"`         // DNS servers for the LLM server names, e.g. "192.168.1.1,1.1.1.1"
+	dnsServers           []string
+	DataDir              string `json:"data_dir"`               // where backends.json (UI changes) is stored (default "data", Docker: /data)
+	UnhealthyCooldownSec int    `json:"unhealthy_cooldown_sec"` // used when health checks are disabled (default 10)
 }
 
 func defaultConfig() Config {
@@ -145,6 +147,9 @@ func loadConfig() (Config, error) {
 	if v := os.Getenv("ADMIN_TOKEN"); v != "" {
 		cfg.AdminToken = v
 	}
+	if v := os.Getenv("DNS_SERVERS"); v != "" {
+		cfg.DNSServers = v
+	}
 	if v := os.Getenv("DATA_DIR"); v != "" {
 		cfg.DataDir = v
 	}
@@ -196,6 +201,11 @@ func (c *Config) validate() error {
 	if err := validateSetup(c.Backends, c.Groups); err != nil {
 		return err
 	}
+	ds, err := parseDNSServers(c.DNSServers)
+	if err != nil {
+		return err
+	}
+	c.dnsServers = ds
 	if c.UnknownModel != "reject" {
 		c.UnknownModel = "all"
 	}

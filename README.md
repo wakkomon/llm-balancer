@@ -204,6 +204,7 @@ Entweder per Umgebungsvariablen oder per `config.json` (Pfad über `CONFIG`, son
 | `STREAM_USAGE` / `stream_usage` | `true` | Stream-Anfragen um `stream_options.include_usage` ergänzen, damit Tokens gezählt werden |
 | `CURRENCY` / `currency` | `€` | Währung der Preise |
 | `TAG_CHECK` / `tag_check` | `think,thinking,reasoning,tool_call,tool_calls,function_call,answer` | Geprüfte Tags im generierten Text; `*` = alle, `off` = aus |
+| `DNS_SERVERS` / `dns_servers` | – | DNS-Server (IPs, optional mit Port) für die Namen der LLM-Server; danach Fallback auf den Container-Resolver |
 | `ADMIN_TOKEN` / `admin_token` | – | Wenn gesetzt, sind Änderungen in UI/API nur mit diesem Token möglich (Header `X-Admin-Token`) |
 | `LISTEN` / `listen` | `:8080` | Listen-Adresse |
 | `QUEUE_TIMEOUT_SEC` / `queue_timeout_sec` | `900` | Max. Wartezeit in der Queue (0 = unbegrenzt), danach HTTP 504 |
@@ -280,7 +281,9 @@ Die Status-Ansicht ist ohne Anmeldung sichtbar; für Änderungen `ADMIN_TOKEN` s
 nicht auflösen (127.0.0.11 ist der DNS-Server, den Docker im Container bereitstellt; er fragt die DNS-Server des Hosts).
 Häufige Ursachen: der Name ist nur lokal bekannt (Router, Pi-hole, `/etc/hosts` des Hosts, `.local` per mDNS) oder der
 Host nutzt `systemd-resolved` (127.0.0.53), das Docker nicht erreicht. Mit http oder https hat das nichts zu tun.
-Abhilfe im Stack: `dns:` auf den DNS-Server des Netzes setzen (z. B. den Router) oder `extra_hosts: ["name:IP"]` eintragen.
+Abhilfe: `DNS_SERVERS` auf den DNS-Server des Netzes setzen (z. B. `DNS_SERVERS: "192.168.1.1"`, mehrere kommagetrennt).
+Der Balancer fragt dann zuerst diese Server und erst danach den Docker-DNS, Namen anderer Container funktionieren also weiter.
+Alternativ im Stack `dns:` (gilt für den ganzen Container) oder `extra_hosts: ["name:IP"]`.
 Prüfen lässt sich die Auflösung so (gleiches Netz wie der Balancer):
 `docker run --rm --network <netz-des-stacks> busybox nslookup <name>`.
 

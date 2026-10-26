@@ -22,6 +22,9 @@ services:
       # API_KEYS: "litellm=ein-langes-zufaelliges-token"
       # Optional: Token, ohne den keine Änderungen in der UI möglich sind
       # ADMIN_TOKEN: "ein-langes-geheimes-passwort"
+      # DNS-Server für die Namen der LLM-Server (IPs, kommagetrennt). Wird zuerst gefragt,
+      # danach der Docker-DNS – Namen anderer Container funktionieren weiter.
+      # DNS_SERVERS: "192.168.1.1"
       TZ: "Europe/Berlin"        # Zeitzone für Tagesgrenzen der Statistik
       CURRENCY: "€"              # Währung für die Preise pro API-Token
       # UNKNOWN_MODEL: "reject"  # Modelle, die keine Gruppe/kein Server kennt: 404 statt an alle Server
@@ -32,8 +35,7 @@ services:
       MAX_QUEUE: "0"             # max. Anzahl wartender Anfragen (0 = unbegrenzt)
       HEALTH_PATH: "/v1/models"  # für llama.cpp alternativ "/health"
       HEALTH_INTERVAL_SEC: "15"
-    # Falls Servernamen im Container nicht aufgelöst werden („lookup … on 127.0.0.11:53“),
-    # den DNS-Server des eigenen Netzes eintragen oder Namen fest zuordnen:
+    # Alternative zu DNS_SERVERS (gilt für den ganzen Container) bzw. Namen fest zuordnen:
     # dns:
     #   - 192.168.1.1
     # extra_hosts:

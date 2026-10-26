@@ -78,6 +78,9 @@ func main() {
 		log.Printf("  no backends configured yet – add them in the web UI")
 	}
 	pool.mu.Unlock()
+	if len(cfg.dnsServers) > 0 {
+		log.Printf("DNS servers for LLM server names: %s (fallback: container resolver)", strings.Join(cfg.dnsServers, ", "))
+	}
 	if access.Enabled() {
 		log.Printf("API access requires a token (API_KEYS / tokens created in the UI)")
 	} else {
