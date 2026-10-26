@@ -404,3 +404,21 @@ func tps(st *DayStat) string {
 }
 
 func money(v float64) string { return strconv.FormatFloat(v, 'f', 6, 64) }
+
+// RecordFailedAttempt counts a failed attempt on a server whose request was then retried elsewhere:
+// it shows up as an error of that server (the request itself is counted where it finally ran).
+func (s *Stats) RecordFailedAttempt(backend string, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	day := dayKey(at)
+	m := s.days[day]
+	if m == nil {
+		m = map[string]*DayStat{}
+		s.days[day] = m
+	}
+	if m[backend] == nil {
+		m[backend] = &DayStat{}
+	}
+	m[backend].Errors++
+	s.dirty = true
+}

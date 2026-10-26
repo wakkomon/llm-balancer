@@ -30,6 +30,7 @@ services:
       CURRENCY: "€"              # Währung für die Preise pro API-Token
       # UNKNOWN_MODEL: "reject"  # Modelle, die keine Gruppe/kein Server kennt: 404 statt an alle Server
       # STREAM_USAGE: "false"    # Stream-Anfragen nicht um stream_options.include_usage ergänzen
+      # RETRY_STATUS: "401,403,404,408,429"  # zusätzlich zu allen 5xx: bei diesen Codes anderen Server/Fallback versuchen
       # TAG_CHECK: "think,tool_call"  # Tags, die im generierten Text geprüft werden ("*" = alle, "off" = aus)
       STATS_DAYS: "400"          # wie viele Tage Statistik aufbewahrt werden
       QUEUE_TIMEOUT_SEC: "900"   # max. Wartezeit in der Queue (0 = unbegrenzt)

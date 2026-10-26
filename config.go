@@ -38,7 +38,7 @@ type Config struct {
 	HealthPath           string          `json:"health_path"`         // default "/v1/models", "" disables active checks
 	HealthIntervalSec    int             `json:"health_interval_sec"` // default 15
 	SlotMethods          []string        `json:"slot_methods"`        // methods that occupy a slot (default ["POST"])
-	RetryStatus          []int           `json:"retry_status"`        // upstream status codes that trigger a retry on another backend (default [503])
+	RetryStatus          []int           `json:"retry_status"`        // besides every 5xx: status codes that make the balancer try another server (default 401,403,404,408,429)
 	MaxBodyMB            int             `json:"max_body_mb"`         // default 64
 	RecentRequests       int             `json:"recent_requests"`     // how many finished requests the UI keeps (default 300)
 	AdminToken           string          `json:"admin_token"`         // if set, changes in the UI/API need this token
@@ -61,7 +61,7 @@ func defaultConfig() Config {
 		HealthPath:           "/v1/models",
 		HealthIntervalSec:    15,
 		SlotMethods:          []string{"POST"},
-		RetryStatus:          []int{503},
+		RetryStatus:          []int{401, 403, 404, 408, 429},
 		MaxBodyMB:            64,
 		RecentRequests:       300,
 		UnhealthyCooldownSec: 10,
@@ -133,6 +133,16 @@ func loadConfig() (Config, error) {
 	}
 	if v, ok := os.LookupEnv("TAG_CHECK"); ok {
 		cfg.TagCheck = v
+	}
+	if v, ok := os.LookupEnv("RETRY_STATUS"); ok {
+		cfg.RetryStatus = nil
+		for _, f := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' }) {
+			n, err := strconv.Atoi(f)
+			if err != nil || n < 400 || n > 599 {
+				return cfg, fmt.Errorf("RETRY_STATUS: ungültiger Statuscode %q", f)
+			}
+			cfg.RetryStatus = append(cfg.RetryStatus, n)
+		}
 	}
 	if v := os.Getenv("STREAM_USAGE"); v != "" {
 		cfg.StreamUsage = v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")

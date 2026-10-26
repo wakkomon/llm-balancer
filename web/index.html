@@ -108,6 +108,7 @@ td.sw i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right
 .tps b{font:600 13px var(--mono);color:var(--ink)}
 .warnc{color:var(--warn);font-weight:600}
 td.tagerr{color:var(--warn);cursor:help}
+.retry{color:var(--warn);cursor:help;font-size:12px;white-space:nowrap}
 .fb{font-size:12.5px;margin-top:10px;color:var(--muted)} .fb b{color:var(--ink);font-weight:600}
 .chkf{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)} .chkf input{width:auto}
 .filterbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:-2px 0 12px}
@@ -806,7 +807,7 @@ function renderRecent() {
     return `<tr>
       <td>${hms(r.ended_at)}</td><td>${r.id}</td><td>${esc(r.model || r.path)}${r.effective_model ? ` <span class="muted">→ ${esc(r.effective_model)}</span>` : ''}</td><td>${esc(r.group || '–')}</td>
       <td>${r.token ? esc(r.token) : '<span class="muted">' + esc(r.client) + '</span>'}</td>
-      <td>${esc(r.backend || '–')}${r.attempts > 1 ? ' <span class="muted">(' + r.attempts + '×)</span>' : ''}</td>
+      <td>${esc(r.backend || '–')}${r.trail ? ` <span class="retry" title="${esc(r.trail)}">↻ ${r.attempts}×</span>` : r.attempts > 1 ? ' <span class="muted">(' + r.attempts + '×)</span>' : ''}</td>
       <td class="${r.status >= 200 && r.status < 400 ? 'ok' : 'bad'}" title="${esc(r.error)}">${r.status}${r.error ? ' · ' + esc(r.error.slice(0, 40)) : ''}</td>
       <td class="n">${dur(r.queue_ms)}</td><td class="n">${dur(r.ttfb_ms)}</td><td class="n">${dur(r.duration_ms)}</td>
       <td class="n">${r.tokens_in || r.tokens_out ? num(r.tokens_in) + ' / ' + num(r.tokens_out) : '–'}</td><td class="n">${tps}</td>

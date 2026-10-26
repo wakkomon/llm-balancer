@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -181,11 +182,17 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	px.pool.setCancel(req, cancel)
 	exclude := map[*Backend]bool{}
 	var lastBackend *Backend
-	maxAttempts := max(1, px.pool.count())
+	var lastFail *upstreamFail         // last error answer of a server – passed on if every server fails
+	var failMsgs []string              // connection errors, for the final message
+	maxAttempts := px.pool.count() + 2 // every server once, plus re-trying a "busy" one
 
 	for attempt := 1; ; attempt++ {
 		b, err := px.pool.Acquire(ctx, req, exclude)
 		if err != nil {
+			if errors.Is(err, ErrNoBackend) && (lastFail != nil || len(failMsgs) > 0) && !req.stopped.Load() {
+				px.passFailure(w, req, lastBackend, lastFail, failMsgs)
+				return
+			}
 			code := http.StatusServiceUnavailable
 			switch {
 			case errors.Is(err, ErrQueueTimeout):
@@ -207,6 +214,10 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		lastBackend = b
+		label := req.Backend
+		if strings.Contains(req.Group, " → ") {
+			label += " (Fallback)"
+		}
 
 		sendBody := body
 		if req.rewrite != "" {
@@ -233,26 +244,41 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			msg := fmt.Sprintf("connect %s: %s", req.Backend, explainNetErr(err))
-			log.Printf("req %d: %s", req.ID, msg)
+			log.Printf("req %d: %s – trying another server", req.ID, msg)
 			px.pool.MarkUnhealthy(b, err.Error())
 			px.pool.Release(b, req, msg)
+			px.pool.addTrail(req, label+": keine Verbindung")
+			failMsgs = append(failMsgs, msg)
+			px.pool.failedAttempt(req.Backend)
 			exclude[b] = true
 			if attempt < maxAttempts {
 				continue
 			}
-			jsonError(w, http.StatusBadGateway, msg)
-			px.pool.Finish(req, b, http.StatusBadGateway, msg)
+			px.passFailure(w, req, b, lastFail, failMsgs)
 			return
 		}
 
-		if slices.Contains(px.cfg.RetryStatus, resp.StatusCode) && attempt < maxAttempts {
-			io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		if px.retryable(resp.StatusCode) && attempt < maxAttempts {
+			// read the error answer (bounded) so it can be passed on if no other server succeeds
+			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 			resp.Body.Close()
-			msg := fmt.Sprintf("%s answered %d, trying next backend", req.Backend, resp.StatusCode)
-			log.Printf("req %d: %s", req.ID, msg)
-			px.pool.Release(b, req, msg)
+			lastFail = &upstreamFail{status: resp.StatusCode, header: resp.Header.Clone(), body: errBody, backend: req.Backend}
+			msg := fmt.Sprintf("%s answered %d: %s", req.Backend, resp.StatusCode, shortBody(errBody))
+			log.Printf("req %d: %s – trying another server", req.ID, msg)
+			soft := resp.StatusCode == 503 || resp.StatusCode == 429 // "busy": not counted as server error
+			if soft {
+				px.pool.Release(b, req, "")
+			} else {
+				px.pool.Release(b, req, msg)
+				px.pool.failedAttempt(req.Backend)
+			}
+			px.pool.setSoftRetry(req, b, soft)
+			px.pool.addTrail(req, fmt.Sprintf("%s: %d", label, resp.StatusCode))
 			exclude[b] = true
 			continue
+		}
+		if req.Attempts > 1 {
+			px.pool.addTrail(req, fmt.Sprintf("%s: %d", label, resp.StatusCode))
 		}
 
 		scan := newUsageScanner(resp.Header.Get("Content-Type"))
@@ -436,3 +462,50 @@ func explainNetErr(err error) string {
 var errStopped = errors.New("llm-balancer: request stopped by administrator")
 
 const stoppedMsg = "vom Admin gestoppt"
+
+// upstreamFail is an error answer of a server, kept to be passed on if no other server succeeds.
+type upstreamFail struct {
+	status  int
+	header  http.Header
+	body    []byte
+	backend string
+}
+
+// retryable: which answers make the balancer try another server (and then the fallback group).
+// Every 5xx, plus RETRY_STATUS (default 401, 403, 404, 408, 429: wrong server token, model not
+// loaded there, timeout, overloaded). Other 4xx (400, 413, 422 …) are problems of the request itself
+// and are passed on right away.
+func (px *Proxy) retryable(code int) bool {
+	return code >= 500 || slices.Contains(px.cfg.RetryStatus, code)
+}
+
+func shortBody(b []byte) string {
+	s := strings.Join(strings.Fields(string(b)), " ")
+	if len(s) > 160 {
+		s = s[:160] + "…"
+	}
+	if s == "" {
+		s = "(leer)"
+	}
+	return s
+}
+
+// passFailure answers the client after every possible server (incl. the fallback group) failed:
+// with the last error answer of a server, or 502 listing the connection errors.
+func (px *Proxy) passFailure(w http.ResponseWriter, req *ReqInfo, b *Backend, f *upstreamFail, conn []string) {
+	w.Header().Set("X-LLM-Balancer-Attempts", strconv.Itoa(req.Attempts))
+	if f == nil {
+		msg := "all servers failed: " + strings.Join(conn, "; ")
+		jsonError(w, http.StatusBadGateway, msg)
+		px.pool.Finish(req, b, http.StatusBadGateway, msg)
+		return
+	}
+	stripHop(f.header)
+	f.header.Del("Content-Length")
+	copyHeaders(w.Header(), f.header)
+	w.Header().Set("X-LLM-Balancer-Backend", f.backend)
+	w.WriteHeader(f.status)
+	w.Write(f.body)
+	msg := fmt.Sprintf("alle Server fehlgeschlagen, zuletzt %s: %d %s", f.backend, f.status, shortBody(f.body))
+	px.pool.Finish(req, b, f.status, msg)
+}

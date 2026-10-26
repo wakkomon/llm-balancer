@@ -137,6 +137,22 @@ zur Gruppe läuft weiter über den angefragten Namen; mit dem Muster `*` nimmt d
 Server der Gruppe eine Anfrage als Fallback, gilt das „Modell dort“ der Fallback-Einstellung, falls gesetzt, sonst der
 erzwungene Name dieser Gruppe. In „Letzte Anfragen“ steht der angefragte und der tatsächlich gesendete Name.
 
+### Was passiert, wenn ein Server einen Fehler liefert?
+
+1. Antwortet ein Server mit einem Fehler, versucht der Balancer **einen anderen Server derselben Gruppe**
+   (bzw. – ohne Gruppen – einen anderen passenden Server). Ist der gerade belegt, wartet die Anfrage an der Spitze der Queue.
+2. Sind **alle Server der Gruppe** fehlgeschlagen (oder down), geht die Anfrage an die **Fallback-Gruppe** – sofort,
+   ohne die eingestellte Wartezeit abzuwarten.
+3. Erst wenn auch dort alle Server scheitern, bekommt der Client **die letzte echte Fehlerantwort** (Statuscode und Text
+   des Servers, Header `X-LLM-Balancer-Attempts`). Waren alle Server unerreichbar, kommt HTTP 502 mit allen Verbindungsfehlern.
+
+Jeder Server wird pro Anfrage höchstens einmal versucht. Als Fehler gelten Verbindungsfehler, alle 5xx und die Codes aus
+`RETRY_STATUS` (Standard `401,403,404,408,429` – falscher Server-Token, Modell dort nicht geladen, Timeout, überlastet).
+Andere 4xx wie 400, 413 oder 422 sind Fehler der Anfrage selbst und werden sofort durchgereicht. Ein Server, der nur
+„belegt“ meldet (503/429), zählt nicht als fehlerhaft und darf dieselbe Anfrage wieder bekommen, sobald er frei ist.
+Läuft die Antwort schon (Stream begonnen), ist kein Wechsel mehr möglich. In „Letzte Anfragen“ zeigt `↻ 3×` mit Tooltip
+den Weg, z. B. `gpu: 500 → amd: 503 → nuc (Fallback): 200`; fehlgeschlagene Versuche zählen beim jeweiligen Server als Fehler.
+
 ### Fallback-Gruppe
 
 Im Dialog einer Gruppe lassen sich eine **Fallback-Gruppe**, eine **Wartezeit** und optional ein **Modell dort** einstellen.
@@ -231,6 +247,7 @@ Entweder per Umgebungsvariablen oder per `config.json` (Pfad über `CONFIG`, son
 | `UNKNOWN_MODEL` / `unknown_model` | `all` | `reject`: Modelle, die keine Gruppe und kein Server kennt, mit 404 ablehnen (nur wenn Gruppen existieren) |
 | `STREAM_USAGE` / `stream_usage` | `true` | Stream-Anfragen um `stream_options.include_usage` ergänzen, damit Tokens gezählt werden |
 | `CURRENCY` / `currency` | `€` | Währung der Preise |
+| `RETRY_STATUS` / `retry_status` | `401,403,404,408,429` | Zusätzlich zu allen 5xx: Statuscodes, bei denen ein anderer Server versucht wird |
 | `TAG_CHECK` / `tag_check` | `think,thinking,reasoning,tool_call,tool_calls,function_call,answer` | Geprüfte Tags im generierten Text; `*` = alle, `off` = aus |
 | `DNS_SERVERS` / `dns_servers` | – | DNS-Server (IPs, optional mit Port) für die Namen der LLM-Server; danach Fallback auf den Container-Resolver |
 | `ADMIN_TOKEN` / `admin_token` | – | Wenn gesetzt, sind Änderungen in UI/API nur mit diesem Token möglich (Header `X-Admin-Token`) |

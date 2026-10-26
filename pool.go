@@ -87,6 +87,8 @@ type ReqInfo struct {
 	chunks    atomic.Int64
 	lastChunk atomic.Int64 // unix nano of the latest content chunk
 	rewrite   string       // model to send instead (fallback)
+	softRetry *Backend     // server that answered 503/429 ("busy") – may be used again once idle
+	Trail     string       `json:"trail,omitempty"` // servers tried: "a: 500 → b: 503 → f (Fallback): 200"
 	cancel    context.CancelFunc
 	stopped   atomic.Bool
 	State     string    `json:"state"` // queued | running | done
@@ -292,9 +294,10 @@ func (p *Pool) Acquire(ctx context.Context, r *ReqInfo, exclude map[*Backend]boo
 	p.mu.Lock()
 	rt := p.routeWaitLocked(r.Model, 0, false)
 	force := false
-	if rt.Mode == "group" && !p.anyUsable(rt) {
-		// every server of the group is down/disabled: use the fallback right away
-		if rf := p.routeWaitLocked(r.Model, 0, true); p.anyUsable(rf) {
+	if rt.Mode == "group" && !p.anyUsableEx(rt, exclude) {
+		// every server of the group is down, disabled or already failed for this request:
+		// use the fallback group right away
+		if rf := p.routeWaitLocked(r.Model, 0, true); p.anyUsableEx(rf, exclude) {
 			rt, force = rf, true
 		}
 	}
@@ -314,7 +317,11 @@ func (p *Pool) Acquire(ctx context.Context, r *ReqInfo, exclude map[*Backend]boo
 		p.mu.Unlock()
 		return b, nil
 	}
-	if !p.anyUsable(rt) {
+	if !p.anyUsableEx(rt, exclude) {
+		if len(exclude) > 0 {
+			p.mu.Unlock()
+			return nil, ErrNoBackend // every remaining candidate is down: the caller passes the last error on
+		}
 		// waiting makes no sense if no server could ever pick this up right now
 		p.totalRejected++
 		p.mu.Unlock()
@@ -403,7 +410,7 @@ func (p *Pool) dispatchLocked() {
 		if b == nil && len(w.exclude) > 0 {
 			// A retried request avoids the server that just failed/was busy – but if that server
 			// is completely idle again (and healthy), using it beats waiting for the others.
-			b = p.pickIdleExcluded(w.exclude, rt)
+			b = p.pickIdleExcluded(w.req, rt)
 		}
 		if b == nil {
 			i++
@@ -581,7 +588,7 @@ func snapshot(r *ReqInfo, now time.Time) *ReqInfo {
 	c := &ReqInfo{
 		ID: r.ID, Method: r.Method, Path: r.Path, Model: r.Model, Stream: r.Stream, Client: r.Client, Token: r.Token,
 		Group: r.Group, TokensIn: r.TokensIn, TokensOut: r.TokensOut, Cost: r.Cost, BackendCost: r.BackendCost, Seq: r.Seq,
-		TagIssues: r.TagIssues, GenTPS: r.GenTPS, PromptTPS: r.PromptTPS, Effective: r.Effective,
+		Trail: r.Trail, TagIssues: r.TagIssues, GenTPS: r.GenTPS, PromptTPS: r.PromptTPS, Effective: r.Effective,
 		State: r.State, Backend: r.Backend, Attempts: r.Attempts, QueuedAt: r.QueuedAt,
 		StartedAt: r.StartedAt, EndedAt: r.EndedAt, Status: r.Status, Error: r.Error,
 	}
@@ -733,11 +740,12 @@ func backendState(b *Backend, now time.Time) string {
 }
 
 // pickIdleExcluded returns an excluded but healthy server with no running request. Caller holds p.mu.
-func (p *Pool) pickIdleExcluded(exclude map[*Backend]bool, rt Route) *Backend {
+// Only the server that answered "busy" (503/429) qualifies – never one that failed with a real error.
+func (p *Pool) pickIdleExcluded(r *ReqInfo, rt Route) *Backend {
 	now := time.Now()
 	var best *Backend
 	for _, b := range p.backends {
-		if exclude[b] && rt.allows(b) && b.usable(now) && b.active == 0 && (best == nil || better(b, best)) {
+		if b == r.softRetry && rt.allows(b) && b.usable(now) && b.active == 0 && (best == nil || better(b, best)) {
 			best = b
 		}
 	}
@@ -855,4 +863,40 @@ func (p *Pool) Stop(backend string, id uint64) int {
 		log.Printf("stopped %d request(s) via UI (server %q, id %d)", n, backend, id)
 	}
 	return n
+}
+
+// anyUsableEx: is there a reachable, enabled server for this route that hasn't failed yet? Caller holds p.mu.
+func (p *Pool) anyUsableEx(rt Route, exclude map[*Backend]bool) bool {
+	now := time.Now()
+	for _, b := range p.backends {
+		if rt.allows(b) && !exclude[b] && b.usable(now) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Pool) addTrail(r *ReqInfo, step string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if r.Trail != "" {
+		r.Trail += " → "
+	}
+	r.Trail += step
+}
+
+func (p *Pool) setSoftRetry(r *ReqInfo, b *Backend, soft bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if soft {
+		r.softRetry = b
+	} else if r.softRetry == b {
+		r.softRetry = nil
+	}
+}
+
+func (p *Pool) failedAttempt(backend string) {
+	if p.stats != nil {
+		p.stats.RecordFailedAttempt(backend, time.Now())
+	}
 }

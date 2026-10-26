@@ -94,7 +94,10 @@ func TestStatsCountErrorsAndNoBackend(t *testing.T) {
 		c.Backends = append(c.Backends, BackendConfig{Name: "broken", URL: broken.URL, Priority: -1})
 		c.MaxQueue = 1
 	}, a)
-	post(t, srv.URL) // → broken (preferred), 500
+	be, _ := post(t, srv.URL) // → broken (preferred) answers 500 → retried on a
+	if be != "a" {
+		t.Errorf("500 should be retried on a, got %q", be)
+	}
 	st := status(t, srv.URL)
 	for _, b := range st.Backends {
 		if b.Name == "broken" && b.State != "error" {
