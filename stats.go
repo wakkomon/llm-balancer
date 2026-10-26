@@ -355,7 +355,7 @@ func registerStats(mux *http.ServeMux, pre string, stats *Stats, token string, o
 			if r.URL.Query().Get("by") == "model" {
 				by = "Modell"
 			}
-			cw.Write([]string{"Tag", by, "Anfragen", "Fehler", "Abgebrochen", "Gesamtdauer_s", "Avg_Dauer_s", "Max_Dauer_s", "Avg_1.Byte_s", "Avg_Wartezeit_s", "Bytes", "Tokens_Ein", "Tokens_Aus", "Tokens_pro_s", "Tag_Fehler", "Einnahmen_API", "Kosten_Server"})
+			cw.Write([]string{"Tag", by, "Anfragen", "Fehler", "Abgebrochen", "Gesamtdauer_s", "Avg_Dauer_s", "Max_Dauer_s", "Avg_1.Byte_s", "Avg_Wartezeit_s", "Bytes", "Tokens_Prompt", "Tokens_Antwort", "Tokens_pro_s", "Tag_Fehler", "Einnahmen_API", "Kosten_Server"})
 			sec := func(ms, n int64) string {
 				if n == 0 {
 					return "0"

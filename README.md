@@ -28,7 +28,7 @@ Hermes-Agent ─► LiteLLM ─► llm-balancer :8080 ─┬─► LLM-Server A 
 * `GET`-Anfragen (z. B. `/v1/models`, Health-Checks von LiteLLM) belegen keinen Slot und warten nie
 * **Servergruppen mit Routing nach Modell**: Anfragen gehen nur an die Server, die das angefragte Modell bedienen – pro Gruppe mit eigener, fairer Warteschlange (ist die eine Gruppe ausgelastet, warten Anfragen für andere Gruppen nicht mit)
 * Modellerkennung: die Modelle jedes Servers werden per `/v1/models` abgefragt; `GET /v1/models` am Balancer liefert die Modelle aller Server
-* **Token-Zählung und Preise**: Input-/Output-Tokens jeder Anfrage aus der Antwort (OpenAI, Anthropic, Ollama, llama.cpp), Preis pro 1 Mio. Tokens je API-Token, Kosten pro Token und Tag
+* **Token-Zählung und Preise**: Prompt- und Antwort-Tokens jeder Anfrage aus der Antwort (OpenAI, Anthropic, Ollama, llama.cpp), Preis pro 1 Mio. Tokens je API-Token, Kosten pro Token und Tag
 * **Fallback-Gruppe** pro Gruppe: wartet eine Anfrage länger als eingestellt (oder ist die ganze Gruppe down), dürfen Server einer anderen Gruppe sie übernehmen – optional mit ersetztem Modellnamen
 * **Prüfung des generierten Texts**: Tags wie `<think>` oder `<tool_call>` müssen korrekt geöffnet und geschlossen sein, Fehler werden pro Anfrage, Server, Modell und Tag angezeigt
 * **Tokens pro Sekunde** pro Anfrage und Server (Generierung und Prompt-Verarbeitung), live geschätzt während des Streams
@@ -185,7 +185,7 @@ als Zähler auf der Server-Karte und in der Statistik pro Server und Modell. Der
 
 ### Tokens pro Sekunde
 
-Pro Anfrage: Output-Tokens geteilt durch die Zeit vom ersten Byte bis zum Ende (Generierung) und Input-Tokens geteilt durch
+Pro Anfrage: Antwort-Tokens geteilt durch die Zeit vom ersten Byte bis zum Ende (Generierung) und Prompt-Tokens geteilt durch
 die Zeit bis zum ersten Byte (Prompt-Verarbeitung) – nur bei Streams mit Token-Angaben. Die Server-Karte zeigt den
 Durchschnitt, den letzten Wert und die Prompt-Geschwindigkeit; laufende Anfragen zeigen einen Live-Schätzwert
 (≈ ein Token pro gestreamtem Chunk). Die Statistik zeigt Ø tok/s pro Server, Modell und Tag.
@@ -200,6 +200,11 @@ Der Client bekommt eine Fehlermeldung: läuft der Stream schon, ein letztes SSE-
 (499 statt 5xx, damit OpenAI-Clients und LiteLLM die Anfrage nicht automatisch wiederholen). Gestoppte Anfragen zählen als
 „abgebrochen“, nicht als Fehler des Servers. Per API: `POST /balancer/api/backends/{name}/stop` (alle laufenden Anfragen
 des Servers) oder `POST /balancer/api/requests/{id}/stop` (eine Anfrage, auch wartende).
+
+**„Ein“ und „Aus“ immer aus Sicht dessen, um den es geht:** Bei API-Tokens aus Sicht der Anwendung – *Aus* = Prompt,
+den sie sendet, *Ein* = Antwort, die sie bekommt. Bei Servern (und Modellen) aus Sicht des Servers – *Ein* = Prompt, den
+er bekommt, *Aus* = Antwort, die er erzeugt. Jede Spalte nennt zusätzlich „Prompt“ bzw. „Antwort“; der CSV-Export heißt
+`Tokens_Prompt` / `Tokens_Antwort`.
 
 ### Kostendeckel
 
@@ -226,8 +231,8 @@ Der Container muss den SMTP-Server erreichen können (Port 587/465/25).
 
 ### Eingehende und ausgehende Preise
 
-* **Eingehend (API-Tokens):** was ein Client pro 1 Mio. Input-/Output-Tokens bezahlt – Tab API-Zugriff → „Preis“.
-* **Ausgehend (Server):** was ein Server pro 1 Mio. Input-/Output-Tokens kostet (Strom, Hardware, bezahlter Anbieter) –
+* **Eingehend (API-Tokens):** was ein Client pro 1 Mio. Tokens bezahlt – Tab API-Zugriff → „Bearbeiten“.
+* **Ausgehend (Server):** was ein Server pro 1 Mio. Tokens kostet (Strom, Hardware, bezahlter Anbieter) –
   im Dialog „Bearbeiten“ des Servers.
 
 Pro Anfrage werden beide Beträge berechnet („Einnahme“ und „Kosten Server“ in Letzte Anfragen). Die Statistik zeigt pro
@@ -241,7 +246,7 @@ OpenAI-kompatible Server auch bei Streams Zahlen liefern, ergänzt der Balancer 
 `"stream_options": {"include_usage": true}`, sofern der Client das nicht selbst setzt (abschaltbar mit `STREAM_USAGE=false`;
 der Client erhält dann einen zusätzlichen letzten Chunk mit `usage` und leerem `choices`).
 
-Pro API-Token lässt sich unter **API-Zugriff → Preis** ein Preis pro 1 Mio. Input- und Output-Tokens hinterlegen
+Pro API-Token lässt sich unter **API-Zugriff → Bearbeiten** ein Preis pro 1 Mio. Prompt- und Antwort-Tokens hinterlegen
 (Währung über `CURRENCY`). Die Kosten werden beim Abschluss jeder Anfrage mit dem dann gültigen Preis berechnet; eine
 Preisänderung rechnet bereits gezählte Kosten nicht um. Die Statistik zeigt Tokens pro Server und Tag sowie Anfragen,
 Tokens und Kosten pro API-Token im gewählten Zeitraum; „Letzte Anfragen“ zeigt Tokens, Tokens/s und Kosten jeder Anfrage

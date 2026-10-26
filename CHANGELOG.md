@@ -3,6 +3,12 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.1.1 – 2026-10-26
+
+- „Tokens Ein/Aus“ und „Preis Ein/Aus“ jetzt aus der richtigen Sicht: bei API-Tokens aus Sicht der Anwendung
+  (Aus = Prompt, Ein = Antwort – vorher vertauscht), bei Servern und Modellen aus Sicht des Servers (Ein = Prompt,
+  Aus = Antwort); jede Spalte nennt zusätzlich „Prompt“ bzw. „Antwort“. CSV: `Tokens_Prompt` / `Tokens_Antwort`
+
 ## 1.1.0 – 2026-10-26
 
 - **Kostendeckel für API-Tokens** (eingehend, pro Tag / Monat / gesamt): bei Erreichen werden Anfragen mit dem Token mit
