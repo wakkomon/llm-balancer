@@ -102,3 +102,33 @@ func discoverAll(t *testing.T, url string) {
 		}
 	}
 }
+
+func TestForceModelPerGroup(t *testing.T) {
+	big := newModelLLM(t, "big", 600*time.Millisecond, "qwen3-32b-q4")
+	small := newModelLLM(t, "small", 10*time.Millisecond, "llama")
+	srv, _ := setup(t, func(c *Config) {
+		c.Groups = []GroupConfig{
+			{Name: "gross", Models: []string{"qwen*"}, ForceModel: "qwen3-32b-q4", Fallback: "klein", FallbackAfterSec: 0},
+			{Name: "klein", Models: []string{"llama*"}, ForceModel: "llama"},
+		}
+		c.Backends = []BackendConfig{{Name: "big", URL: big.srv.URL, Group: "gross"}, {Name: "small", URL: small.srv.URL, Group: "klein"}}
+	})
+	// own group: forced model
+	go func() {
+		if be, body := chatBody(t, srv.URL, "qwen3"); be != "big" || !strings.Contains(body, `"model":"qwen3-32b-q4"`) {
+			t.Errorf("own group: %s %s", be, body)
+		}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	// fallback without replacement model: the fallback group's forced model applies
+	if be, body := chatBody(t, srv.URL, "qwen3"); be != "small" || !strings.Contains(body, `"model":"llama"`) {
+		t.Errorf("fallback: %s %s", be, body)
+	}
+	time.Sleep(700 * time.Millisecond)
+	st := status(t, srv.URL)
+	for _, r := range st.Recent {
+		if r.Model != "qwen3" || r.Effective == "" {
+			t.Errorf("recent: model=%q effective=%q", r.Model, r.Effective)
+		}
+	}
+}

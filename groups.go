@@ -23,6 +23,9 @@ type GroupConfig struct {
 	Fallback         string `json:"fallback,omitempty"`
 	FallbackAfterSec int    `json:"fallback_after_sec,omitempty"`
 	FallbackModel    string `json:"fallback_model,omitempty"` // optional: model name to send to the fallback servers
+	// ForceModel: requests handled by a server of this group are sent with this model name
+	// (the routing still uses the requested name).
+	ForceModel string `json:"force_model,omitempty"`
 }
 
 func (g GroupConfig) auto() bool { return g.AutoModels == nil || *g.AutoModels }
@@ -49,6 +52,7 @@ func normalizeGroup(g *GroupConfig) error {
 	}
 	g.Fallback = strings.TrimSpace(g.Fallback)
 	g.FallbackModel = strings.TrimSpace(g.FallbackModel)
+	g.ForceModel = strings.TrimSpace(g.ForceModel)
 	if g.FallbackAfterSec < 0 {
 		return errors.New("Fallback-Wartezeit darf nicht negativ sein")
 	}
@@ -445,6 +449,7 @@ type groupInput struct {
 	Fallback         string    `json:"fallback"`
 	FallbackAfterSec int       `json:"fallback_after_sec"`
 	FallbackModel    string    `json:"fallback_model"`
+	ForceModel       string    `json:"force_model"`
 }
 
 func registerGroups(mux *http.ServeMux, pre string, pool *Pool, token string) {
@@ -460,7 +465,8 @@ func registerGroups(mux *http.ServeMux, pre string, pool *Pool, token string) {
 			members = append([]string{}, (*in.Members)...)
 		}
 		return GroupConfig{Name: in.Name, Models: in.Models, AutoModels: in.AutoModels,
-			Fallback: in.Fallback, FallbackAfterSec: in.FallbackAfterSec, FallbackModel: in.FallbackModel}, members, nil
+			Fallback: in.Fallback, FallbackAfterSec: in.FallbackAfterSec, FallbackModel: in.FallbackModel,
+			ForceModel: in.ForceModel}, members, nil
 	}
 	mux.HandleFunc("POST "+pre+"/api/groups", adminAuth(token, func(w http.ResponseWriter, r *http.Request) {
 		g, members, err := decode(r)

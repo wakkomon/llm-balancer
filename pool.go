@@ -252,10 +252,18 @@ func better(a, b *Backend) bool {
 // assignRoute assigns b and records whether it was taken as a fallback (and which model to send).
 func (p *Pool) assignRoute(b *Backend, r *ReqInfo, rt Route) {
 	r.Group, r.rewrite, r.Effective = rt.Group, "", ""
+	model := ""
+	if g := p.groupLocked(b.group); g != nil {
+		model = g.ForceModel // the server's own group may force a model name
+	}
 	if m, ok := rt.fallback[b]; ok {
 		r.Group = rt.Group + " → " + b.group
-		r.rewrite = m
-		r.Effective = m
+		if m != "" { // replacement model of the fallback setting wins
+			model = m
+		}
+	}
+	if model != "" && !strings.EqualFold(model, r.Model) {
+		r.rewrite, r.Effective = model, model
 	}
 	p.assign(b, r)
 }
@@ -617,7 +625,7 @@ func (p *Pool) Status() Status {
 	st.Groups = []GroupStatus{}
 	for _, g := range p.groups {
 		gs := GroupStatus{Name: g.Name, Models: append([]string{}, g.Models...), Auto: g.auto(), Members: []string{}, Available: []string{},
-			Fallback: g.Fallback, FallbackAfterSec: g.FallbackAfterSec, FallbackModel: g.FallbackModel}
+			Fallback: g.Fallback, FallbackAfterSec: g.FallbackAfterSec, FallbackModel: g.FallbackModel, ForceModel: g.ForceModel}
 		seen := map[string]bool{}
 		for _, m := range g.Models {
 			if !strings.Contains(m, "*") && !seen[strings.ToLower(m)] {
@@ -653,9 +661,12 @@ func (p *Pool) Status() Status {
 	for _, b := range p.backends {
 		bs := BackendStatus{Name: b.Name, URL: b.URL, Enabled: b.enabled, Healthy: b.healthy || (!b.unhealthyTil.IsZero() && now.After(b.unhealthyTil)),
 			HealthMsg: b.healthMsg, HealthAt: fmtTime(b.healthAt), Active: b.active, Max: b.Max, Priority: b.Priority,
-			Total: b.total, Errors: b.errors, LastError: b.lastErr, LastErrorAt: fmtTime(b.lastErrAt),
+			Total: b.total, Errors: b.errors,
 			Running: running[b.Name]}
 		bs.State = backendState(b, now)
+		if b.lastErr != "" && !b.lastOkAt.After(b.lastErrAt) { // hide once a request succeeded again
+			bs.LastError, bs.LastErrorAt = b.lastErr, fmtTime(b.lastErrAt)
+		}
 		if b.genTime > 0 {
 			bs.AvgTPS = float64(b.genTokens) / b.genTime.Seconds()
 		}
@@ -736,6 +747,7 @@ func (p *Pool) anyUsable(rt Route) bool {
 }
 
 type GroupStatus struct {
+	ForceModel       string   `json:"force_model,omitempty"`
 	Fallback         string   `json:"fallback,omitempty"`
 	FallbackAfterSec int      `json:"fallback_after_sec"`
 	FallbackModel    string   `json:"fallback_model,omitempty"`

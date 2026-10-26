@@ -129,6 +129,14 @@ auf laufende Anfragen und schreibt danach noch einmal. Damit Docker so lange war
 Nach einem Absturz oder Stromausfall fehlt höchstens die letzte Minute. Nur die Liste „Letzte Anfragen“ liegt ausschließlich
 im Speicher. „Statistik löschen“ setzt auch die Zähler der Server-Karten und Kacheln zurück.
 
+### Modellname erzwingen
+
+Pro Gruppe lässt sich ein Modellname eintragen, der an die Server der Gruppe geschickt wird – egal welcher Name angefragt
+wurde (z. B. weil Ollama auf einem Server `qwen3:32b-q4_K_M` heißt, die Clients aber `qwen3-32b` anfragen). Die Zuordnung
+zur Gruppe läuft weiter über den angefragten Namen; mit dem Muster `*` nimmt die Gruppe jedes Modell an. Übernimmt ein
+Server der Gruppe eine Anfrage als Fallback, gilt das „Modell dort“ der Fallback-Einstellung, falls gesetzt, sonst der
+erzwungene Name dieser Gruppe. In „Letzte Anfragen“ steht der angefragte und der tatsächlich gesendete Name.
+
 ### Fallback-Gruppe
 
 Im Dialog einer Gruppe lassen sich eine **Fallback-Gruppe**, eine **Wartezeit** und optional ein **Modell dort** einstellen.
@@ -268,7 +276,7 @@ Die Status-Ansicht ist ohne Anmeldung sichtbar; für Änderungen `ADMIN_TOKEN` s
 | GET/POST | `/balancer/api/tokens` | Client-Tokens auflisten / erzeugen (`{"name","token"?}`) |
 | PUT | `/balancer/api/tokens/{name}` | Preis setzen: `{"price_in":0.4,"price_out":1.6}` (pro 1 Mio. Tokens) |
 | DELETE | `/balancer/api/tokens/{name}` | Client-Token löschen |
-| POST | `/balancer/api/groups` | Gruppe anlegen: `{"name","models":[…],"auto_models","members":[…],"fallback","fallback_after_sec","fallback_model"}` |
+| POST | `/balancer/api/groups` | Gruppe anlegen: `{"name","models":[…],"auto_models","members":[…],"force_model","fallback","fallback_after_sec","fallback_model"}` |
 | PUT / DELETE | `/balancer/api/groups/{name}` | Gruppe ändern (umbenennen erlaubt; `members` weglassen = unverändert) / löschen |
 | GET | `/balancer/api/route?model=…` | Welche Gruppe/Server bekämen dieses Modell? |
 | GET | `/balancer/api/recent?after=<seq>` | Letzte Anfragen (max. 300), nur neuere als `seq` |

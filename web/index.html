@@ -325,6 +325,9 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
     <label for="g-models">Modelle (eins pro Zeile, * als Platzhalter)</label>
     <textarea id="g-models" rows="4" placeholder="qwen3-32b&#10;qwen3*"></textarea>
     <label class="chk"><input id="g-auto" type="checkbox" checked> zusätzlich alle Modelle, die die Server der Gruppe melden (/v1/models)</label>
+    <label for="g-force">Modellname erzwingen (optional)</label>
+    <input id="g-force" placeholder="unverändert weitergeben" autocomplete="off" list="mlist">
+    <div class="hint">Anfragen, die ein Server dieser Gruppe bearbeitet, bekommen diesen Modellnamen – die Zuordnung zur Gruppe erfolgt weiter über den angefragten Namen (mit „*“ in den Modellen nimmt die Gruppe jedes Modell an).</div>
     <label for="g-fb">Fallback-Gruppe</label>
     <select id="g-fb"></select>
     <div class="two" id="g-fbopts">
@@ -595,6 +598,7 @@ function renderGroups(st) {
       <div>${g.members.length ? g.members.map(n => `<span class="mem ${stateOf(n)}"><i></i>${esc(n)}</span>`).join('') : '<span class="muted" style="font-size:12.5px">noch keine</span>'}</div>
       <div class="lbl">Modelle${g.auto_models ? ' <span style="text-transform:none;letter-spacing:0">(inkl. von den Servern gemeldete)</span>' : ''}</div>
       <div class="mchips">${chips || '<span class="muted" style="font-size:12.5px">keine – Modelle eintragen oder Server melden lassen</span>'}</div>
+      ${g.force_model ? `<div class="fb">Modellname erzwungen: <b>${esc(g.force_model)}</b></div>` : ''}
       ${g.fallback ? `<div class="fb">Fallback → <b>${esc(g.fallback)}</b> nach ${g.fallback_after_sec} s Wartezeit${g.fallback_model ? ` · Modell dort: <b>${esc(g.fallback_model)}</b>` : ''}</div>` : ''}
       <div class="btns">
         <button onclick='openGroup(${attr(g.name)})'>Bearbeiten</button>
@@ -620,6 +624,7 @@ function openGroup(name) {
   $('g-fb').value = g?.fallback || '';
   $('g-fbsec').value = g?.fallback ? g.fallback_after_sec : 60;
   $('g-fbmodel').value = g?.fallback_model || '';
+  $('g-force').value = g?.force_model || '';
   $('g-fbopts').style.display = $('g-fb').value ? '' : 'none';
   $('g-members').innerHTML = current.backends.map(b => `<label><input type="checkbox" value="${esc(b.name)}" ${(g ? g.members.includes(b.name) : false) ? 'checked' : ''}>
     ${esc(b.name)} ${b.group && b.group !== name ? `<span class="muted">(jetzt in ${esc(b.group)})</span>` : ''}</label>`).join('') || '<span class="muted">Noch keine Server.</span>';
@@ -634,6 +639,7 @@ $('gform').addEventListener('submit', async ev => {
     models: $('g-models').value.split('\n').map(x => x.trim()).filter(Boolean),
     auto_models: $('g-auto').checked,
     members: [...$('g-members').querySelectorAll('input:checked')].map(i => i.value),
+    force_model: $('g-force').value.trim(),
     fallback: $('g-fb').value, fallback_after_sec: parseInt($('g-fbsec').value, 10) || 0, fallback_model: $('g-fbmodel').value.trim(),
   };
   const ok = editingGroup === null ? await call('POST', '/groups', body) : await call('PUT', `/groups/${enc(editingGroup)}`, body);

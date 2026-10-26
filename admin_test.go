@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -157,5 +159,27 @@ func TestNoBackendsFailsFast(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 502 {
 		t.Errorf("expected 502 without backends, got %d", resp.StatusCode)
+	}
+}
+
+func TestLastErrorHiddenAfterSuccess(t *testing.T) {
+	var fail atomic.Bool
+	fail.Store(true)
+	be := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail.Load() {
+			http.Error(w, "boom", 500)
+			return
+		}
+		w.Write([]byte(`{}`))
+	}))
+	defer be.Close()
+	srv, _ := setup(t, func(c *Config) { c.Backends = []BackendConfig{{Name: "x", URL: be.URL}} })
+	post(t, srv.URL)
+	waitFor(t, func() bool { return status(t, srv.URL).Backends[0].LastError != "" })
+	fail.Store(false)
+	post(t, srv.URL)
+	waitFor(t, func() bool { return len(status(t, srv.URL).Recent) == 2 })
+	if b := status(t, srv.URL).Backends[0]; b.LastError != "" || b.Errors != 1 {
+		t.Errorf("last error still shown: %q (errors=%d)", b.LastError, b.Errors)
 	}
 }
