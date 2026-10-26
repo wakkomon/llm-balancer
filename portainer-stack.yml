@@ -1,0 +1,29 @@
+# Portainer → Stacks → Add stack → Web editor: diesen Inhalt einfügen.
+#
+# Image-Quelle (eine Zeile wählen):
+#   A) Lokal importiert (Portainer → Images → Import → llm-balancer-image-amd64.tar)
+#      → image: llm-balancer:latest   und   pull_policy: never
+#   B) Aus GitHub Container Registry, sobald das Repo gepusht ist und die Action gelaufen ist
+#      → image: ghcr.io/wakkomon/llm-balancer:latest   und pull_policy-Zeile entfernen
+services:
+  llm-balancer:
+    image: llm-balancer:latest
+    pull_policy: never
+    container_name: llm-balancer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"          # API für LiteLLM + Web-UI unter http://<host>:8080/balancer/
+    environment:
+      # name=url[*parallele_slots][@priorität] – kommagetrennt, kleinere Priorität wird bevorzugt.
+      # IPs/Ports an deine LLM-Server anpassen:
+      BACKENDS: "gpu=http://192.168.1.50:8080@0,amd=http://192.168.1.60:8080@1"
+      QUEUE_TIMEOUT_SEC: "900"   # max. Wartezeit in der Queue (0 = unbegrenzt)
+      MAX_QUEUE: "0"             # max. Anzahl wartender Anfragen (0 = unbegrenzt)
+      HEALTH_PATH: "/v1/models"  # für llama.cpp alternativ "/health"
+      HEALTH_INTERVAL_SEC: "15"
+    # Läuft LiteLLM im selben Docker-Netz, das Netz hier eintragen, dann ist
+    # der Balancer für LiteLLM unter http://llm-balancer:8080/v1 erreichbar:
+    # networks: [litellm]
+# networks:
+#   litellm:
+#     external: true
