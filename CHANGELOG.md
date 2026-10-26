@@ -3,6 +3,16 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.1.2 – 2026-10-26
+
+- Übersicht umgebaut: die Zähler beschäftigt / idle / fehlerhaft / down / Kostendeckel / deaktiviert stehen als Kacheln in
+  der ersten Zeile neben „freie Slots“ (leuchten auf, wenn > 0; Tooltip nennt die Server); die Zeile mit den
+  Server-Chips entfällt
+- „beschäftigt“ ist animiert: pulsierender Punkt im Status der Server-Karte, laufende Streifen im Slot-Balken,
+  pulsierender Punkt in Kachel und Listenansicht (aus bei „Bewegung reduzieren“ im Betriebssystem)
+- Behoben: JavaScript-Fehler bei einer neuen Installation ohne Statistikdaten
+- Tab-Leiste auf dem Handy scrollbar statt umgebrochen
+
 ## 1.1.1 – 2026-10-26
 
 - „Tokens Ein/Aus“ und „Preis Ein/Aus“ jetzt aus der richtigen Sicht: bei API-Tokens aus Sicht der Anwendung

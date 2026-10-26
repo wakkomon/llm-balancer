@@ -277,7 +277,7 @@ func (s *Stats) Report(days int, now time.Time) StatsReport {
 	if days <= 0 {
 		days = 30
 	}
-	rep := StatsReport{Data: map[string]map[string]*DayStat{}, Totals: map[string]*DayStat{},
+	rep := StatsReport{Backends: []string{}, Data: map[string]map[string]*DayStat{}, Totals: map[string]*DayStat{},
 		Tokens: []string{}, TokenData: map[string]map[string]*TokStat{}, TokenTotals: map[string]*TokStat{},
 		Models: []string{}, ModelData: map[string]map[string]*DayStat{}, ModelTotals: map[string]*DayStat{}}
 	start := now.In(time.Local).AddDate(0, 0, -(days - 1))

@@ -27,8 +27,30 @@ h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--mute
 .live{display:inline-flex;align-items:center;gap:6px}
 .live i{width:7px;height:7px;border-radius:50%;background:var(--free)}
 .live.stale i{background:var(--down)}
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
-.tile{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:10px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:11px 12px;min-width:0}
+.tile span{display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:640px){.tile span{white-space:normal;line-height:1.25;hyphens:auto;overflow-wrap:anywhere}}
+.tile.st{cursor:default} .tile.st b{color:var(--muted);font-weight:500}
+.sdot{width:8px;height:8px;border-radius:50%;background:var(--off);flex:none}
+.tile.busy .sdot{background:var(--busy)} .tile.idle .sdot{background:var(--free)} .tile.error .sdot{background:var(--warn)}
+.tile.down .sdot{background:var(--down)} .tile.capped .sdot{background:var(--warn)}
+.tile.st.on b{color:var(--ink);font-weight:600}
+.tile.busy.on{border-color:var(--busy);background:color-mix(in srgb, var(--busy) 10%, var(--panel))}
+.tile.busy.on b{color:var(--busy)}
+.tile.busy.on .sdot{animation:pulse 1.6s ease-out infinite}
+.tile.down.on{border-color:var(--down);background:color-mix(in srgb, var(--down) 8%, var(--panel))}
+.tile.error.on,.tile.capped.on{border-color:var(--warn);background:color-mix(in srgb, var(--warn) 8%, var(--panel))}
+@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb, var(--busy) 70%, transparent)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+@keyframes pulsew{0%{box-shadow:0 0 0 0 rgba(255,255,255,.85)}70%{box-shadow:0 0 0 6px rgba(255,255,255,0)}100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}}
+@keyframes stripes{from{background-position:0 0}to{background-position:28px 0}}
+.pill{display:inline-flex;align-items:center;gap:6px}
+.pdot{width:7px;height:7px;border-radius:50%;background:#fff;animation:pulsew 1.6s ease-out infinite}
+.busy .pill{box-shadow:0 0 0 3px color-mix(in srgb, var(--busy) 18%, transparent)}
+.slot.on{background:repeating-linear-gradient(-45deg, var(--busy) 0 7px, color-mix(in srgb, var(--busy) 72%, #fff) 7px 14px);
+  background-size:28px 8px;animation:stripes .9s linear infinite}
+.lrow.busy .ldot{animation:pulse 1.6s ease-out infinite}
+@media (prefers-reduced-motion: reduce){.pdot,.slot.on,.lrow.busy .ldot,.tile.busy.on .sdot{animation:none}}
 .tile b{display:block;font:600 24px/1.1 var(--mono)}
 .tile span{color:var(--muted);font-size:12px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
@@ -78,14 +100,11 @@ td.n{font-family:var(--mono);text-align:right} th.n{text-align:right}
 tr:last-child td{border-bottom:0}
 .ok{color:var(--free)} .bad{color:var(--down)}
 /* status overview */
-.overview{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .chip{display:inline-flex;align-items:center;gap:7px;background:var(--panel);border:1px solid var(--line);border-radius:99px;padding:5px 12px 5px 9px;font-size:13px}
 .chip .ic{width:18px;height:18px;border-radius:50%;display:inline-grid;place-items:center;color:#fff;font-size:11px;font-weight:700;flex:none}
 .chip.idle .ic{background:var(--free)} .chip.busy .ic{background:var(--busy)} .chip.error .ic{background:var(--warn)}
 .chip.down .ic{background:var(--down)} .chip.disabled .ic{background:var(--off)}
 .chip .st{color:var(--muted);font-size:12px}
-.counts{display:flex;flex-wrap:wrap;gap:14px;font-size:12.5px;color:var(--muted);margin-top:10px}
-.counts b{color:var(--ink);font-family:var(--mono)}
 /* statistics */
 .stbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
@@ -106,7 +125,10 @@ tr:last-child td{border-bottom:0}
 details{margin-top:12px} summary{cursor:pointer;color:var(--muted);font-size:13px;margin-bottom:8px}
 td.sw i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:7px}
 .muted{color:var(--muted)}
-.nav{display:flex;gap:4px;margin-left:8px}
+.nav{display:flex;gap:4px;margin-left:8px;flex-wrap:nowrap;overflow-x:auto;max-width:100%;scrollbar-width:none}
+.nav::-webkit-scrollbar{display:none}
+.nav a{white-space:nowrap;flex:none}
+@media (max-width:640px){.nav{margin-left:0;order:3;width:100%}}
 .nav a{color:var(--muted);text-decoration:none;font-size:13.5px;padding:4px 10px;border-radius:7px}
 .nav a.on{background:var(--panel);color:var(--ink);box-shadow:0 0 0 1px var(--line)}
 .tps{display:flex;gap:14px;flex-wrap:nowrap;font-size:11.5px;color:var(--muted);margin-top:8px}
@@ -202,13 +224,16 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
   <div id="page-main">
   <div class="tiles">
     <div class="tile"><b id="t-free">–</b><span>freie Slots</span></div>
-    <div class="tile"><b id="t-queue">–</b><span>in Warteschlange</span></div>
-    <div class="tile"><b id="t-total">–</b><span>Anfragen gesamt</span></div>
+    <div class="tile"><b id="t-queue">–</b><span>Warteschlange</span></div>
+    <div class="tile" title="Anfragen gesamt"><b id="t-total">–</b><span>Anfragen</span></div>
     <div class="tile"><b id="t-rej">–</b><span>abgelehnt</span></div>
+    <div class="tile st busy" id="s-busy"><b>–</b><span><i class="sdot"></i>beschäftigt</span></div>
+    <div class="tile st idle" id="s-idle"><b>–</b><span><i class="sdot"></i>idle</span></div>
+    <div class="tile st error" id="s-error"><b>–</b><span><i class="sdot"></i>fehlerhaft</span></div>
+    <div class="tile st down" id="s-down"><b>–</b><span><i class="sdot"></i>down</span></div>
+    <div class="tile st capped" id="s-capped"><b>–</b><span><i class="sdot"></i>Kostendeckel</span></div>
+    <div class="tile st disabled" id="s-disabled"><b>–</b><span><i class="sdot"></i>deaktiviert</span></div>
   </div>
-
-  <div class="overview" id="overview"></div>
-  <div class="counts" id="counts"></div>
 
   <div class="sechead">
     <h2>Server</h2>
@@ -603,13 +628,21 @@ const STATE = {
 };
 const stateLabel = b => STATE[b.state].label + (b.state === 'busy' && b.max > 1 ? ` ${b.active}/${b.max}` : '');
 
+// state counters in the tile row; the tile lights up when the count is > 0, hover shows which servers
 function renderOverview(st) {
-  $('overview').innerHTML = st.backends.map(b => `<span class="chip ${b.state}" title="${esc(STATE[b.state].text)}">
-    <span class="ic">${STATE[b.state].icon}</span><b>${esc(b.name)}</b><span class="st">${esc(stateLabel(b))}</span></span>`).join('');
   const n = st.states || {};
-  $('counts').innerHTML = ['busy','idle','error','down','capped','disabled']
-    .map(k => `<span><b>${n[k] || 0}</b> ${STATE[k].label}</span>`).join('');
+  for (const k of ['busy', 'idle', 'error', 'down', 'capped', 'disabled']) {
+    const el = $('s-' + k), c = n[k] || 0;
+    el.querySelector('b').textContent = c;
+    el.classList.toggle('on', c > 0);
+    const names = st.backends.filter(b => b.state === k).map(b => b.name);
+    el.title = STATE[k].text + (names.length ? '\n' + names.join(', ') : '');
+  }
 }
+
+// The cards are re-rendered every second; a negative animation-delay derived from the clock keeps
+// every animation in the same phase, so it runs smoothly instead of restarting each second.
+const phase = period => `animation-delay:-${Date.now() % period}ms`;
 
 // running request in one short line (used by cards and the list)
 function runLine(r) {
@@ -636,13 +669,13 @@ const priceBadge = b => (b.price_in || b.price_out ? `<span class="gbadge" title
 
 function backendCard(b) {
   const state = b.state;
-  const slots = Array.from({length: Math.min(b.max, 16)}, (_, i) => `<div class="slot ${i < b.active ? 'on' : ''}"></div>`).join('');
+  const slots = Array.from({length: Math.min(b.max, 16)}, (_, i) => `<div class="slot ${i < b.active ? 'on' : ''}" ${i < b.active ? `style="${phase(900)}"` : ''}></div>`).join('');
   const dim = route && route.mode !== 'all' && !route.backends.includes(b.name) ? ' dim' : '';
   const fl = filterModel.toLowerCase();
   const chips = b.models.map(m => `<span class="mchip${fl && m.toLowerCase() === fl ? ' hit' : ''}">${esc(m)}</span>`).join('');
   return `<div class="card ${state}${dim}">
     <div class="row"><div class="ell"><div class="name ell">${esc(b.name)}</div><div class="url ell" title="${esc(b.url)}">${esc(b.url)}</div></div>
-      <span class="pill">${stateLabel(b)}</span></div>
+      <span class="pill">${b.state === 'busy' ? `<i class="pdot" style="${phase(1600)}"></i>` : ''}${stateLabel(b)}</span></div>
     <div class="line badges">
       <span class="gbadge" title="Kleinere Priorität wird bevorzugt">Prio ${b.priority}</span>
       ${b.group ? `<span class="gbadge">Gruppe ${esc(b.group)}</span>` : ''}
@@ -690,7 +723,7 @@ function listRow(b) {
     : ((b.state === 'down' || !b.healthy) && b.health_msg) ? `<span class="bad" title="${esc(b.health_msg)}">${esc(b.health_msg)}</span>`
     : b.last_error ? `<span class="bad" title="${esc(b.last_error)}">${esc(b.last_error)}</span>` : '<span class="muted">–</span>';
   return `<div class="lrow ${b.state}${dim}">
-    <span class="ldot" title="${esc(STATE[b.state].text)}"></span>
+    <span class="ldot" title="${esc(STATE[b.state].text)}" ${b.state === 'busy' ? `style="${phase(1600)}"` : ''}></span>
     <span class="lname ell" title="${esc(b.url)}"><b>${esc(b.name)}</b> <span class="muted">${esc(b.url.replace(/^https?:\/\//, ''))}</span></span>
     <span class="lstate">${esc(stateLabel(b))}</span>
     <span class="lslots" title="belegte Slots">${b.active}/${b.max}</span>
@@ -1201,6 +1234,7 @@ function renderStatTables() {
 async function loadStats() {
   try {
     stData = await (await fetch(`${base}/api/stats?days=${stRange}`, {cache:'no-store'})).json();
+    for (const k of ['backends', 'models', 'tokens', 'days']) stData[k] = stData[k] || []; // older servers sent null
     $('csvlink').href = `${base}/api/stats?days=${stRange}&format=csv&by=${stBy}`;
     renderChart(); renderStatTables();
   } catch (e) {}

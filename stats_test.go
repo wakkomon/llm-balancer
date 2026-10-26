@@ -161,3 +161,13 @@ func TestStatsPerModel(t *testing.T) {
 		t.Errorf("qwen: %+v", m)
 	}
 }
+
+func TestEmptyStatsReportHasEmptyLists(t *testing.T) {
+	srv, _ := setup(t, nil)
+	resp, _ := http.Get(srv.URL + "/balancer/api/stats?days=7")
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if strings.Contains(string(b), "null") {
+		t.Errorf("empty report contains null (breaks the UI): %s", b)
+	}
+}
