@@ -24,7 +24,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
-	pool := NewPool(cfg)
+	pool, err := NewPool(cfg, cfg.Backends, NewStore(cfg.DataDir))
+	if err != nil {
+		log.Fatalf("saved backends: %v", err)
+	}
 	px := NewProxy(cfg, pool)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -39,8 +42,19 @@ func main() {
 	}
 
 	log.Printf("llm-balancer %s listening on %s, UI at %s/", version, cfg.Listen, cfg.UIPrefix)
-	for _, b := range cfg.Backends {
-		log.Printf("  backend %-20s %s  slots=%d prio=%d", b.Name, b.URL, b.MaxConcurrent, b.Priority)
+	pool.mu.Lock()
+	if pool.source == "saved" {
+		log.Printf("using backends saved in %s (BACKENDS/config.json ignored until reset in the UI)", pool.store.path)
+	}
+	for _, b := range pool.configsLocked() {
+		log.Printf("  backend %-20s %s  slots=%d prio=%d enabled=%v", b.Name, b.URL, b.MaxConcurrent, b.Priority, *b.Enabled)
+	}
+	if len(pool.backends) == 0 {
+		log.Printf("  no backends configured yet – add them in the web UI")
+	}
+	pool.mu.Unlock()
+	if cfg.AdminToken == "" {
+		log.Printf("ADMIN_TOKEN not set: anyone who can reach the UI can change the backends")
 	}
 
 	go func() {
@@ -72,19 +86,7 @@ func newMux(cfg Config, pool *Pool, px *Proxy) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		json.NewEncoder(w).Encode(pool.Status())
 	})
-	ui.HandleFunc("POST "+pre+"/api/backends/{name}/{action}", func(w http.ResponseWriter, r *http.Request) {
-		action := r.PathValue("action")
-		if action != "enable" && action != "disable" {
-			http.Error(w, "action must be enable or disable", http.StatusBadRequest)
-			return
-		}
-		if !pool.SetEnabled(r.PathValue("name"), action == "enable") {
-			http.Error(w, "unknown backend", http.StatusNotFound)
-			return
-		}
-		log.Printf("backend %s %sd via UI", r.PathValue("name"), action)
-		w.WriteHeader(http.StatusNoContent)
-	})
+	registerAdmin(ui, pre, pool, cfg.AdminToken)
 	ui.HandleFunc("GET "+pre+"/metrics", func(w http.ResponseWriter, r *http.Request) {
 		writeMetrics(w, pool.Status())
 	})

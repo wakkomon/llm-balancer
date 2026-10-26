@@ -89,22 +89,66 @@ type Pool struct {
 	started  time.Time
 	rr       int
 
+	store      *Store
+	initial    []BackendConfig // from BACKENDS / config.json, used for "reset"
+	source     string          // "env" or "saved"
+	healthKick chan struct{}
+
 	totalReqs     int64
 	totalRejected int64
 	maxQueueSeen  int
 }
 
-func NewPool(cfg Config) *Pool {
-	p := &Pool{cfg: cfg, active: map[uint64]*ReqInfo{}, started: time.Now()}
-	for _, bc := range cfg.Backends {
-		u, _ := url.Parse(bc.URL)
-		en := bc.Enabled == nil || *bc.Enabled
-		p.backends = append(p.backends, &Backend{
-			Name: bc.Name, URL: bc.URL, target: u, Max: bc.MaxConcurrent, Priority: bc.Priority,
-			enabled: en, healthy: true, // optimistic until the first health check says otherwise
-		})
+// NewPool builds the pool. initial are the backends from BACKENDS/config.json; if store holds a
+// saved list (edited in the UI), that one is used instead.
+func NewPool(cfg Config, initial []BackendConfig, store *Store) (*Pool, error) {
+	p := &Pool{cfg: cfg, active: map[uint64]*ReqInfo{}, started: time.Now(), store: store,
+		initial: initial, source: "env", healthKick: make(chan struct{}, 1)}
+	list := initial
+	if store != nil {
+		saved, ok, err := store.Load()
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			list, p.source = saved, "saved"
+		}
 	}
-	return p
+	for _, bc := range list {
+		p.backends = append(p.backends, newBackend(bc))
+	}
+	return p, nil
+}
+
+// targetOf returns a copy of the backend URL (it can be changed at runtime).
+func (p *Pool) targetOf(b *Backend) url.URL {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return *b.target
+}
+
+func (p *Pool) count() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.backends)
+}
+
+type healthTarget struct {
+	b   *Backend
+	url string
+}
+
+// idleTargets lists backends without running requests for the health checker.
+func (p *Pool) idleTargets() []healthTarget {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []healthTarget
+	for _, b := range p.backends {
+		if b.active == 0 {
+			out = append(out, healthTarget{b, b.URL})
+		}
+	}
+	return out
 }
 
 func (p *Pool) NewRequest(method, path, client string) *ReqInfo {
@@ -159,7 +203,7 @@ func (p *Pool) assign(b *Backend, r *ReqInfo) {
 // Acquire returns a backend with a free slot, waiting in the FIFO queue if necessary.
 func (p *Pool) Acquire(ctx context.Context, r *ReqInfo, exclude map[*Backend]bool) (*Backend, error) {
 	p.mu.Lock()
-	if len(exclude) > 0 && !p.anyCandidate(exclude) {
+	if len(p.backends) == 0 || (len(exclude) > 0 && !p.anyCandidate(exclude)) {
 		p.mu.Unlock()
 		return nil, ErrNoBackend
 	}
@@ -277,9 +321,12 @@ func (p *Pool) MarkUnhealthy(b *Backend, msg string) {
 	}
 }
 
-func (p *Pool) SetHealth(b *Backend, ok bool, msg string) {
+func (p *Pool) SetHealth(b *Backend, ok bool, msg string, checkedURL string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if b.URL != checkedURL {
+		return // URL was changed while the check was running
+	}
 	b.healthy = ok
 	b.healthMsg = msg
 	b.healthAt = time.Now()
@@ -289,23 +336,8 @@ func (p *Pool) SetHealth(b *Backend, ok bool, msg string) {
 	}
 }
 
-func (p *Pool) SetEnabled(name string, en bool) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for _, b := range p.backends {
-		if b.Name == name {
-			b.enabled = en
-			if en {
-				p.dispatchLocked()
-			}
-			return true
-		}
-	}
-	return false
-}
-
 // PickPassthrough chooses a backend for requests that don't occupy a slot (e.g. GET /v1/models).
-func (p *Pool) PickPassthrough() *Backend {
+func (p *Pool) PickPassthrough() (*Backend, string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := time.Now()
@@ -316,11 +348,12 @@ func (p *Pool) PickPassthrough() *Backend {
 		}
 	}
 	if len(cands) == 0 {
-		return nil
+		return nil, ""
 	}
 	sort.SliceStable(cands, func(i, j int) bool { return cands[i].Priority < cands[j].Priority })
 	p.rr++
-	return cands[p.rr%len(cands)]
+	b := cands[p.rr%len(cands)]
+	return b, b.Name
 }
 
 // Finish records the outcome of a request (successful or not).
@@ -384,6 +417,9 @@ type Status struct {
 	Rejected   int64           `json:"rejected"`
 	MaxQueue   int             `json:"max_queue_seen"`
 	FreeSlots  int             `json:"free_slots"`
+	Source     string          `json:"config_source"` // env | saved
+	DataFile   string          `json:"data_file,omitempty"`
+	AdminToken bool            `json:"admin_token_required"`
 	TotalSlots int             `json:"total_slots"`
 }
 
@@ -422,7 +458,11 @@ func (p *Pool) Status() Status {
 	defer p.mu.Unlock()
 	now := time.Now()
 	st := Status{Now: now, UptimeSec: int64(now.Sub(p.started).Seconds()), TotalReqs: p.totalReqs,
-		Rejected: p.totalRejected, MaxQueue: p.maxQueueSeen}
+		Rejected: p.totalRejected, MaxQueue: p.maxQueueSeen, Source: p.source, AdminToken: p.cfg.AdminToken != ""}
+	if p.store != nil {
+		st.DataFile = p.store.path
+	}
+	st.Backends = []BackendStatus{}
 	running := map[string][]*ReqInfo{}
 	for _, r := range p.active {
 		if r.State == "running" {

@@ -67,7 +67,14 @@ func setup(t *testing.T, mod func(*Config), backends ...*fakeLLM) (*httptest.Ser
 	if err := cfg.validate(); err != nil {
 		t.Fatal(err)
 	}
-	pool := NewPool(cfg)
+	var store *Store
+	if cfg.DataDir != "data" {
+		store = NewStore(cfg.DataDir)
+	}
+	pool, err := NewPool(cfg, cfg.Backends, store)
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv := httptest.NewServer(newMux(cfg, pool, NewProxy(cfg, pool)))
 	t.Cleanup(srv.Close)
 	return srv, pool

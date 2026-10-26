@@ -27,6 +27,7 @@ Hermes-Agent ─► LiteLLM ─► llm-balancer :8080 ─┬─► LLM-Server A 
 * Health-Checks (Standard `GET /v1/models` alle 15 s) für **freie** Server; ausgefallene Server werden übersprungen, bis sie wieder antworten
 * `GET`-Anfragen (z. B. `/v1/models`, Health-Checks von LiteLLM) belegen keinen Slot und warten nie
 * Web-UI unter `/balancer/` mit Live-Status: Slots, laufende Anfragen (Prompt-Verarbeitung vs. Streaming, Dauer, Bytes), Warteschlange, letzte Anfragen, Ø Zeit bis zum ersten Byte / Ø Dauer, Server per Klick deaktivieren (drain) und aktivieren
+* Server-Liste **im laufenden Betrieb** in der Web-UI ändern: hinzufügen, bearbeiten (URL, Name, Slots, Priorität), entfernen – ohne Neustart, laufende Anfragen laufen weiter
 * JSON-API `/balancer/api/status`, Prometheus-Metriken `/balancer/metrics`
 * Eine statische Go-Binary ohne Abhängigkeiten, Docker-Image `FROM scratch` (~7 MB)
 
@@ -42,7 +43,13 @@ services:
     ports: ["8080:8080"]
     environment:
       BACKENDS: "gpu=http://192.168.1.50:8080,amd=http://192.168.1.60:8080@1"
+    volumes:
+      - llm-balancer-data:/data
+volumes:
+  llm-balancer-data:
 ```
+
+Vollständige Vorlage: `portainer-stack.yml`.
 
 Das Image wird von der GitHub-Action bei jedem Push auf `main` nach `ghcr.io/wakkomon/llm-balancer` gebaut
 (beim ersten Mal das Package unter GitHub → Packages auf „public“ stellen oder `docker login ghcr.io`).
@@ -56,12 +63,35 @@ BACKENDS="http://host-a:8080,http://host-b:8080" ./llm-balancer
 
 ## Konfiguration
 
+### Server-Liste: Startwert und Änderungen in der UI
+
+`BACKENDS` (bzw. `backends` in `config.json`) ist nur die **Startkonfiguration**. Sobald du die Liste in der
+Web-UI änderst, wird sie in `DATA_DIR/backends.json` gespeichert (im Container `/data/backends.json`) und hat ab
+dann Vorrang – auch nach Neustarts und Image-Updates, solange `/data` auf einem Volume liegt.
+„Auf Startkonfiguration zurücksetzen“ in der UI löscht die Datei und lädt wieder `BACKENDS`.
+
+Änderungen wirken sofort:
+
+* Neuer Server oder mehr Slots → wartende Anfragen aus der Queue starten sofort dort.
+* Geänderte URL → sofortiger Health-Check; laufende Anfragen auf der alten URL laufen zu Ende.
+* Entfernter Server → bekommt keine neuen Anfragen mehr, laufende werden normal beendet.
+
+Mit `ADMIN_TOKEN` lassen sich Änderungen absichern; die UI fragt dann einmal nach dem Token und merkt ihn sich im Browser.
+Ohne Token kann jeder, der die UI erreicht, die Server-Liste ändern.
+
+Für einen Bind-Mount statt eines Docker-Volumes muss der Ordner dem User 65534 gehören
+(`chown 65534:65534 ./data`), sonst kann der Container nicht speichern – die UI zeigt das dann als Warnung an.
+
+### Alle Optionen
+
 Entweder per Umgebungsvariablen oder per `config.json` (Pfad über `CONFIG`, sonst `./config.json` bzw.
 `/config/config.json`). Umgebungsvariablen überschreiben die Datei. Siehe `config.example.json`.
 
 | Variable / Feld | Standard | Bedeutung |
 |---|---|---|
-| `BACKENDS` / `backends` | – | `name=url*maxParallel@priorität`, kommagetrennt. Name, `*N` und `@N` sind optional |
+| `BACKENDS` / `backends` | – | Startkonfiguration: `name=url*maxParallel@priorität`, kommagetrennt. Name, `*N` und `@N` sind optional. Darf leer sein, wenn alles in der UI eingetragen wird |
+| `DATA_DIR` / `data_dir` | `data` (Docker: `/data`) | Ablage für die in der UI geänderte Server-Liste |
+| `ADMIN_TOKEN` / `admin_token` | – | Wenn gesetzt, sind Änderungen in UI/API nur mit diesem Token möglich (Header `X-Admin-Token`) |
 | `LISTEN` / `listen` | `:8080` | Listen-Adresse |
 | `QUEUE_TIMEOUT_SEC` / `queue_timeout_sec` | `900` | Max. Wartezeit in der Queue (0 = unbegrenzt), danach HTTP 504 |
 | `MAX_QUEUE` / `max_queue` | `0` | Max. Länge der Queue (0 = unbegrenzt), danach HTTP 503 |
@@ -104,10 +134,23 @@ Hinweise:
 ## Web-UI
 
 `http://<host>:8080/balancer/` – aktualisiert sich jede Sekunde. Status pro Server: *frei*, *belegt*,
-*nicht erreichbar*, *deaktiviert*. „Deaktivieren (drain)“ nimmt einen Server aus der Verteilung,
-laufende Anfragen laufen zu Ende – praktisch für Modellwechsel oder Wartung.
+*nicht erreichbar*, *deaktiviert*. Pro Server: **Bearbeiten**, **Deaktivieren (drain)** – nimmt ihn aus der
+Verteilung, laufende Anfragen laufen zu Ende, praktisch für Modellwechsel oder Wartung – und **Entfernen**.
+Oben rechts: **+ Server hinzufügen**.
 
-Die UI hat keine Authentifizierung – nur im eigenen Netz betreiben oder hinter einen Reverse-Proxy mit Auth stellen.
+Die Status-Ansicht ist ohne Anmeldung sichtbar; für Änderungen `ADMIN_TOKEN` setzen.
+
+### API
+
+| Methode | Pfad | |
+|---|---|---|
+| GET | `/balancer/api/status` | kompletter Status |
+| GET | `/balancer/api/backends` | aktuelle Server-Liste |
+| POST | `/balancer/api/backends` | Server hinzufügen, Body `{"name","url","max_concurrent","priority","enabled"}` |
+| PUT | `/balancer/api/backends/{name}` | Server ändern (gleicher Body, Umbenennen erlaubt) |
+| DELETE | `/balancer/api/backends/{name}` | Server entfernen |
+| POST | `/balancer/api/backends/{name}/enable` bzw. `/disable` | aktivieren / drain |
+| POST | `/balancer/api/reset` | zurück zur Startkonfiguration |
 
 ## Entwicklung
 

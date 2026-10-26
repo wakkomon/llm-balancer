@@ -1,16 +1,33 @@
+# Portainer → Stacks → Add stack → Web editor: diesen Inhalt einfügen.
 services:
   llm-balancer:
-    build: .
-    # oder nach dem ersten CI-Build: image: ghcr.io/wakkomon/llm-balancer:latest
+    image: ghcr.io/wakkomon/llm-balancer:latest
+    # build: .   # stattdessen lokal bauen
     container_name: llm-balancer
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8080:8080"          # API für LiteLLM + Web-UI unter http://<host>:8080/balancer/
     environment:
-      # name=url[*max_parallel][@priorität]  – kleinere Priorität wird bevorzugt
+      # Startkonfiguration: name=url[*parallele_slots][@priorität], kommagetrennt.
+      # Wird nur verwendet, solange die Server-Liste nicht in der Web-UI geändert wurde.
+      # Danach gilt die gespeicherte Liste im Volume (/data/backends.json);
+      # "Auf Startkonfiguration zurücksetzen" in der UI kehrt zu diesem Wert zurück.
       BACKENDS: "gpu=http://192.168.1.50:8080@0,amd=http://192.168.1.60:8080@1"
-      QUEUE_TIMEOUT_SEC: "900"
-      HEALTH_PATH: "/v1/models"
-    # Alternativ statt BACKENDS eine Datei einbinden:
-    # volumes:
-    #   - ./config.json:/config/config.json:ro
+      # Optional: Token, ohne den keine Änderungen in der UI möglich sind
+      # ADMIN_TOKEN: "ein-langes-geheimes-passwort"
+      QUEUE_TIMEOUT_SEC: "900"   # max. Wartezeit in der Queue (0 = unbegrenzt)
+      MAX_QUEUE: "0"             # max. Anzahl wartender Anfragen (0 = unbegrenzt)
+      HEALTH_PATH: "/v1/models"  # für llama.cpp alternativ "/health"
+      HEALTH_INTERVAL_SEC: "15"
+    volumes:
+      - llm-balancer-data:/data  # in der UI geänderte Server-Liste überlebt Updates/Neustarts
+    # Läuft LiteLLM im selben Docker-Netz, das Netz hier eintragen, dann ist
+    # der Balancer für LiteLLM unter http://llm-balancer:8080/v1 erreichbar:
+    # networks: [litellm]
+
+volumes:
+  llm-balancer-data:
+
+# networks:
+#   litellm:
+#     external: true

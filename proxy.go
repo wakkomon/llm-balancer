@@ -82,7 +82,7 @@ func jsonError(w http.ResponseWriter, code int, msg string) {
 
 // upstream builds the outgoing request for backend b.
 func (px *Proxy) upstream(ctx context.Context, r *http.Request, b *Backend, body []byte) (*http.Request, error) {
-	target := *b.target
+	target := px.pool.targetOf(b)
 	target.Path = strings.TrimRight(target.Path, "/") + r.URL.Path
 	target.RawQuery = r.URL.RawQuery
 	out, err := http.NewRequestWithContext(ctx, r.Method, target.String(), bytes.NewReader(body))
@@ -135,7 +135,7 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	exclude := map[*Backend]bool{}
 	var lastBackend *Backend
-	maxAttempts := len(px.pool.backends)
+	maxAttempts := max(1, px.pool.count())
 
 	for attempt := 1; ; attempt++ {
 		b, err := px.pool.Acquire(ctx, req, exclude)
@@ -171,7 +171,7 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				px.pool.Finish(req, b, 499, "client disconnected")
 				return
 			}
-			msg := fmt.Sprintf("connect %s: %v", b.Name, err)
+			msg := fmt.Sprintf("connect %s: %v", req.Backend, err)
 			log.Printf("req %d: %s", req.ID, msg)
 			px.pool.MarkUnhealthy(b, err.Error())
 			px.pool.Release(b, req, msg)
@@ -187,7 +187,7 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if slices.Contains(px.cfg.RetryStatus, resp.StatusCode) && attempt < maxAttempts {
 			io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 			resp.Body.Close()
-			msg := fmt.Sprintf("%s answered %d, trying next backend", b.Name, resp.StatusCode)
+			msg := fmt.Sprintf("%s answered %d, trying next backend", req.Backend, resp.StatusCode)
 			log.Printf("req %d: %s", req.ID, msg)
 			px.pool.Release(b, req, msg)
 			exclude[b] = true
@@ -250,7 +250,7 @@ func (px *Proxy) stream(w http.ResponseWriter, resp *http.Response, req *ReqInfo
 
 // passthrough forwards requests that don't need a slot (GET /v1/models, /health, ...).
 func (px *Proxy) passthrough(w http.ResponseWriter, r *http.Request, body []byte) {
-	b := px.pool.PickPassthrough()
+	b, name := px.pool.PickPassthrough()
 	if b == nil {
 		jsonError(w, http.StatusServiceUnavailable, "no healthy backend")
 		return
@@ -262,13 +262,13 @@ func (px *Proxy) passthrough(w http.ResponseWriter, r *http.Request, body []byte
 	}
 	resp, err := px.transport.RoundTrip(out)
 	if err != nil {
-		jsonError(w, http.StatusBadGateway, fmt.Sprintf("%s: %v", b.Name, err))
+		jsonError(w, http.StatusBadGateway, fmt.Sprintf("%s: %v", name, err))
 		return
 	}
 	defer resp.Body.Close()
 	stripHop(resp.Header)
 	copyHeaders(w.Header(), resp.Header)
-	w.Header().Set("X-LLM-Balancer-Backend", b.Name)
+	w.Header().Set("X-LLM-Balancer-Backend", name)
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
@@ -280,28 +280,22 @@ func (px *Proxy) healthLoop(ctx context.Context) {
 	}
 	client := &http.Client{Transport: px.transport, Timeout: 5 * time.Second}
 	check := func() {
-		for _, b := range px.pool.backends {
-			px.pool.mu.Lock()
-			busy := b.active > 0
-			px.pool.mu.Unlock()
-			if busy {
-				continue // a busy single-slot server might not answer quickly; it is obviously alive
-			}
-			go func(b *Backend) {
-				u := b.URL + px.cfg.HealthPath
-				resp, err := client.Get(u)
+		for _, ht := range px.pool.idleTargets() {
+			// busy servers are skipped: a single-slot server might not answer quickly, and it is obviously alive
+			go func(ht healthTarget) {
+				resp, err := client.Get(ht.url + px.cfg.HealthPath)
 				if err != nil {
-					px.pool.SetHealth(b, false, err.Error())
+					px.pool.SetHealth(ht.b, false, err.Error(), ht.url)
 					return
 				}
 				io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 				resp.Body.Close()
 				if resp.StatusCode >= 500 {
-					px.pool.SetHealth(b, false, fmt.Sprintf("health %s → %d", px.cfg.HealthPath, resp.StatusCode))
+					px.pool.SetHealth(ht.b, false, fmt.Sprintf("health %s → %d", px.cfg.HealthPath, resp.StatusCode), ht.url)
 				} else {
-					px.pool.SetHealth(b, true, "")
+					px.pool.SetHealth(ht.b, true, "", ht.url)
 				}
-			}(b)
+			}(ht)
 		}
 	}
 	check()
@@ -312,6 +306,8 @@ func (px *Proxy) healthLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			check()
+		case <-px.pool.healthKick:
 			check()
 		}
 	}

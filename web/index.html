@@ -59,6 +59,27 @@ td.n{font-family:var(--mono);text-align:right} th.n{text-align:right}
 tr:last-child td{border-bottom:0}
 .ok{color:var(--free)} .bad{color:var(--down)}
 .muted{color:var(--muted)}
+.btns{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;margin-top:10px}
+button.danger:hover{border-color:var(--down);color:var(--down)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.primary:hover{opacity:.9;color:#fff}
+.sechead{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:28px 0 10px}
+.sechead h2{margin:0}
+.srcnote{font-size:12px;color:var(--muted)}
+.empty-card{background:var(--panel);border:1px dashed var(--line);border-radius:12px;padding:22px;color:var(--muted);text-align:center}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);padding:20px;width:min(440px,calc(100vw - 32px))}
+dialog::backdrop{background:rgba(0,0,0,.35)}
+dialog h3{margin:0 0 14px;font-size:16px}
+label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
+input{width:100%;font:inherit;font-size:14px;padding:7px 9px;border-radius:7px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.hint{font-size:11.5px;color:var(--muted);margin-top:3px}
+.chk{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:var(--ink)}
+.chk input{width:auto}
+.formerr{color:var(--down);font-size:12.5px;min-height:1em;margin-top:10px}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100vw - 32px)}
+#toast.show{opacity:1}
 </style>
 </head>
 <body>
@@ -76,7 +97,14 @@ tr:last-child td{border-bottom:0}
     <div class="tile"><b id="t-rej">–</b><span>abgelehnt</span></div>
   </div>
 
-  <h2>Server</h2>
+  <div class="sechead">
+    <h2>Server</h2>
+    <div class="row">
+      <span class="srcnote" id="srcnote"></span>
+      <button id="resetbtn" style="display:none" onclick="resetBackends()">Auf Startkonfiguration zurücksetzen</button>
+      <button class="primary" onclick="openEdit(null)">+ Server hinzufügen</button>
+    </div>
+  </div>
   <div class="grid" id="backends"></div>
 
   <h2>Warteschlange</h2>
@@ -89,6 +117,28 @@ tr:last-child td{border-bottom:0}
     <tbody id="recent"></tbody>
   </table></div>
 </main>
+<dialog id="dlg">
+  <form id="form" method="dialog">
+    <h3 id="dlgtitle">Server</h3>
+    <label for="f-url">URL</label>
+    <input id="f-url" required placeholder="http://192.168.1.50:8080" autocomplete="off">
+    <div class="hint">Basis-URL des LLM-Servers ohne /v1 – der Pfad der Anfrage wird angehängt.</div>
+    <label for="f-name">Name</label>
+    <input id="f-name" placeholder="leer = Host:Port" autocomplete="off">
+    <div class="two">
+      <div><label for="f-max">Parallele Anfragen</label><input id="f-max" type="number" min="1" value="1"></div>
+      <div><label for="f-prio">Priorität</label><input id="f-prio" type="number" value="0"></div>
+    </div>
+    <div class="hint">Kleinere Priorität wird bevorzugt, wenn mehrere Server frei sind.</div>
+    <label class="chk"><input id="f-en" type="checkbox" checked> aktiv</label>
+    <div class="formerr" id="formerr"></div>
+    <div class="btns">
+      <button type="button" onclick="dlg.close()">Abbrechen</button>
+      <button type="submit" class="primary">Speichern</button>
+    </div>
+  </form>
+</dialog>
+<div id="toast"></div>
 <script>
 const base = location.pathname.replace(/\/$/, '');
 const $ = id => document.getElementById(id);
@@ -101,14 +151,80 @@ const dur = ms => {
   const m = Math.floor(s / 60);
   return m + ' min ' + Math.round(s % 60) + ' s';
 };
+const attr = v => esc(JSON.stringify(v));
 const bytes = n => n < 1024 ? n + ' B' : n < 1048576 ? (n/1024).toFixed(1) + ' KB' : (n/1048576).toFixed(1) + ' MB';
 const hms = t => t ? new Date(t).toLocaleTimeString('de-DE') : '';
 const up = s => { const d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60); return (d?d+' d ':'') + h+' h '+m+' min'; };
 
-async function toggle(name, enable) {
-  await fetch(`${base}/api/backends/${encodeURIComponent(name)}/${enable ? 'enable' : 'disable'}`, {method:'POST'});
-  refresh();
+const dlg = $('dlg');
+let current = null;      // last status
+let editing = null;      // name of backend being edited, null = new
+
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 4000);
 }
+function getToken() { try { return localStorage.getItem('llmb-token') || ''; } catch { return ''; } }
+function setToken(v) { try { v ? localStorage.setItem('llmb-token', v) : localStorage.removeItem('llmb-token'); } catch {} }
+
+// call sends a change to the API; asks for the admin token when required. Returns true on success.
+async function call(method, path, body) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const headers = {'Content-Type': 'application/json'};
+    const tok = getToken(); if (tok) headers['X-Admin-Token'] = tok;
+    let resp;
+    try {
+      resp = await fetch(base + '/api' + path, {method, headers, body: body ? JSON.stringify(body) : undefined});
+    } catch (e) { toast('Keine Verbindung zum Balancer'); return false; }
+    if (resp.status === 401) {
+      const t = prompt('Admin-Token für Änderungen:', '');
+      if (t === null) return false;
+      setToken(t.trim()); continue;
+    }
+    let data = {};
+    if (resp.status !== 204) { try { data = await resp.json(); } catch {} }
+    if (!resp.ok) { $('formerr').textContent = data.error || ('Fehler ' + resp.status); toast(data.error || ('Fehler ' + resp.status)); return false; }
+    if (data.warning) toast(data.warning);
+    refresh();
+    return true;
+  }
+  toast('Admin-Token falsch'); return false;
+}
+
+const enc = encodeURIComponent;
+function toggle(name, enable) { call('POST', `/backends/${enc(name)}/${enable ? 'enable' : 'disable'}`); }
+function removeBackend(name) {
+  const b = current?.backends.find(x => x.name === name);
+  const extra = b?.active ? `\n${b.active} laufende Anfrage(n) laufen noch zu Ende.` : '';
+  if (confirm(`Server „${name}“ entfernen?${extra}`)) call('DELETE', `/backends/${enc(name)}`);
+}
+function resetBackends() {
+  if (confirm('Alle Änderungen an der Server-Liste verwerfen und wieder BACKENDS / config.json verwenden?')) call('POST', '/reset');
+}
+function openEdit(name) {
+  editing = name;
+  const b = name ? current.backends.find(x => x.name === name) : null;
+  $('dlgtitle').textContent = b ? `Server „${b.name}“ bearbeiten` : 'Server hinzufügen';
+  $('f-url').value = b ? b.url : '';
+  $('f-name').value = b ? b.name : '';
+  $('f-max').value = b ? b.max : 1;
+  $('f-prio').value = b ? b.priority : 0;
+  $('f-en').checked = b ? b.enabled : true;
+  $('formerr').textContent = '';
+  dlg.showModal();
+  $('f-url').focus();
+}
+$('form').addEventListener('submit', async ev => {
+  ev.preventDefault();
+  $('formerr').textContent = '';
+  const body = {
+    name: $('f-name').value.trim(), url: $('f-url').value.trim(),
+    max_concurrent: parseInt($('f-max').value, 10) || 1, priority: parseInt($('f-prio').value, 10) || 0,
+    enabled: $('f-en').checked,
+  };
+  const ok = editing === null ? await call('POST', '/backends', body) : await call('PUT', `/backends/${enc(editing)}`, body);
+  if (ok) { dlg.close(); toast('Gespeichert'); }
+});
 
 function backendCard(b) {
   const state = !b.enabled ? 'off' : !b.healthy ? 'down' : b.active >= b.max ? 'busy' : 'free';
@@ -130,8 +246,10 @@ function backendCard(b) {
       <div><b>${dur(b.avg_ttfb_ms)}</b>Ø 1. Byte</div><div><b>${dur(b.avg_duration_ms)}</b>Ø Dauer</div>
     </div>
     ${err}
-    <div class="row" style="margin-top:10px;justify-content:flex-end">
-      <button onclick='toggle(${JSON.stringify(b.name)}, ${!b.enabled})'>${b.enabled ? 'Deaktivieren (drain)' : 'Aktivieren'}</button>
+    <div class="btns">
+      <button onclick='openEdit(${attr(b.name)})'>Bearbeiten</button>
+      <button onclick='toggle(${attr(b.name)}, ${!b.enabled})'>${b.enabled ? 'Deaktivieren (drain)' : 'Aktivieren'}</button>
+      <button class="danger" onclick='removeBackend(${attr(b.name)})'>Entfernen</button>
     </div>
   </div>`;
 }
@@ -141,12 +259,18 @@ async function refresh() {
   try {
     const st = await (await fetch(`${base}/api/status`, {cache:'no-store'})).json();
     lastOk = Date.now();
+    current = st;
+    $('srcnote').textContent = st.config_source === 'saved'
+      ? 'Liste in der UI geändert' + (st.data_file ? ' · gespeichert in ' + st.data_file : '')
+      : 'Startkonfiguration aus BACKENDS / config.json';
+    $('resetbtn').style.display = st.config_source === 'saved' ? '' : 'none';
     $('t-free').textContent = `${st.free_slots}/${st.total_slots}`;
     $('t-queue').textContent = st.queue.length;
     $('t-total').textContent = st.total_requests;
     $('t-rej').textContent = st.rejected;
     $('uptime').textContent = 'Laufzeit ' + up(st.uptime_sec) + ' · max. Queue ' + st.max_queue_seen;
-    $('backends').innerHTML = st.backends.map(backendCard).join('');
+    $('backends').innerHTML = st.backends.length ? st.backends.map(backendCard).join('')
+      : '<div class="empty-card">Noch kein Server eingetragen – „+ Server hinzufügen“.</div>';
     $('queue').innerHTML = st.queue.length ? st.queue.map((r, i) =>
       `<div class="qi"><b>${i + 1}.</b> #${r.id} · ${esc(r.model || r.path)} · wartet ${dur(r.queue_ms)}${r.attempts ? ' · Wiederholung' : ''}</div>`).join('')
       : '<div class="empty">Leer – alle Anfragen werden sofort bedient.</div>';

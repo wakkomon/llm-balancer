@@ -32,6 +32,8 @@ type Config struct {
 	RetryStatus          []int           `json:"retry_status"`           // upstream status codes that trigger a retry on another backend (default [503])
 	MaxBodyMB            int             `json:"max_body_mb"`            // default 64
 	RecentRequests       int             `json:"recent_requests"`        // how many finished requests the UI keeps (default 100)
+	AdminToken           string          `json:"admin_token"`            // if set, changes in the UI/API need this token
+	DataDir              string          `json:"data_dir"`               // where backends.json (UI changes) is stored (default "data", Docker: /data)
 	UnhealthyCooldownSec int             `json:"unhealthy_cooldown_sec"` // used when health checks are disabled (default 10)
 }
 
@@ -47,6 +49,7 @@ func defaultConfig() Config {
 		MaxBodyMB:            64,
 		RecentRequests:       100,
 		UnhealthyCooldownSec: 10,
+		DataDir:              "data",
 	}
 }
 
@@ -104,6 +107,12 @@ func loadConfig() (Config, error) {
 			return cfg, err
 		}
 	}
+	if v := os.Getenv("ADMIN_TOKEN"); v != "" {
+		cfg.AdminToken = v
+	}
+	if v := os.Getenv("DATA_DIR"); v != "" {
+		cfg.DataDir = v
+	}
 	if v, ok := os.LookupEnv("HEALTH_PATH"); ok {
 		cfg.HealthPath = v
 	}
@@ -148,28 +157,9 @@ func parseBackendsEnv(v string) ([]BackendConfig, error) {
 }
 
 func (c *Config) validate() error {
-	if len(c.Backends) == 0 {
-		return fmt.Errorf("no backends configured (config.json or BACKENDS env)")
-	}
 	c.UIPrefix = "/" + strings.Trim(c.UIPrefix, "/")
-	seen := map[string]bool{}
-	for i := range c.Backends {
-		b := &c.Backends[i]
-		u, err := url.Parse(strings.TrimRight(b.URL, "/"))
-		if err != nil || u.Scheme == "" || u.Host == "" {
-			return fmt.Errorf("backend %d: invalid url %q", i, b.URL)
-		}
-		b.URL = u.String()
-		if b.Name == "" {
-			b.Name = u.Host
-		}
-		if seen[b.Name] {
-			return fmt.Errorf("duplicate backend name %q", b.Name)
-		}
-		seen[b.Name] = true
-		if b.MaxConcurrent <= 0 {
-			b.MaxConcurrent = 1
-		}
+	if err := validateBackends(c.Backends); err != nil {
+		return err
 	}
 	if c.HealthIntervalSec <= 0 {
 		c.HealthIntervalSec = 15
@@ -185,6 +175,40 @@ func (c *Config) validate() error {
 	}
 	for i, m := range c.SlotMethods {
 		c.SlotMethods[i] = strings.ToUpper(m)
+	}
+	return nil
+}
+
+// normalizeBackend checks and fills defaults for a single backend entry.
+func normalizeBackend(b *BackendConfig) error {
+	b.Name = strings.TrimSpace(b.Name)
+	u, err := url.Parse(strings.TrimRight(strings.TrimSpace(b.URL), "/"))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("ungültige URL %q (erwartet z. B. http://192.168.1.50:8080)", b.URL)
+	}
+	b.URL = u.String()
+	if b.Name == "" {
+		b.Name = u.Host
+	}
+	if strings.ContainsAny(b.Name, "/?#") {
+		return fmt.Errorf("Name %q darf kein / ? # enthalten", b.Name)
+	}
+	if b.MaxConcurrent <= 0 {
+		b.MaxConcurrent = 1
+	}
+	return nil
+}
+
+func validateBackends(bs []BackendConfig) error {
+	seen := map[string]bool{}
+	for i := range bs {
+		if err := normalizeBackend(&bs[i]); err != nil {
+			return fmt.Errorf("backend %d: %w", i+1, err)
+		}
+		if seen[bs[i].Name] {
+			return fmt.Errorf("doppelter Backend-Name %q", bs[i].Name)
+		}
+		seen[bs[i].Name] = true
 	}
 	return nil
 }
