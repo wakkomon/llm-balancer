@@ -24,6 +24,7 @@ var hopHeaders = []string{
 type Proxy struct {
 	cfg       Config
 	pool      *Pool
+	access    *Access
 	transport *http.Transport
 }
 
@@ -82,7 +83,7 @@ func jsonError(w http.ResponseWriter, code int, msg string) {
 
 // upstream builds the outgoing request for backend b.
 func (px *Proxy) upstream(ctx context.Context, r *http.Request, b *Backend, body []byte) (*http.Request, error) {
-	target := px.pool.targetOf(b)
+	target, key := px.pool.upstreamOf(b)
 	target.Path = strings.TrimRight(target.Path, "/") + r.URL.Path
 	target.RawQuery = r.URL.RawQuery
 	out, err := http.NewRequestWithContext(ctx, r.Method, target.String(), bytes.NewReader(body))
@@ -91,6 +92,16 @@ func (px *Proxy) upstream(ctx context.Context, r *http.Request, b *Backend, body
 	}
 	copyHeaders(out.Header, r.Header)
 	stripHop(out.Header)
+	// The client's credentials are meant for the balancer, not for the LLM servers:
+	// drop them when the balancer checks tokens or the server has its own token.
+	if key != "" || (px.access != nil && px.access.Enabled()) {
+		out.Header.Del("Authorization")
+		out.Header.Del("X-Api-Key")
+		out.Header.Del("Api-Key")
+	}
+	if key != "" {
+		out.Header.Set("Authorization", "Bearer "+key)
+	}
 	out.Header.Del("Content-Length")
 	out.ContentLength = int64(len(body))
 	if body == nil {
@@ -107,6 +118,19 @@ func (px *Proxy) upstream(ctx context.Context, r *http.Request, b *Backend, body
 
 // ServeHTTP proxies every request that is not for the UI.
 func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	tokenName := ""
+	if px.access != nil {
+		name, ok := px.access.Check(r)
+		if !ok {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="llm-balancer"`)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+				"message": "llm-balancer: invalid or missing API key", "type": "invalid_request_error", "code": "invalid_api_key"}})
+			return
+		}
+		tokenName = name
+	}
 	var body []byte
 	if r.Body != nil && r.Body != http.NoBody {
 		var err error
@@ -123,6 +147,7 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req := px.pool.NewRequest(r.Method, r.URL.Path, clientAddr(r))
+	req.Token = tokenName
 	// Model/stream are only extracted for display, the body is forwarded unchanged.
 	var meta struct {
 		Model  string `json:"model"`
@@ -202,6 +227,9 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if resp.StatusCode >= 500 && errMsg == "" {
 			errMsg = fmt.Sprintf("upstream status %d", resp.StatusCode)
+		}
+		if (resp.StatusCode == 401 || resp.StatusCode == 403) && errMsg == "" {
+			errMsg = fmt.Sprintf("Server lehnt den Bearer-Token ab (%d)", resp.StatusCode)
 		}
 		px.pool.Release(b, req, errMsg)
 		if ctx.Err() != nil && errMsg == "" {
@@ -283,14 +311,20 @@ func (px *Proxy) healthLoop(ctx context.Context) {
 		for _, ht := range px.pool.idleTargets() {
 			// busy servers are skipped: a single-slot server might not answer quickly, and it is obviously alive
 			go func(ht healthTarget) {
-				resp, err := client.Get(ht.url + px.cfg.HealthPath)
+				hreq, _ := http.NewRequest(http.MethodGet, ht.url+px.cfg.HealthPath, nil)
+				if ht.key != "" {
+					hreq.Header.Set("Authorization", "Bearer "+ht.key)
+				}
+				resp, err := client.Do(hreq)
 				if err != nil {
 					px.pool.SetHealth(ht.b, false, err.Error(), ht.url)
 					return
 				}
 				io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 				resp.Body.Close()
-				if resp.StatusCode >= 500 {
+				if resp.StatusCode == 401 || resp.StatusCode == 403 {
+					px.pool.SetHealth(ht.b, false, fmt.Sprintf("Server lehnt den Bearer-Token ab (%d) – Token prüfen", resp.StatusCode), ht.url)
+				} else if resp.StatusCode >= 500 {
 					px.pool.SetHealth(ht.b, false, fmt.Sprintf("health %s → %d", px.cfg.HealthPath, resp.StatusCode), ht.url)
 				} else {
 					px.pool.SetHealth(ht.b, true, "", ht.url)

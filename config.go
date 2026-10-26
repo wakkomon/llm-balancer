@@ -14,9 +14,10 @@ import (
 type BackendConfig struct {
 	Name          string `json:"name"`
 	URL           string `json:"url"`
-	MaxConcurrent int    `json:"max_concurrent"` // parallel requests the server can handle (default 1)
-	Priority      int    `json:"priority"`       // lower = preferred when several are free (default 0)
-	Enabled       *bool  `json:"enabled"`        // default true
+	MaxConcurrent int    `json:"max_concurrent"`    // parallel requests the server can handle (default 1)
+	Priority      int    `json:"priority"`          // lower = preferred when several are free (default 0)
+	Enabled       *bool  `json:"enabled"`           // default true
+	APIKey        string `json:"api_key,omitempty"` // sent as "Authorization: Bearer <key>" to this server
 }
 
 // Config is the full balancer configuration.
@@ -34,6 +35,7 @@ type Config struct {
 	RecentRequests       int             `json:"recent_requests"`        // how many finished requests the UI keeps (default 100)
 	AdminToken           string          `json:"admin_token"`            // if set, changes in the UI/API need this token
 	StatsDays            int             `json:"stats_days"`             // how many days of statistics to keep (default 400)
+	APIKeys              string          `json:"api_keys"`               // client tokens for the LLM API, "name=token,..." (env API_KEYS)
 	DataDir              string          `json:"data_dir"`               // where backends.json (UI changes) is stored (default "data", Docker: /data)
 	UnhealthyCooldownSec int             `json:"unhealthy_cooldown_sec"` // used when health checks are disabled (default 10)
 }
@@ -107,6 +109,14 @@ func loadConfig() (Config, error) {
 		"STATS_DAYS":          &cfg.StatsDays,
 	} {
 		if err := envInt(name, dst); err != nil {
+			return cfg, err
+		}
+	}
+	if v := os.Getenv("API_KEYS"); v != "" {
+		cfg.APIKeys = v
+	}
+	if v := os.Getenv("BACKEND_KEYS"); v != "" {
+		if err := applyBackendKeys(cfg.Backends, v); err != nil {
 			return cfg, err
 		}
 	}
@@ -218,4 +228,35 @@ func validateBackends(bs []BackendConfig) error {
 
 func (c *Config) queueTimeout() time.Duration {
 	return time.Duration(c.QueueTimeoutSec) * time.Second
+}
+
+// applyBackendKeys parses BACKEND_KEYS="gpu=sk-abc,amd=xyz" and sets the bearer tokens by backend name.
+// Names must match BACKENDS (a name defaults to host:port when none was given).
+func applyBackendKeys(bs []BackendConfig, v string) error {
+	names := map[string]int{}
+	for i := range bs {
+		n := bs[i].Name
+		if n == "" {
+			if u, err := url.Parse(bs[i].URL); err == nil {
+				n = u.Host
+			}
+		}
+		names[n] = i
+	}
+	for _, item := range strings.Split(v, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		k := strings.Index(item, "=")
+		if k <= 0 {
+			return fmt.Errorf("BACKEND_KEYS: erwartet name=token, nicht %q", item)
+		}
+		i, ok := names[item[:k]]
+		if !ok {
+			return fmt.Errorf("BACKEND_KEYS: kein Backend namens %q in BACKENDS", item[:k])
+		}
+		bs[i].APIKey = item[k+1:]
+	}
+	return nil
 }

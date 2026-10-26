@@ -80,7 +80,13 @@ func setup(t *testing.T, mod func(*Config), backends ...*fakeLLM) (*httptest.Ser
 		statsDir = cfg.DataDir
 	}
 	pool.stats = NewStats(statsDir, 0)
-	srv := httptest.NewServer(newMux(cfg, pool, NewProxy(cfg, pool)))
+	px := NewProxy(cfg, pool)
+	acc, err := NewAccess(statsDir, cfg.APIKeys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	px.access, pool.access = acc, acc
+	srv := httptest.NewServer(newMux(cfg, pool, px))
 	t.Cleanup(srv.Close)
 	return srv, pool
 }
@@ -295,5 +301,23 @@ func TestRetryUsesExcludedServerWhenIdleAgain(t *testing.T) {
 	be, _ := post(t, srv.URL) // flaky → 503 → slow busy → must go back to flaky
 	if be != "flaky" || time.Since(start) > 500*time.Millisecond {
 		t.Errorf("got %s after %v", be, time.Since(start))
+	}
+}
+
+func TestAllDownFailsFast(t *testing.T) {
+	dead := newFakeLLM(t, "dead", 0)
+	dead.srv.Close()
+	srv, pool := setup(t, nil, dead)
+	pool.mu.Lock()
+	pool.backends[0].healthy = false // as after a failed health check
+	pool.mu.Unlock()
+	start := time.Now()
+	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 503 || time.Since(start) > 200*time.Millisecond {
+		t.Errorf("got %d after %v", resp.StatusCode, time.Since(start))
 	}
 }

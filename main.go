@@ -30,13 +30,31 @@ func main() {
 		log.Fatalf("saved backends: %v", err)
 	}
 	pool.stats = NewStats(cfg.DataDir, cfg.StatsDays)
+	access, err := NewAccess(cfg.DataDir, cfg.APIKeys)
+	if err != nil {
+		log.Fatalf("access tokens: %v", err)
+	}
 	px := NewProxy(cfg, pool)
+	px.access = access
+	pool.access = access
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go px.healthLoop(ctx)
 	statsDone := make(chan struct{})
 	go pool.stats.loop(ctx.Done())
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				access.Flush()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,
@@ -57,6 +75,11 @@ func main() {
 		log.Printf("  no backends configured yet – add them in the web UI")
 	}
 	pool.mu.Unlock()
+	if access.Enabled() {
+		log.Printf("API access requires a token (API_KEYS / tokens created in the UI)")
+	} else {
+		log.Printf("no API tokens configured: the LLM API is open to everyone who can reach it")
+	}
 	if cfg.AdminToken == "" {
 		log.Printf("ADMIN_TOKEN not set: anyone who can reach the UI can change the backends")
 	}
@@ -68,6 +91,7 @@ func main() {
 		defer cancel()
 		_ = srv.Shutdown(sctx)
 		pool.stats.Flush() // includes requests that finished during shutdown
+		access.Flush()
 		close(statsDone)
 	}()
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -95,6 +119,9 @@ func newMux(cfg Config, pool *Pool, px *Proxy) http.Handler {
 	})
 	registerAdmin(ui, pre, pool, cfg.AdminToken)
 	registerStats(ui, pre, pool.stats, cfg.AdminToken)
+	if px.access != nil {
+		registerAccess(ui, pre, px.access, cfg.AdminToken)
+	}
 	ui.HandleFunc("GET "+pre+"/metrics", func(w http.ResponseWriter, r *http.Request) {
 		writeMetrics(w, pool.Status())
 	})

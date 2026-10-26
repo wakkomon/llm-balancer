@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -55,7 +56,7 @@ func (s *Store) Save(bs []BackendConfig) error {
 	}
 	data, _ := json.MarshalIndent(storedState{Backends: bs, SavedAt: time.Now()}, "", "  ")
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil { // contains bearer tokens
 		return err
 	}
 	return os.Rename(tmp, s.path)
@@ -75,6 +76,7 @@ func newBackend(bc BackendConfig) *Backend {
 	u, _ := url.Parse(bc.URL)
 	return &Backend{
 		Name: bc.Name, URL: bc.URL, target: u, Max: bc.MaxConcurrent, Priority: bc.Priority,
+		apiKey:  bc.APIKey,
 		enabled: bc.Enabled == nil || *bc.Enabled,
 		healthy: true, // optimistic until the first health check says otherwise
 	}
@@ -82,7 +84,7 @@ func newBackend(bc BackendConfig) *Backend {
 
 func (b *Backend) config() BackendConfig {
 	en := b.enabled
-	return BackendConfig{Name: b.Name, URL: b.URL, MaxConcurrent: b.Max, Priority: b.Priority, Enabled: &en}
+	return BackendConfig{Name: b.Name, URL: b.URL, MaxConcurrent: b.Max, Priority: b.Priority, Enabled: &en, APIKey: b.apiKey}
 }
 
 // configsLocked returns the current list as config entries. Caller holds p.mu.
@@ -149,7 +151,7 @@ func (p *Pool) AddBackend(bc BackendConfig) error {
 }
 
 // UpdateBackend changes a backend in place; running requests keep running on it.
-func (p *Pool) UpdateBackend(name string, bc BackendConfig) error {
+func (p *Pool) UpdateBackend(name string, bc BackendConfig, key *string) error {
 	if err := normalizeBackend(&bc); err != nil {
 		return httpErr{400, err}
 	}
@@ -176,10 +178,13 @@ func (p *Pool) UpdateBackend(name string, bc BackendConfig) error {
 		defer p.kickHealth()
 	}
 	b.Name, b.Max, b.Priority = bc.Name, bc.MaxConcurrent, bc.Priority
+	if key != nil { // nil = keep the stored token
+		b.apiKey = strings.TrimSpace(*key)
+	}
 	if bc.Enabled != nil {
 		b.enabled = *bc.Enabled
 	}
-	log.Printf("backend %s updated via UI: %s slots=%d prio=%d enabled=%v", b.Name, b.URL, b.Max, b.Priority, b.enabled)
+	log.Printf("backend %s updated via UI: %s slots=%d prio=%d enabled=%v token=%v", b.Name, b.URL, b.Max, b.Priority, b.enabled, b.apiKey != "")
 	p.dispatchLocked()
 	return p.persistLocked()
 }
@@ -224,7 +229,7 @@ func (p *Pool) ResetBackends() error {
 	for _, bc := range p.initial {
 		if b, ok := old[bc.Name]; ok && b.URL == bc.URL {
 			// keep runtime state (active slots, stats) of unchanged servers
-			b.Max, b.Priority, b.enabled = bc.MaxConcurrent, bc.Priority, bc.Enabled == nil || *bc.Enabled
+			b.Max, b.Priority, b.enabled, b.apiKey = bc.MaxConcurrent, bc.Priority, bc.Enabled == nil || *bc.Enabled, bc.APIKey
 			next = append(next, b)
 		} else {
 			next = append(next, newBackend(bc))
@@ -275,35 +280,62 @@ func writeResult(w http.ResponseWriter, err error) {
 	}
 }
 
-func decodeBackend(r *http.Request) (BackendConfig, error) {
-	var bc BackendConfig
+// backendInput is the API body; api_key absent = keep the stored token, "" = remove it.
+type backendInput struct {
+	Name          string  `json:"name"`
+	URL           string  `json:"url"`
+	MaxConcurrent int     `json:"max_concurrent"`
+	Priority      int     `json:"priority"`
+	Enabled       *bool   `json:"enabled"`
+	APIKey        *string `json:"api_key"`
+}
+
+func decodeBackend(r *http.Request) (BackendConfig, *string, error) {
+	var in backendInput
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 64<<10))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&bc); err != nil {
-		return bc, httpErr{400, fmt.Errorf("ungültiges JSON: %v", err)}
+	if err := dec.Decode(&in); err != nil {
+		return BackendConfig{}, nil, httpErr{400, fmt.Errorf("ungültiges JSON: %v", err)}
 	}
-	return bc, nil
+	bc := BackendConfig{Name: in.Name, URL: in.URL, MaxConcurrent: in.MaxConcurrent, Priority: in.Priority, Enabled: in.Enabled}
+	if in.APIKey != nil {
+		bc.APIKey = strings.TrimSpace(*in.APIKey)
+	}
+	return bc, in.APIKey, nil
+}
+
+// backendView is a BackendConfig without the secret.
+type backendView struct {
+	Name          string `json:"name"`
+	URL           string `json:"url"`
+	MaxConcurrent int    `json:"max_concurrent"`
+	Priority      int    `json:"priority"`
+	Enabled       bool   `json:"enabled"`
+	HasAPIKey     bool   `json:"has_api_key"`
 }
 
 func registerAdmin(mux *http.ServeMux, pre string, pool *Pool, token string) {
 	mux.HandleFunc("GET "+pre+"/api/backends", func(w http.ResponseWriter, r *http.Request) {
 		pool.mu.Lock()
-		list := pool.configsLocked()
+		list := []backendView{}
+		for _, bc := range pool.configsLocked() {
+			list = append(list, backendView{bc.Name, bc.URL, bc.MaxConcurrent, bc.Priority, *bc.Enabled, bc.APIKey != ""})
+		}
 		pool.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(list)
 	})
 	mux.HandleFunc("POST "+pre+"/api/backends", adminAuth(token, func(w http.ResponseWriter, r *http.Request) {
-		bc, err := decodeBackend(r)
+		bc, _, err := decodeBackend(r)
 		if err == nil {
 			err = pool.AddBackend(bc)
 		}
 		writeResult(w, err)
 	}))
 	mux.HandleFunc("PUT "+pre+"/api/backends/{name}", adminAuth(token, func(w http.ResponseWriter, r *http.Request) {
-		bc, err := decodeBackend(r)
+		bc, key, err := decodeBackend(r)
 		if err == nil {
-			err = pool.UpdateBackend(r.PathValue("name"), bc)
+			err = pool.UpdateBackend(r.PathValue("name"), bc, key)
 		}
 		writeResult(w, err)
 	}))

@@ -13,6 +13,13 @@ services:
       # Danach gilt die gespeicherte Liste im Volume (/data/backends.json);
       # "Auf Startkonfiguration zurücksetzen" in der UI kehrt zu diesem Wert zurück.
       BACKENDS: "gpu=http://192.168.1.50:8080@0,amd=http://192.168.1.60:8080@1"
+      # Optional: Bearer-Tokens der LLM-Server (name=token, Namen wie in BACKENDS).
+      # Auch später in der Web-UI pro Server einstellbar.
+      # BACKEND_KEYS: "gpu=sk-server-token"
+      # Optional: Token(s), die Clients wie LiteLLM für den Zugriff auf den Balancer brauchen
+      # (name=token, kommagetrennt). Weitere Tokens lassen sich in der Web-UI erzeugen.
+      # Ohne Token (hier und in der UI) ist die LLM-API offen.
+      # API_KEYS: "litellm=ein-langes-zufaelliges-token"
       # Optional: Token, ohne den keine Änderungen in der UI möglich sind
       # ADMIN_TOKEN: "ein-langes-geheimes-passwort"
       TZ: "Europe/Berlin"        # Zeitzone für Tagesgrenzen der Statistik

@@ -140,12 +140,24 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
   </div>
   <div class="grid" id="backends"></div>
 
+  <div class="sechead">
+    <h2>API-Zugriff</h2>
+    <div class="row">
+      <button class="primary" onclick="openToken()">+ Token erstellen</button>
+    </div>
+  </div>
+  <div id="accessnote" class="srcnote" style="margin-bottom:8px"></div>
+  <div class="tbl"><table>
+    <thead><tr><th>Name</th><th>Token</th><th>Quelle</th><th>Erstellt</th><th>Zuletzt benutzt</th><th class="n">Anfragen</th><th></th></tr></thead>
+    <tbody id="tokens"></tbody>
+  </table></div>
+
   <h2>Warteschlange</h2>
   <div class="q" id="queue"></div>
 
   <h2>Letzte Anfragen</h2>
   <div class="tbl"><table>
-    <thead><tr><th>Zeit</th><th>#</th><th>Modell</th><th>Pfad</th><th>Server</th><th>Status</th>
+    <thead><tr><th>Zeit</th><th>#</th><th>Modell</th><th>Pfad</th><th>Client</th><th>Server</th><th>Status</th>
       <th class="n">Wartezeit</th><th class="n">1. Byte</th><th class="n">Dauer</th><th class="n">Daten</th></tr></thead>
     <tbody id="recent"></tbody>
   </table></div>
@@ -197,6 +209,10 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
       <div><label for="f-prio">Priorität</label><input id="f-prio" type="number" value="0"></div>
     </div>
     <div class="hint">Kleinere Priorität wird bevorzugt, wenn mehrere Server frei sind.</div>
+    <label for="f-key">Bearer-Token des Servers (optional)</label>
+    <input id="f-key" type="password" autocomplete="new-password" spellcheck="false">
+    <div class="hint" id="f-keyhint">Wird als „Authorization: Bearer …“ an diesen Server geschickt.</div>
+    <label class="chk" id="f-keydel-row" style="display:none"><input id="f-keydel" type="checkbox"> gespeicherten Token entfernen</label>
     <label class="chk"><input id="f-en" type="checkbox" checked> aktiv</label>
     <div class="formerr" id="formerr"></div>
     <div class="btns">
@@ -204,6 +220,30 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
       <button type="submit" class="primary">Speichern</button>
     </div>
   </form>
+</dialog>
+<dialog id="tdlg">
+  <form id="tform" method="dialog">
+    <h3>API-Token erstellen</h3>
+    <label for="t-name">Name</label>
+    <input id="t-name" required placeholder="z. B. litellm" autocomplete="off">
+    <label for="t-val">Eigener Token (optional)</label>
+    <input id="t-val" type="password" autocomplete="new-password" placeholder="leer = zufälligen Token erzeugen" spellcheck="false">
+    <div class="hint">Mindestens 12 Zeichen. Gespeichert wird nur ein Hash.</div>
+    <div class="formerr" id="t-err"></div>
+    <div class="btns">
+      <button type="button" onclick="$('tdlg').close()">Abbrechen</button>
+      <button type="submit" class="primary">Erstellen</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="tshow">
+  <h3>Token erstellt</h3>
+  <p class="srcnote" style="margin:0 0 10px">Jetzt kopieren – er wird nicht noch einmal angezeigt. In LiteLLM als <code>api_key</code> eintragen.</p>
+  <input id="t-plain" readonly style="font-family:var(--mono);font-size:13px">
+  <div class="btns">
+    <button onclick="navigator.clipboard?.writeText($('t-plain').value).then(() => toast('Kopiert'), () => { $('t-plain').select(); toast('Bitte manuell kopieren'); })">Kopieren</button>
+    <button class="primary" onclick="$('tshow').close()">Fertig</button>
+  </div>
 </dialog>
 <div id="toast"></div>
 <script>
@@ -255,7 +295,7 @@ async function call(method, path, body) {
     if (!resp.ok) { $('formerr').textContent = data.error || ('Fehler ' + resp.status); toast(data.error || ('Fehler ' + resp.status)); return false; }
     if (data.warning) toast(data.warning);
     refresh();
-    return true;
+    return data;
   }
   toast('Admin-Token falsch'); return false;
 }
@@ -279,6 +319,10 @@ function openEdit(name) {
   $('f-max').value = b ? b.max : 1;
   $('f-prio').value = b ? b.priority : 0;
   $('f-en').checked = b ? b.enabled : true;
+  $('f-key').value = '';
+  $('f-keydel').checked = false;
+  $('f-key').placeholder = b?.has_api_key ? '•••••• gespeichert – leer lassen zum Beibehalten' : 'kein Token';
+  $('f-keydel-row').style.display = b?.has_api_key ? '' : 'none';
   $('formerr').textContent = '';
   dlg.showModal();
   $('f-url').focus();
@@ -291,6 +335,9 @@ $('form').addEventListener('submit', async ev => {
     max_concurrent: parseInt($('f-max').value, 10) || 1, priority: parseInt($('f-prio').value, 10) || 0,
     enabled: $('f-en').checked,
   };
+  const key = $('f-key').value.trim();
+  if (key) body.api_key = key;
+  else if ($('f-keydel').checked) body.api_key = '';
   const ok = editing === null ? await call('POST', '/backends', body) : await call('PUT', `/backends/${enc(editing)}`, body);
   if (ok) { dlg.close(); toast('Gespeichert'); }
 });
@@ -323,7 +370,7 @@ function backendCard(b) {
   const err = ((state === 'down' || !b.healthy) && b.health_msg) ? `<div class="err">${esc(b.health_msg)}</div>`
             : b.last_error ? `<div class="err">Letzter Fehler ${hms(b.last_error_at)}: ${esc(b.last_error)}</div>` : '';
   return `<div class="card ${state}">
-    <div class="row"><div><div class="name">${esc(b.name)}</div><div class="url">${esc(b.url)}${b.priority ? ' · Prio ' + b.priority : ''}</div></div>
+    <div class="row"><div><div class="name">${esc(b.name)}</div><div class="url">${esc(b.url)}${b.priority ? ' · Prio ' + b.priority : ''}${b.has_api_key ? ' · <span title="Bearer-Token hinterlegt">🔑 Token</span>' : ''}</div></div>
       <span class="pill">${label}</span></div>
     <div class="slots" title="${b.active}/${b.max} Slots belegt">${slots}</div>
     ${runs}
@@ -356,6 +403,7 @@ async function refresh() {
     $('t-rej').textContent = st.rejected;
     $('uptime').textContent = 'Laufzeit ' + up(st.uptime_sec) + ' · max. Queue ' + st.max_queue_seen;
     renderOverview(st);
+    renderAccessNote(st);
     $('backends').innerHTML = st.backends.length ? st.backends.map(backendCard).join('')
       : '<div class="empty-card">Noch kein Server eingetragen – „+ Server hinzufügen“.</div>';
     $('queue').innerHTML = st.queue.length ? st.queue.map((r, i) =>
@@ -363,15 +411,63 @@ async function refresh() {
       : '<div class="empty">Leer – alle Anfragen werden sofort bedient.</div>';
     $('recent').innerHTML = st.recent.length ? st.recent.map(r => `<tr>
       <td>${hms(r.ended_at)}</td><td>${r.id}</td><td>${esc(r.model)}</td><td class="muted">${esc(r.path)}</td>
+      <td>${r.token ? esc(r.token) : '<span class="muted">' + esc(r.client) + '</span>'}</td>
       <td>${esc(r.backend || '–')}${r.attempts > 1 ? ' <span class="muted">(' + r.attempts + '×)</span>' : ''}</td>
       <td class="${r.status >= 200 && r.status < 400 ? 'ok' : 'bad'}" title="${esc(r.error)}">${r.status}${r.error ? ' · ' + esc(r.error.slice(0, 40)) : ''}</td>
       <td class="n">${dur(r.queue_ms)}</td><td class="n">${dur(r.ttfb_ms)}</td><td class="n">${dur(r.duration_ms)}</td><td class="n">${bytes(r.bytes)}</td></tr>`).join('')
-      : '<tr><td colspan="10" class="empty">Noch keine Anfragen.</td></tr>';
+      : '<tr><td colspan="11" class="empty">Noch keine Anfragen.</td></tr>';
   } catch (e) { /* shown via live indicator */ }
   const stale = Date.now() - lastOk > 4000;
   $('live').classList.toggle('stale', stale);
   $('livetxt').textContent = stale ? 'keine Verbindung' : 'live';
 }
+// ---------------- API access tokens ----------------
+const dateFmt = t => t ? new Date(t).toLocaleString('de-DE', {day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit'}) : '–';
+async function loadTokens(interactive) {
+  const headers = {}; const tok = getToken(); if (tok) headers['X-Admin-Token'] = tok;
+  let resp;
+  try { resp = await fetch(base + '/api/tokens', {headers, cache:'no-store'}); } catch { return; }
+  if (resp.status === 401) {
+    $('tokens').innerHTML = `<tr><td colspan="7" class="empty">Zum Anzeigen wird der Admin-Token benötigt. <button onclick="askAdmin()">Admin-Token eingeben</button></td></tr>`;
+    return;
+  }
+  if (!resp.ok) return;
+  const list = await resp.json();
+  $('tokens').innerHTML = list.length ? list.map(t => `<tr>
+    <td>${esc(t.name)}</td><td style="font-family:var(--mono)">…${esc(t.hint)}</td>
+    <td>${t.source === 'env' ? 'API_KEYS' : 'Web-UI'}</td><td>${t.source === 'env' ? '–' : dateFmt(t.created)}</td>
+    <td>${dateFmt(t.last_used)}</td><td class="n">${t.requests}</td>
+    <td style="text-align:right">${t.source === 'env' ? '<span class="muted">nur per ENV</span>' : `<button class="danger" onclick='deleteToken(${attr(t.name)})'>Löschen</button>`}</td></tr>`).join('')
+    : '<tr><td colspan="7" class="empty">Keine Tokens – die LLM-API ist offen.</td></tr>';
+}
+async function askAdmin() {
+  const t = prompt('Admin-Token:', ''); if (t === null) return;
+  setToken(t.trim()); loadTokens();
+}
+function openToken() {
+  $('t-name').value = ''; $('t-val').value = ''; $('t-err').textContent = '';
+  $('tdlg').showModal(); $('t-name').focus();
+}
+$('tform').addEventListener('submit', async ev => {
+  ev.preventDefault();
+  const errEl = $('formerr'); // call() writes errors there; mirror them into this dialog
+  errEl.textContent = '';
+  const data = await call('POST', '/tokens', {name: $('t-name').value.trim(), token: $('t-val').value.trim()});
+  if (!data) { $('t-err').textContent = errEl.textContent; return; }
+  $('tdlg').close();
+  $('t-plain').value = data.token;
+  $('tshow').showModal(); $('t-plain').select();
+  loadTokens();
+});
+async function deleteToken(name) {
+  if (confirm(`Token „${name}“ löschen? Clients mit diesem Token bekommen danach 401.`)) { await call('DELETE', `/tokens/${enc(name)}`); loadTokens(); }
+}
+function renderAccessNote(st) {
+  $('accessnote').innerHTML = st.access_auth
+    ? 'Anfragen an die LLM-API brauchen einen Token (Header <code>Authorization: Bearer …</code> oder <code>x-api-key</code>).'
+    : '<span class="bad">Kein Token eingerichtet – jeder, der den Balancer erreicht, kann die LLMs nutzen.</span>';
+}
+
 // ---------------- statistics ----------------
 let stRange = 30, stMetric = 'requests', stData = null;
 const SERIES = 8;
@@ -530,6 +626,8 @@ async function resetStats() {
 let rsz; window.addEventListener('resize', () => { clearTimeout(rsz); rsz = setTimeout(renderChart, 150); });
 
 refresh().then(loadStats);
+loadTokens();
+setInterval(loadTokens, 30000);
 setInterval(refresh, 1000);
 setInterval(loadStats, 30000);
 </script>

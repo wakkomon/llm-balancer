@@ -14,6 +14,7 @@ var (
 	ErrQueueFull    = errors.New("queue full")
 	ErrQueueTimeout = errors.New("timed out waiting in queue")
 	ErrNoBackend    = errors.New("no usable backend left")
+	ErrAllDown      = errors.New("alle Server sind down oder deaktiviert")
 )
 
 // Backend is the runtime state of one upstream server.
@@ -23,6 +24,7 @@ type Backend struct {
 	target   *url.URL
 	Max      int
 	Priority int
+	apiKey   string
 
 	// guarded by Pool.mu
 	enabled      bool
@@ -54,7 +56,8 @@ type ReqInfo struct {
 	Model     string    `json:"model,omitempty"`
 	Stream    bool      `json:"stream"`
 	Client    string    `json:"client"`
-	State     string    `json:"state"` // queued | running | done
+	Token     string    `json:"token,omitempty"` // name of the client access token
+	State     string    `json:"state"`           // queued | running | done
 	Backend   string    `json:"backend,omitempty"`
 	Attempts  int       `json:"attempts"`
 	QueuedAt  time.Time `json:"queued_at"`
@@ -95,6 +98,7 @@ type Pool struct {
 	source     string          // "env" or "saved"
 	healthKick chan struct{}
 	stats      *Stats
+	access     *Access
 
 	totalReqs     int64
 	totalRejected int64
@@ -122,11 +126,11 @@ func NewPool(cfg Config, initial []BackendConfig, store *Store) (*Pool, error) {
 	return p, nil
 }
 
-// targetOf returns a copy of the backend URL (it can be changed at runtime).
-func (p *Pool) targetOf(b *Backend) url.URL {
+// upstreamOf returns a copy of the backend URL and its bearer token (both can be changed at runtime).
+func (p *Pool) upstreamOf(b *Backend) (url.URL, string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return *b.target
+	return *b.target, b.apiKey
 }
 
 func (p *Pool) count() int {
@@ -138,6 +142,7 @@ func (p *Pool) count() int {
 type healthTarget struct {
 	b   *Backend
 	url string
+	key string
 }
 
 // idleTargets lists backends without running requests for the health checker.
@@ -147,7 +152,7 @@ func (p *Pool) idleTargets() []healthTarget {
 	var out []healthTarget
 	for _, b := range p.backends {
 		if b.active == 0 {
-			out = append(out, healthTarget{b, b.URL})
+			out = append(out, healthTarget{b, b.URL, b.apiKey})
 		}
 	}
 	return out
@@ -216,6 +221,12 @@ func (p *Pool) Acquire(ctx context.Context, r *ReqInfo, exclude map[*Backend]boo
 			p.mu.Unlock()
 			return b, nil
 		}
+	}
+	if !p.anyUsable() {
+		// waiting makes no sense if no server could ever pick this up right now
+		p.totalRejected++
+		p.mu.Unlock()
+		return nil, ErrAllDown
 	}
 	if p.cfg.MaxQueue > 0 && len(p.queue) >= p.cfg.MaxQueue {
 		p.totalRejected++
@@ -372,7 +383,7 @@ func (p *Pool) Finish(r *ReqInfo, b *Backend, status int, errMsg string) {
 	r.Error = errMsg
 	r.State = "done"
 	delete(p.active, r.ID)
-	if b != nil && r.Status > 0 && r.Status < 500 && r.Status != 499 && errMsg == "" {
+	if b != nil && r.Status > 0 && r.Status < 500 && r.Status != 499 && r.Status != 401 && r.Status != 403 && errMsg == "" {
 		b.lastOkAt = r.EndedAt
 	}
 	if p.stats != nil {
@@ -418,6 +429,7 @@ type BackendStatus struct {
 	LastError   string     `json:"last_error,omitempty"`
 	LastErrorAt string     `json:"last_error_at,omitempty"`
 	State       string     `json:"state"` // idle | busy | error | down | disabled
+	HasAPIKey   bool       `json:"has_api_key"`
 	Running     []*ReqInfo `json:"running"`
 }
 
@@ -434,13 +446,14 @@ type Status struct {
 	Source     string          `json:"config_source"` // env | saved
 	DataFile   string          `json:"data_file,omitempty"`
 	AdminToken bool            `json:"admin_token_required"`
-	States     map[string]int  `json:"states"` // state → number of backends
+	AccessAuth bool            `json:"access_auth"` // clients need an API token
+	States     map[string]int  `json:"states"`      // state → number of backends
 	TotalSlots int             `json:"total_slots"`
 }
 
 func snapshot(r *ReqInfo, now time.Time) *ReqInfo {
 	c := &ReqInfo{
-		ID: r.ID, Method: r.Method, Path: r.Path, Model: r.Model, Stream: r.Stream, Client: r.Client,
+		ID: r.ID, Method: r.Method, Path: r.Path, Model: r.Model, Stream: r.Stream, Client: r.Client, Token: r.Token,
 		State: r.State, Backend: r.Backend, Attempts: r.Attempts, QueuedAt: r.QueuedAt,
 		StartedAt: r.StartedAt, EndedAt: r.EndedAt, Status: r.Status, Error: r.Error,
 	}
@@ -477,6 +490,9 @@ func (p *Pool) Status() Status {
 	if p.store != nil {
 		st.DataFile = p.store.path
 	}
+	if p.access != nil {
+		st.AccessAuth = p.access.Enabled()
+	}
 	st.Backends = []BackendStatus{}
 	st.States = map[string]int{"idle": 0, "busy": 0, "error": 0, "down": 0, "disabled": 0}
 	running := map[string][]*ReqInfo{}
@@ -491,6 +507,7 @@ func (p *Pool) Status() Status {
 			Total: b.total, Errors: b.errors, LastError: b.lastErr, LastErrorAt: fmtTime(b.lastErrAt),
 			Running: running[b.Name]}
 		bs.State = backendState(b, now)
+		bs.HasAPIKey = b.apiKey != ""
 		st.States[bs.State]++
 		if bs.Running == nil {
 			bs.Running = []*ReqInfo{}
@@ -546,4 +563,15 @@ func (p *Pool) pickIdleExcluded(exclude map[*Backend]bool) *Backend {
 		}
 	}
 	return best
+}
+
+// anyUsable: is at least one server enabled and reachable? Caller holds p.mu.
+func (p *Pool) anyUsable() bool {
+	now := time.Now()
+	for _, b := range p.backends {
+		if b.usable(now) {
+			return true
+		}
+	}
+	return false
 }
