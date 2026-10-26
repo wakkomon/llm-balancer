@@ -165,6 +165,17 @@ die Zeit bis zum ersten Byte (Prompt-Verarbeitung) – nur bei Streams mit Token
 Durchschnitt, den letzten Wert und die Prompt-Geschwindigkeit; laufende Anfragen zeigen einen Live-Schätzwert
 (≈ ein Token pro gestreamtem Chunk). Die Statistik zeigt Ø tok/s pro Server, Modell und Tag.
 
+### Anfragen stoppen
+
+Der Knopf **■ Stop** auf der Server-Karte (bzw. ■ in der Listenansicht) bricht die laufende Anfrage dieses Servers nach
+einer Rückfrage sofort ab. Der Balancer schließt dabei die Verbindung zum LLM-Server – llama.cpp, Ollama und vLLM beenden
+die Generierung dann von selbst – und der Slot wird sofort frei für die nächste Anfrage aus der Warteschlange.
+Der Client bekommt eine Fehlermeldung: läuft der Stream schon, ein letztes SSE-Event
+`{"error":{"message":"llm-balancer: request stopped by administrator"}}`, sonst HTTP 499 mit derselben Meldung
+(499 statt 5xx, damit OpenAI-Clients und LiteLLM die Anfrage nicht automatisch wiederholen). Gestoppte Anfragen zählen als
+„abgebrochen“, nicht als Fehler des Servers. Per API: `POST /balancer/api/backends/{name}/stop` (alle laufenden Anfragen
+des Servers) oder `POST /balancer/api/requests/{id}/stop` (eine Anfrage, auch wartende).
+
 ### Eingehende und ausgehende Preise
 
 * **Eingehend (API-Tokens):** was ein Client pro 1 Mio. Input-/Output-Tokens bezahlt – Tab API-Zugriff → „Preis“.
@@ -281,6 +292,8 @@ Die Status-Ansicht ist ohne Anmeldung sichtbar; für Änderungen `ADMIN_TOKEN` s
 | PUT | `/balancer/api/backends/{name}` | Server ändern (gleicher Body, Umbenennen erlaubt; `api_key` weglassen = behalten, `""` = entfernen) |
 | DELETE | `/balancer/api/backends/{name}` | Server entfernen |
 | POST | `/balancer/api/backends/{name}/enable` bzw. `/disable` | aktivieren / drain |
+| POST | `/balancer/api/backends/{name}/stop` | laufende Anfragen des Servers abbrechen |
+| POST | `/balancer/api/requests/{id}/stop` | eine Anfrage (laufend oder wartend) abbrechen |
 | POST | `/balancer/api/reset` | zurück zur Startkonfiguration |
 | GET/POST | `/balancer/api/tokens` | Client-Tokens auflisten / erzeugen (`{"name","token"?}`) |
 | PUT | `/balancer/api/tokens/{name}` | Preis setzen: `{"price_in":0.4,"price_out":1.6}` (pro 1 Mio. Tokens) |

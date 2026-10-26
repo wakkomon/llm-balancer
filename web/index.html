@@ -119,7 +119,7 @@ td.tagerr{color:var(--warn);cursor:help}
 .lgroup{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin-bottom:10px;overflow:hidden}
 .lghead{display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;user-select:none;font-size:13.5px;border-bottom:1px solid var(--line)}
 .lghead:hover{background:var(--bg)} .chev{width:12px;color:var(--muted)}
-.lrow{display:grid;grid-template-columns:12px minmax(140px,1.4fr) 92px 44px minmax(160px,2fr) 82px 74px 92px 32px 98px;gap:10px;align-items:center;
+.lrow{display:grid;grid-template-columns:12px minmax(140px,1.4fr) 92px 44px minmax(160px,2fr) 82px 74px 92px 32px 132px;gap:10px;align-items:center;
   height:36px;padding:0 12px;border-bottom:1px solid var(--line);font-size:12.5px}
 .lrow:last-child{border-bottom:0} .lrow.dim{opacity:.35} .lrow.empty{display:block;line-height:36px;color:var(--muted)}
 .ldot{width:10px;height:10px;border-radius:50%;background:var(--off)}
@@ -127,7 +127,7 @@ td.tagerr{color:var(--warn);cursor:help}
 .lstate{color:var(--muted)} .lslots,.ln{font-family:var(--mono);text-align:right;white-space:nowrap}
 .lact .t{font:600 12.5px var(--mono)}
 .lbtn{display:flex;gap:4px;justify-content:flex-end} .lbtn button{padding:2px 8px}
-@media (max-width:900px){.lrow{grid-template-columns:12px 1fr 80px 44px 98px}.lrow .lact,.lrow .ln{display:none}}
+@media (max-width:900px){.lrow{grid-template-columns:12px 1fr 80px 44px 132px}.lrow .lact,.lrow .ln{display:none}}
 .mchip{font:11.5px var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--ink)}
 .mchip.pat{border-style:dashed;color:var(--muted)}
 .mchip.hit{border-color:var(--accent);color:var(--accent)}
@@ -148,6 +148,11 @@ textarea{font-family:var(--mono);font-size:13px;resize:vertical}
 .tbl.scroll thead th{position:sticky;top:0;background:var(--panel);z-index:1;box-shadow:0 1px 0 var(--line)}
 .btns{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;margin-top:10px}
 button.danger:hover{border-color:var(--down);color:var(--down)}
+button.stop:not(:disabled){color:var(--down);border-color:var(--down)}
+button.stop:not(:disabled):hover{background:var(--down);color:#fff}
+button:disabled{opacity:.4;cursor:default}
+button:disabled:hover{border-color:var(--line);color:var(--ink)}
+.cardbtns{flex-wrap:nowrap;gap:5px} .cardbtns button{padding:4px 8px;white-space:nowrap}
 button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 button.primary:hover{opacity:.9;color:var(--on-accent)}
 .sechead{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:28px 0 10px}
@@ -465,6 +470,15 @@ async function call(method, path, body) {
 }
 
 const enc = encodeURIComponent;
+async function stopBackend(name) {
+  const b = current?.backends.find(x => x.name === name);
+  const r = b?.running?.[0];
+  const what = r ? `#${r.id} (${r.effective_model || r.model || r.path}, läuft seit ${dur(r.duration_ms)})` : 'die laufende Anfrage';
+  const more = b?.running?.length > 1 ? ` und ${b.running.length - 1} weitere` : '';
+  if (!confirm(`Auf „${name}“ ${what}${more} sofort abbrechen?\nDer Client erhält eine Fehlermeldung, die Generierung auf dem Server wird beendet.`)) return;
+  const res = await call('POST', `/backends/${enc(name)}/stop`);
+  if (res) toast(res.stopped ? `${res.stopped} Anfrage(n) gestoppt` : 'Es lief keine Anfrage mehr');
+}
 function toggle(name, enable) { call('POST', `/backends/${enc(name)}/${enable ? 'enable' : 'disable'}`); }
 function removeBackend(name) {
   const b = current?.backends.find(x => x.name === name);
@@ -572,7 +586,8 @@ function backendCard(b) {
       <span title="Prompt-Verarbeitung: Input-Tokens bis zum ersten Byte"><b>${tpsFmt(b.avg_prompt_tps)}</b> Prompt</span>
       ${b.tag_errors ? `<span class="warnc" title="Antworten mit fehlerhaft geöffneten/geschlossenen Tags">⚠ ${b.tag_errors} Tag-Fehler</span>` : ''}
     </div>
-    <div class="btns">
+    <div class="btns cardbtns">
+      <button class="stop" ${b.active ? '' : 'disabled'} title="Laufende Anfrage sofort abbrechen" onclick='stopBackend(${attr(b.name)})'>■ Stop</button>
       <button onclick='openEdit(${attr(b.name)})'>Bearbeiten</button>
       <button onclick='toggle(${attr(b.name)}, ${!b.enabled})'>${b.enabled ? 'Deaktivieren' : 'Aktivieren'}</button>
       <button class="danger" onclick='removeBackend(${attr(b.name)})'>Entfernen</button>
@@ -609,6 +624,7 @@ function listRow(b) {
     <span class="ln" title="Ø tok/s">${tpsFmt(b.avg_tps)} <span class="muted">tok/s</span></span>
     <span class="ln" title="Priorität">P${b.priority}</span>
     <span class="lbtn">
+      <button class="stop" ${b.active ? '' : 'disabled'} title="Laufende Anfrage sofort abbrechen" onclick='stopBackend(${attr(b.name)})'>■</button>
       <button title="Bearbeiten" onclick='openEdit(${attr(b.name)})'>✎</button>
       <button title="${b.enabled ? 'Deaktivieren (drain)' : 'Aktivieren'}" onclick='toggle(${attr(b.name)}, ${!b.enabled})'>${b.enabled ? 'aus' : 'an'}</button>
       <button class="danger" title="Entfernen" onclick='removeBackend(${attr(b.name)})'>✕</button>
@@ -618,7 +634,7 @@ function renderList(st) {
   const groups = st.groups.map(g => ({name: g.name, members: st.backends.filter(b => b.group === g.name)}));
   const rest = st.backends.filter(b => !b.group || !st.groups.some(g => g.name === b.group));
   if (rest.length) groups.push({name: '', members: rest});
-  $('blist').innerHTML = st.backends.length ? groups.map(g => {
+  setHTML($('blist'), st.backends.length ? groups.map(g => {
     const key = g.name || '(ohne)', closed = !!collapsed[key];
     const busy = g.members.filter(b => b.state === 'busy').length, down = g.members.filter(b => b.state === 'down').length;
     const q = (st.groups.find(x => x.name === g.name) || {}).queued || 0;
@@ -629,12 +645,23 @@ function renderList(st) {
       </div>
       ${closed ? '' : (g.members.map(listRow).join('') || '<div class="lrow empty">keine Server</div>')}
     </div>`;
-  }).join('') : '<div class="empty-card">Noch kein Server eingetragen – „+ Server hinzufügen“.</div>';
+  }).join('') : '<div class="empty-card">Noch kein Server eingetragen – „+ Server hinzufügen“.</div>');
+}
+// Re-rendering replaces the buttons; a click whose mousedown and mouseup straddle a re-render
+// would get lost. So: never re-render while a mouse button is held, and only when something changed.
+let pointerDown = false;
+document.addEventListener('pointerdown', () => { pointerDown = true; }, true);
+document.addEventListener('pointerup', () => { setTimeout(() => { pointerDown = false; }, 0); }, true);
+document.addEventListener('pointercancel', () => { pointerDown = false; }, true);
+function setHTML(el, html) {
+  if (pointerDown || el.__html === html) return;
+  el.__html = html;
+  el.innerHTML = html;
 }
 function renderServers(st) {
   if (view === 'list') renderList(st);
-  else $('backends').innerHTML = st.backends.length ? st.backends.map(backendCard).join('')
-    : '<div class="empty-card">Noch kein Server eingetragen – „+ Server hinzufügen“.</div>';
+  else setHTML($('backends'), st.backends.length ? st.backends.map(backendCard).join('')
+    : '<div class="empty-card">Noch kein Server eingetragen – „+ Server hinzufügen“.</div>');
 }
 
 let lastOk = 0;
@@ -694,7 +721,7 @@ function renderGroups(st) {
   const hitGroups = route?.mode === 'group' ? route.group.split(',') : [];
   const stateOf = n => st.backends.find(b => b.name === n)?.state || 'disabled';
   const ungrouped = st.backends.filter(b => !b.group).map(b => b.name);
-  $('groups').innerHTML = (st.groups.length ? st.groups.map(g => {
+  setHTML($('groups'), (st.groups.length ? st.groups.map(g => {
     const pats = g.models.filter(m => m.includes('*'));
     const chips = g.available.map(m => `<span class="mchip${fl && m.toLowerCase() === fl ? ' hit' : ''}">${esc(m)}</span>`)
       .concat(pats.map(m => `<span class="mchip pat" title="Muster">${esc(m)}</span>`)).join('');
@@ -714,7 +741,7 @@ function renderGroups(st) {
   }).join('') : '<div class="empty-card">Keine Gruppen – alle Server teilen sich alle Modelle. Mit Gruppen gehen Anfragen nur an die Server, die das Modell bedienen.</div>')
   + (st.groups.length && ungrouped.length ? `<div class="gcard"><div class="name">Ohne Gruppe</div>
       <div class="lbl">Server</div><div>${ungrouped.map(n => `<span class="mem ${stateOf(n)}"><i></i>${esc(n)}</span>`).join('')}</div>
-      <div class="hint" style="margin-top:10px">Bekommen Modelle, die sie selbst melden, und Anfragen für Modelle, die keine Gruppe kennt.</div></div>` : '');
+      <div class="hint" style="margin-top:10px">Bekommen Modelle, die sie selbst melden, und Anfragen für Modelle, die keine Gruppe kennt.</div></div>` : ''));
 }
 let editingGroup = null;
 $('f-url').addEventListener('input', () => { if ($('f-url').value.trim().toLowerCase().startsWith('https')) $('f-tls-row').style.display = ''; });

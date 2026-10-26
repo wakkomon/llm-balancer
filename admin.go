@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -399,8 +400,26 @@ func registerAdmin(mux *http.ServeMux, pre string, pool *Pool, token string) {
 	mux.HandleFunc("DELETE "+pre+"/api/backends/{name}", adminAuth(token, func(w http.ResponseWriter, r *http.Request) {
 		writeResult(w, pool.RemoveBackend(r.PathValue("name")))
 	}))
+	mux.HandleFunc("POST "+pre+"/api/requests/{id}/stop", adminAuth(token, func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
+		if err != nil || id == 0 {
+			writeAPIError(w, http.StatusBadRequest, errors.New("ungültige Anfrage-ID"))
+			return
+		}
+		if pool.Stop("", id) == 0 {
+			writeAPIError(w, http.StatusNotFound, errors.New("Anfrage läuft nicht (mehr)"))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
 	mux.HandleFunc("POST "+pre+"/api/backends/{name}/{action}", adminAuth(token, func(w http.ResponseWriter, r *http.Request) {
 		action := r.PathValue("action")
+		if action == "stop" {
+			n := pool.Stop(r.PathValue("name"), 0)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]int{"stopped": n})
+			return
+		}
 		if action != "enable" && action != "disable" {
 			writeAPIError(w, http.StatusBadRequest, errors.New("action must be enable or disable"))
 			return

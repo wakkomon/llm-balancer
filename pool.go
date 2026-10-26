@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log"
 	"net/url"
 	"sort"
 	"strings"
@@ -86,15 +87,17 @@ type ReqInfo struct {
 	chunks    atomic.Int64
 	lastChunk atomic.Int64 // unix nano of the latest content chunk
 	rewrite   string       // model to send instead (fallback)
-	State     string       `json:"state"` // queued | running | done
-	Backend   string       `json:"backend,omitempty"`
-	Attempts  int          `json:"attempts"`
-	QueuedAt  time.Time    `json:"queued_at"`
-	StartedAt time.Time    `json:"started_at,omitempty"`
-	FirstByte time.Time    `json:"-"`
-	EndedAt   time.Time    `json:"ended_at,omitempty"`
-	Status    int          `json:"status,omitempty"`
-	Error     string       `json:"error,omitempty"`
+	cancel    context.CancelFunc
+	stopped   atomic.Bool
+	State     string    `json:"state"` // queued | running | done
+	Backend   string    `json:"backend,omitempty"`
+	Attempts  int       `json:"attempts"`
+	QueuedAt  time.Time `json:"queued_at"`
+	StartedAt time.Time `json:"started_at,omitempty"`
+	FirstByte time.Time `json:"-"`
+	EndedAt   time.Time `json:"ended_at,omitempty"`
+	Status    int       `json:"status,omitempty"`
+	Error     string    `json:"error,omitempty"`
 	bytes     atomic.Int64
 
 	// derived for JSON output
@@ -824,4 +827,32 @@ func (p *Pool) tick() {
 		}
 		p.mu.Unlock()
 	}
+}
+
+func (p *Pool) setCancel(r *ReqInfo, cancel context.CancelFunc) {
+	p.mu.Lock()
+	r.cancel = cancel
+	p.mu.Unlock()
+}
+
+// Stop cancels requests: every running request of a server (backend != ""), or one request by id
+// (running or queued). Cancelling closes the connection to the LLM server, which makes llama.cpp,
+// Ollama and vLLM stop generating. Returns the number of stopped requests.
+func (p *Pool) Stop(backend string, id uint64) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, r := range p.active {
+		hit := id != 0 && r.ID == id || id == 0 && backend != "" && r.Backend == backend && r.State == "running"
+		if !hit || r.cancel == nil || r.stopped.Load() {
+			continue
+		}
+		r.stopped.Store(true)
+		r.cancel()
+		n++
+	}
+	if n > 0 {
+		log.Printf("stopped %d request(s) via UI (server %q, id %d)", n, backend, id)
+	}
+	return n
 }

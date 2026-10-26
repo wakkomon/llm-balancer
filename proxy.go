@@ -175,7 +175,10 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx := r.Context()
+	// own context: lets the admin stop this request (STOP button) – cancelling it closes the upstream connection
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	px.pool.setCancel(req, cancel)
 	exclude := map[*Backend]bool{}
 	var lastBackend *Backend
 	maxAttempts := max(1, px.pool.count())
@@ -192,10 +195,12 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			case errors.Is(err, ErrNoRoute):
 				code = http.StatusNotFound
 				err = fmt.Errorf("model %q is not served by any server group", req.Model)
+			case req.stopped.Load():
+				code, err = 499, errStopped
 			case ctx.Err() != nil:
 				code = 499 // client went away while queued
 			}
-			if ctx.Err() == nil {
+			if ctx.Err() == nil || req.stopped.Load() {
 				jsonError(w, code, err.Error())
 			}
 			px.pool.Finish(req, lastBackend, code, err.Error())
@@ -216,6 +221,12 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		resp, err := px.transportFor(px.pool.skipVerify(b)).RoundTrip(out)
 		if err != nil {
+			if req.stopped.Load() { // STOP button while the server was processing the prompt
+				px.pool.Release(b, req, "")
+				jsonError(w, 499, errStopped.Error())
+				px.pool.Finish(req, b, 499, stoppedMsg)
+				return
+			}
 			if ctx.Err() != nil { // client gone, not the backend's fault
 				px.pool.Release(b, req, "")
 				px.pool.Finish(req, b, 499, "client disconnected")
@@ -253,6 +264,18 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		n, copyErr := px.stream(w, resp, req, scan)
+		if req.stopped.Load() {
+			// tell a streaming client why the answer ends here (OpenAI clients raise this as an API error)
+			if strings.Contains(resp.Header.Get("Content-Type"), "event-stream") {
+				fmt.Fprintf(w, "data: {\"error\":{\"message\":%q,\"type\":\"llm_balancer_stopped\"}}\n\n", errStopped.Error())
+				http.NewResponseController(w).Flush()
+			}
+			px.pool.setResult(req, b, scan.Finish(), nil, px.access)
+			resp.Body.Close()
+			px.pool.Release(b, req, "") // not the server's fault
+			px.pool.Finish(req, b, 499, stoppedMsg)
+			return
+		}
 		u := scan.Finish()
 		px.pool.setResult(req, b, u, scan.TagIssues(copyErr == nil && ctx.Err() == nil), px.access)
 		resp.Body.Close()
@@ -409,3 +432,7 @@ func explainNetErr(err error) string {
 	}
 	return msg
 }
+
+var errStopped = errors.New("llm-balancer: request stopped by administrator")
+
+const stoppedMsg = "vom Admin gestoppt"
