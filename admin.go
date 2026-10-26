@@ -24,6 +24,7 @@ type Store struct {
 
 type storedState struct {
 	Backends []BackendConfig `json:"backends"`
+	Groups   []GroupConfig   `json:"groups"`
 	SavedAt  time.Time       `json:"saved_at"`
 }
 
@@ -31,30 +32,29 @@ func NewStore(dir string) *Store {
 	return &Store{path: filepath.Join(dir, "backends.json")}
 }
 
-// Load returns (backends, true) if a saved state exists.
-func (s *Store) Load() ([]BackendConfig, bool, error) {
+// Load returns the saved state (ok=true) if one exists.
+func (s *Store) Load() (st storedState, ok bool, err error) {
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, false, nil
+		return st, false, nil
 	}
 	if err != nil {
-		return nil, false, err
+		return st, false, err
 	}
-	var st storedState
 	if err := json.Unmarshal(data, &st); err != nil {
-		return nil, false, fmt.Errorf("%s: %w", s.path, err)
+		return st, false, fmt.Errorf("%s: %w", s.path, err)
 	}
-	if err := validateBackends(st.Backends); err != nil {
-		return nil, false, fmt.Errorf("%s: %w", s.path, err)
+	if err := validateSetup(st.Backends, st.Groups); err != nil {
+		return st, false, fmt.Errorf("%s: %w", s.path, err)
 	}
-	return st.Backends, true, nil
+	return st, true, nil
 }
 
-func (s *Store) Save(bs []BackendConfig) error {
+func (s *Store) Save(bs []BackendConfig, gs []GroupConfig) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
-	data, _ := json.MarshalIndent(storedState{Backends: bs, SavedAt: time.Now()}, "", "  ")
+	data, _ := json.MarshalIndent(storedState{Backends: bs, Groups: gs, SavedAt: time.Now()}, "", "  ")
 	tmp := s.path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil { // contains bearer tokens
 		return err
@@ -77,6 +77,7 @@ func newBackend(bc BackendConfig) *Backend {
 	return &Backend{
 		Name: bc.Name, URL: bc.URL, target: u, Max: bc.MaxConcurrent, Priority: bc.Priority,
 		apiKey:  bc.APIKey,
+		group:   bc.Group,
 		enabled: bc.Enabled == nil || *bc.Enabled,
 		healthy: true, // optimistic until the first health check says otherwise
 	}
@@ -84,7 +85,7 @@ func newBackend(bc BackendConfig) *Backend {
 
 func (b *Backend) config() BackendConfig {
 	en := b.enabled
-	return BackendConfig{Name: b.Name, URL: b.URL, MaxConcurrent: b.Max, Priority: b.Priority, Enabled: &en, APIKey: b.apiKey}
+	return BackendConfig{Name: b.Name, URL: b.URL, MaxConcurrent: b.Max, Priority: b.Priority, Enabled: &en, APIKey: b.apiKey, Group: b.group}
 }
 
 // configsLocked returns the current list as config entries. Caller holds p.mu.
@@ -101,7 +102,7 @@ func (p *Pool) persistLocked() error {
 	if p.store == nil {
 		return nil
 	}
-	if err := p.store.Save(p.configsLocked()); err != nil {
+	if err := p.store.Save(p.configsLocked(), p.groups); err != nil {
 		log.Printf("could not save backends: %v", err)
 		return fmt.Errorf("Änderung aktiv, aber nicht gespeichert (%v) – geht beim Neustart verloren", err)
 	}
@@ -143,6 +144,9 @@ func (p *Pool) AddBackend(bc BackendConfig) error {
 	if _, b := p.findLocked(bc.Name); b != nil {
 		return httpErr{409, fmt.Errorf("Name %q ist schon vergeben", bc.Name)}
 	}
+	if bc.Group != "" && p.groupLocked(bc.Group) == nil {
+		return httpErr{400, fmt.Errorf("unbekannte Gruppe %q", bc.Group)}
+	}
 	p.backends = append(p.backends, newBackend(bc))
 	log.Printf("backend %s (%s) added via UI", bc.Name, bc.URL)
 	defer p.kickHealth()
@@ -151,7 +155,7 @@ func (p *Pool) AddBackend(bc BackendConfig) error {
 }
 
 // UpdateBackend changes a backend in place; running requests keep running on it.
-func (p *Pool) UpdateBackend(name string, bc BackendConfig, key *string) error {
+func (p *Pool) UpdateBackend(name string, bc BackendConfig, key, group *string) error {
 	if err := normalizeBackend(&bc); err != nil {
 		return httpErr{400, err}
 	}
@@ -180,6 +184,12 @@ func (p *Pool) UpdateBackend(name string, bc BackendConfig, key *string) error {
 	b.Name, b.Max, b.Priority = bc.Name, bc.MaxConcurrent, bc.Priority
 	if key != nil { // nil = keep the stored token
 		b.apiKey = strings.TrimSpace(*key)
+	}
+	if group != nil { // nil = keep the group
+		if bc.Group != "" && p.groupLocked(bc.Group) == nil {
+			return httpErr{400, fmt.Errorf("unbekannte Gruppe %q", bc.Group)}
+		}
+		b.group = bc.Group
 	}
 	if bc.Enabled != nil {
 		b.enabled = *bc.Enabled
@@ -229,13 +239,14 @@ func (p *Pool) ResetBackends() error {
 	for _, bc := range p.initial {
 		if b, ok := old[bc.Name]; ok && b.URL == bc.URL {
 			// keep runtime state (active slots, stats) of unchanged servers
-			b.Max, b.Priority, b.enabled, b.apiKey = bc.MaxConcurrent, bc.Priority, bc.Enabled == nil || *bc.Enabled, bc.APIKey
+			b.Max, b.Priority, b.enabled, b.apiKey, b.group = bc.MaxConcurrent, bc.Priority, bc.Enabled == nil || *bc.Enabled, bc.APIKey, bc.Group
 			next = append(next, b)
 		} else {
 			next = append(next, newBackend(bc))
 		}
 	}
 	p.backends = next
+	p.groups = append([]GroupConfig{}, p.initialGroups...)
 	p.source = "env"
 	log.Printf("backends reset to initial configuration via UI")
 	defer p.kickHealth()
@@ -288,20 +299,24 @@ type backendInput struct {
 	Priority      int     `json:"priority"`
 	Enabled       *bool   `json:"enabled"`
 	APIKey        *string `json:"api_key"`
+	Group         *string `json:"group"`
 }
 
-func decodeBackend(r *http.Request) (BackendConfig, *string, error) {
+func decodeBackend(r *http.Request) (BackendConfig, *string, *string, error) {
 	var in backendInput
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 64<<10))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&in); err != nil {
-		return BackendConfig{}, nil, httpErr{400, fmt.Errorf("ungültiges JSON: %v", err)}
+		return BackendConfig{}, nil, nil, httpErr{400, fmt.Errorf("ungültiges JSON: %v", err)}
 	}
 	bc := BackendConfig{Name: in.Name, URL: in.URL, MaxConcurrent: in.MaxConcurrent, Priority: in.Priority, Enabled: in.Enabled}
 	if in.APIKey != nil {
 		bc.APIKey = strings.TrimSpace(*in.APIKey)
 	}
-	return bc, in.APIKey, nil
+	if in.Group != nil {
+		bc.Group = strings.TrimSpace(*in.Group)
+	}
+	return bc, in.APIKey, in.Group, nil
 }
 
 // backendView is a BackendConfig without the secret.
@@ -312,6 +327,7 @@ type backendView struct {
 	Priority      int    `json:"priority"`
 	Enabled       bool   `json:"enabled"`
 	HasAPIKey     bool   `json:"has_api_key"`
+	Group         string `json:"group"`
 }
 
 func registerAdmin(mux *http.ServeMux, pre string, pool *Pool, token string) {
@@ -319,23 +335,23 @@ func registerAdmin(mux *http.ServeMux, pre string, pool *Pool, token string) {
 		pool.mu.Lock()
 		list := []backendView{}
 		for _, bc := range pool.configsLocked() {
-			list = append(list, backendView{bc.Name, bc.URL, bc.MaxConcurrent, bc.Priority, *bc.Enabled, bc.APIKey != ""})
+			list = append(list, backendView{bc.Name, bc.URL, bc.MaxConcurrent, bc.Priority, *bc.Enabled, bc.APIKey != "", bc.Group})
 		}
 		pool.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(list)
 	})
 	mux.HandleFunc("POST "+pre+"/api/backends", adminAuth(token, func(w http.ResponseWriter, r *http.Request) {
-		bc, _, err := decodeBackend(r)
+		bc, _, _, err := decodeBackend(r)
 		if err == nil {
 			err = pool.AddBackend(bc)
 		}
 		writeResult(w, err)
 	}))
 	mux.HandleFunc("PUT "+pre+"/api/backends/{name}", adminAuth(token, func(w http.ResponseWriter, r *http.Request) {
-		bc, key, err := decodeBackend(r)
+		bc, key, group, err := decodeBackend(r)
 		if err == nil {
-			err = pool.UpdateBackend(r.PathValue("name"), bc, key)
+			err = pool.UpdateBackend(r.PathValue("name"), bc, key, group)
 		}
 		writeResult(w, err)
 	}))

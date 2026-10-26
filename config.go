@@ -18,6 +18,7 @@ type BackendConfig struct {
 	Priority      int    `json:"priority"`          // lower = preferred when several are free (default 0)
 	Enabled       *bool  `json:"enabled"`           // default true
 	APIKey        string `json:"api_key,omitempty"` // sent as "Authorization: Bearer <key>" to this server
+	Group         string `json:"group,omitempty"`   // name of the server group (see Config.Groups)
 }
 
 // Config is the full balancer configuration.
@@ -25,6 +26,8 @@ type Config struct {
 	Listen               string          `json:"listen"`    // default ":8080"
 	UIPrefix             string          `json:"ui_prefix"` // default "/balancer"
 	Backends             []BackendConfig `json:"backends"`
+	Groups               []GroupConfig   `json:"groups"`                 // server groups, routed by model name
+	UnknownModel         string          `json:"unknown_model"`          // "all" (default): models no group/server knows go to every server; "reject": 404
 	QueueTimeoutSec      int             `json:"queue_timeout_sec"`      // max wait in queue, 0 = unlimited (default 900)
 	MaxQueue             int             `json:"max_queue"`              // max queued requests, 0 = unlimited
 	HealthPath           string          `json:"health_path"`            // default "/v1/models", "" disables active checks
@@ -32,10 +35,12 @@ type Config struct {
 	SlotMethods          []string        `json:"slot_methods"`           // methods that occupy a slot (default ["POST"])
 	RetryStatus          []int           `json:"retry_status"`           // upstream status codes that trigger a retry on another backend (default [503])
 	MaxBodyMB            int             `json:"max_body_mb"`            // default 64
-	RecentRequests       int             `json:"recent_requests"`        // how many finished requests the UI keeps (default 100)
+	RecentRequests       int             `json:"recent_requests"`        // how many finished requests the UI keeps (default 300)
 	AdminToken           string          `json:"admin_token"`            // if set, changes in the UI/API need this token
 	StatsDays            int             `json:"stats_days"`             // how many days of statistics to keep (default 400)
 	APIKeys              string          `json:"api_keys"`               // client tokens for the LLM API, "name=token,..." (env API_KEYS)
+	StreamUsage          bool            `json:"stream_usage"`           // add stream_options.include_usage to streaming requests (default true)
+	Currency             string          `json:"currency"`               // shown next to prices (default "€")
 	DataDir              string          `json:"data_dir"`               // where backends.json (UI changes) is stored (default "data", Docker: /data)
 	UnhealthyCooldownSec int             `json:"unhealthy_cooldown_sec"` // used when health checks are disabled (default 10)
 }
@@ -50,10 +55,12 @@ func defaultConfig() Config {
 		SlotMethods:          []string{"POST"},
 		RetryStatus:          []int{503},
 		MaxBodyMB:            64,
-		RecentRequests:       100,
+		RecentRequests:       300,
 		UnhealthyCooldownSec: 10,
 		DataDir:              "data",
 		StatsDays:            400,
+		StreamUsage:          true,
+		Currency:             "€",
 	}
 }
 
@@ -111,6 +118,15 @@ func loadConfig() (Config, error) {
 		if err := envInt(name, dst); err != nil {
 			return cfg, err
 		}
+	}
+	if v := os.Getenv("UNKNOWN_MODEL"); v != "" {
+		cfg.UnknownModel = strings.ToLower(v)
+	}
+	if v := os.Getenv("STREAM_USAGE"); v != "" {
+		cfg.StreamUsage = v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+	}
+	if v := os.Getenv("CURRENCY"); v != "" {
+		cfg.Currency = v
 	}
 	if v := os.Getenv("API_KEYS"); v != "" {
 		cfg.APIKeys = v
@@ -171,8 +187,11 @@ func parseBackendsEnv(v string) ([]BackendConfig, error) {
 
 func (c *Config) validate() error {
 	c.UIPrefix = "/" + strings.Trim(c.UIPrefix, "/")
-	if err := validateBackends(c.Backends); err != nil {
+	if err := validateSetup(c.Backends, c.Groups); err != nil {
 		return err
+	}
+	if c.UnknownModel != "reject" {
+		c.UnknownModel = "all"
 	}
 	if c.HealthIntervalSec <= 0 {
 		c.HealthIntervalSec = 15
@@ -181,7 +200,7 @@ func (c *Config) validate() error {
 		c.MaxBodyMB = 64
 	}
 	if c.RecentRequests <= 0 {
-		c.RecentRequests = 100
+		c.RecentRequests = 300
 	}
 	if c.UnhealthyCooldownSec <= 0 {
 		c.UnhealthyCooldownSec = 10
@@ -257,6 +276,29 @@ func applyBackendKeys(bs []BackendConfig, v string) error {
 			return fmt.Errorf("BACKEND_KEYS: kein Backend namens %q in BACKENDS", item[:k])
 		}
 		bs[i].APIKey = item[k+1:]
+	}
+	return nil
+}
+
+// validateSetup checks backends and groups together (group references must exist).
+func validateSetup(bs []BackendConfig, gs []GroupConfig) error {
+	if err := validateBackends(bs); err != nil {
+		return err
+	}
+	names := map[string]bool{}
+	for i := range gs {
+		if err := normalizeGroup(&gs[i]); err != nil {
+			return fmt.Errorf("Gruppe %d: %w", i+1, err)
+		}
+		if names[gs[i].Name] {
+			return fmt.Errorf("doppelte Gruppe %q", gs[i].Name)
+		}
+		names[gs[i].Name] = true
+	}
+	for _, b := range bs {
+		if b.Group != "" && !names[b.Group] {
+			return fmt.Errorf("Server %q: unbekannte Gruppe %q", b.Name, b.Group)
+		}
 	}
 	return nil
 }

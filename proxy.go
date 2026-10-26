@@ -156,6 +156,12 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(body) > 0 && json.Unmarshal(body, &meta) == nil {
 		req.Model, req.Stream = meta.Model, meta.Stream
 	}
+	// Ask OpenAI-compatible servers to report token usage at the end of a stream (needed for prices/stats).
+	if px.cfg.StreamUsage && meta.Stream && strings.HasSuffix(r.URL.Path, "/completions") {
+		if nb, ok := withStreamUsage(body); ok {
+			body = nb
+		}
+	}
 
 	ctx := r.Context()
 	exclude := map[*Backend]bool{}
@@ -171,6 +177,9 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				code = http.StatusGatewayTimeout
 			case errors.Is(err, ErrNoBackend):
 				code = http.StatusBadGateway
+			case errors.Is(err, ErrNoRoute):
+				code = http.StatusNotFound
+				err = fmt.Errorf("model %q is not served by any server group", req.Model)
 			case ctx.Err() != nil:
 				code = 499 // client went away while queued
 			}
@@ -219,7 +228,11 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		n, copyErr := px.stream(w, resp, req)
+		scan := newUsageScanner(resp.Header.Get("Content-Type"))
+		n, copyErr := px.stream(w, resp, req, scan)
+		if u := scan.Finish(); u.Found {
+			px.pool.setUsage(req, u, px.access)
+		}
 		resp.Body.Close()
 		errMsg := ""
 		if copyErr != nil && ctx.Err() == nil {
@@ -242,7 +255,7 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // stream copies the upstream response to the client, flushing after every chunk (SSE friendly).
-func (px *Proxy) stream(w http.ResponseWriter, resp *http.Response, req *ReqInfo) (int64, error) {
+func (px *Proxy) stream(w http.ResponseWriter, resp *http.Response, req *ReqInfo, scan *usageScanner) (int64, error) {
 	stripHop(resp.Header)
 	copyHeaders(w.Header(), resp.Header)
 	w.Header().Set("X-LLM-Balancer-Backend", req.Backend)
@@ -265,6 +278,7 @@ func (px *Proxy) stream(w http.ResponseWriter, resp *http.Response, req *ReqInfo
 			}
 			total += int64(n)
 			req.bytes.Add(int64(n))
+			scan.Write(buf[:n])
 			_ = rc.Flush()
 		}
 		if err == io.EOF {
@@ -278,6 +292,9 @@ func (px *Proxy) stream(w http.ResponseWriter, resp *http.Response, req *ReqInfo
 
 // passthrough forwards requests that don't need a slot (GET /v1/models, /health, ...).
 func (px *Proxy) passthrough(w http.ResponseWriter, r *http.Request, body []byte) {
+	if r.Method == http.MethodGet && strings.TrimRight(r.URL.Path, "/") == "/v1/models" && px.serveModelList(w) {
+		return // models of all servers, so clients see everything the balancer can route
+	}
 	b, name := px.pool.PickPassthrough()
 	if b == nil {
 		jsonError(w, http.StatusServiceUnavailable, "no healthy backend")
@@ -320,7 +337,7 @@ func (px *Proxy) healthLoop(ctx context.Context) {
 					px.pool.SetHealth(ht.b, false, err.Error(), ht.url)
 					return
 				}
-				io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+				hbody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 				resp.Body.Close()
 				if resp.StatusCode == 401 || resp.StatusCode == 403 {
 					px.pool.SetHealth(ht.b, false, fmt.Sprintf("Server lehnt den Bearer-Token ab (%d) – Token prüfen", resp.StatusCode), ht.url)
@@ -328,6 +345,11 @@ func (px *Proxy) healthLoop(ctx context.Context) {
 					px.pool.SetHealth(ht.b, false, fmt.Sprintf("health %s → %d", px.cfg.HealthPath, resp.StatusCode), ht.url)
 				} else {
 					px.pool.SetHealth(ht.b, true, "", ht.url)
+					if px.cfg.HealthPath == "/v1/models" && resp.StatusCode == 200 {
+						px.discoverModels(client, ht, hbody)
+					} else {
+						px.discoverModels(client, ht, nil)
+					}
 				}
 			}(ht)
 		}

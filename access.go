@@ -28,7 +28,13 @@ type AccessToken struct {
 	Created  time.Time `json:"created"`
 	LastUsed time.Time `json:"last_used,omitempty"`
 	Requests int64     `json:"requests"`
-	FromEnv  bool      `json:"-"`
+	FromEnv  bool      `json:"env,omitempty"`
+	// Prices per 1 million LLM tokens and what has been used so far.
+	PriceIn   float64 `json:"price_in"`
+	PriceOut  float64 `json:"price_out"`
+	TokensIn  int64   `json:"tokens_in"`
+	TokensOut int64   `json:"tokens_out"`
+	Cost      float64 `json:"cost"`
 }
 
 // Access holds the client tokens: from API_KEYS (always valid, read-only in the UI)
@@ -86,7 +92,19 @@ func NewAccess(dir, envKeys string) (*Access, error) {
 	if err := json.Unmarshal(data, &saved); err != nil {
 		return nil, fmt.Errorf("%s: %w", a.path, err)
 	}
-	a.tokens = append(a.tokens, saved...)
+	for _, t := range saved {
+		if !t.FromEnv {
+			a.tokens = append(a.tokens, t)
+			continue
+		}
+		// prices and counters of tokens from API_KEYS are kept by name, as long as the token still exists
+		for _, e := range a.tokens {
+			if e.FromEnv && e.Name == t.Name {
+				e.Created, e.LastUsed, e.Requests = t.Created, t.LastUsed, t.Requests
+				e.PriceIn, e.PriceOut, e.TokensIn, e.TokensOut, e.Cost = t.PriceIn, t.PriceOut, t.TokensIn, t.TokensOut, t.Cost
+			}
+		}
+	}
 	return a, nil
 }
 
@@ -139,16 +157,15 @@ func (a *Access) saveLocked() error {
 	if a.path == "" {
 		return nil
 	}
-	var ui []*AccessToken
+	all := []AccessToken{}
 	for _, t := range a.tokens {
-		if !t.FromEnv {
-			ui = append(ui, t)
+		c := *t
+		if c.FromEnv {
+			c.Hash = "" // the env value is the source of truth; only metadata is stored
 		}
+		all = append(all, c)
 	}
-	if ui == nil {
-		ui = []*AccessToken{}
-	}
-	data, _ := json.MarshalIndent(ui, "", "  ")
+	data, _ := json.MarshalIndent(all, "", "  ")
 	if err := os.MkdirAll(filepath.Dir(a.path), 0o755); err != nil {
 		return err
 	}
@@ -172,6 +189,51 @@ func (a *Access) Flush() {
 			log.Printf("access tokens: %v", err)
 		}
 	}
+}
+
+// SetPrice changes the prices (per 1M tokens). Costs already counted are not recalculated.
+func (a *Access) SetPrice(name string, in, out *float64) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, t := range a.tokens {
+		if t.Name != name {
+			continue
+		}
+		for _, p := range []*float64{in, out} {
+			if p != nil && (*p < 0 || *p > 1e6) {
+				return httpErr{400, errors.New("Preis muss zwischen 0 und 1.000.000 liegen")}
+			}
+		}
+		if in != nil {
+			t.PriceIn = *in
+		}
+		if out != nil {
+			t.PriceOut = *out
+		}
+		log.Printf("access token %q: price in=%g out=%g per 1M tokens", name, t.PriceIn, t.PriceOut)
+		return a.saveLocked()
+	}
+	return httpErr{404, errors.New("unbekannter Token")}
+}
+
+// AddUsage books the LLM tokens of a finished request on the client token and returns its cost.
+func (a *Access) AddUsage(name string, u Usage) float64 {
+	if name == "" || !u.Found {
+		return 0
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, t := range a.tokens {
+		if t.Name == name {
+			cost := (float64(u.In)*t.PriceIn + float64(u.Out)*t.PriceOut) / 1e6
+			t.TokensIn += u.In
+			t.TokensOut += u.Out
+			t.Cost += cost
+			a.dirty = true
+			return cost
+		}
+	}
+	return 0
 }
 
 // Create adds a token. If value is empty, a random one is generated. Returns the plain token.
@@ -224,12 +286,17 @@ func (a *Access) Delete(name string) error {
 }
 
 type tokenView struct {
-	Name     string `json:"name"`
-	Hint     string `json:"hint"`
-	Source   string `json:"source"` // env | ui
-	Created  string `json:"created,omitempty"`
-	LastUsed string `json:"last_used,omitempty"`
-	Requests int64  `json:"requests"`
+	Name      string  `json:"name"`
+	Hint      string  `json:"hint"`
+	Source    string  `json:"source"` // env | ui
+	Created   string  `json:"created,omitempty"`
+	LastUsed  string  `json:"last_used,omitempty"`
+	Requests  int64   `json:"requests"`
+	PriceIn   float64 `json:"price_in"`
+	PriceOut  float64 `json:"price_out"`
+	TokensIn  int64   `json:"tokens_in"`
+	TokensOut int64   `json:"tokens_out"`
+	Cost      float64 `json:"cost"`
 }
 
 func (a *Access) List() []tokenView {
@@ -237,7 +304,8 @@ func (a *Access) List() []tokenView {
 	defer a.mu.Unlock()
 	out := []tokenView{}
 	for _, t := range a.tokens {
-		v := tokenView{Name: t.Name, Hint: t.Hint, Source: "ui", Created: fmtTime(t.Created), LastUsed: fmtTime(t.LastUsed), Requests: t.Requests}
+		v := tokenView{Name: t.Name, Hint: t.Hint, Source: "ui", Created: fmtTime(t.Created), LastUsed: fmtTime(t.LastUsed), Requests: t.Requests,
+			PriceIn: t.PriceIn, PriceOut: t.PriceOut, TokensIn: t.TokensIn, TokensOut: t.TokensOut, Cost: t.Cost}
 		if t.FromEnv {
 			v.Source = "env"
 		}
@@ -275,6 +343,17 @@ func registerAccess(mux *http.ServeMux, pre string, acc *Access, adminToken stri
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(resp)
+	}))
+	mux.HandleFunc("PUT "+pre+"/api/tokens/{name}", adminAuth(adminToken, func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			PriceIn  *float64 `json:"price_in"`
+			PriceOut *float64 `json:"price_out"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+			writeAPIError(w, 400, fmt.Errorf("ungültiges JSON: %v", err))
+			return
+		}
+		writeResult(w, acc.SetPrice(r.PathValue("name"), req.PriceIn, req.PriceOut))
 	}))
 	mux.HandleFunc("DELETE "+pre+"/api/tokens/{name}", adminAuth(adminToken, func(w http.ResponseWriter, r *http.Request) {
 		writeResult(w, acc.Delete(r.PathValue("name")))

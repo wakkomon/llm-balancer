@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -119,9 +120,16 @@ func newMux(cfg Config, pool *Pool, px *Proxy) http.Handler {
 	})
 	registerAdmin(ui, pre, pool, cfg.AdminToken)
 	registerStats(ui, pre, pool.stats, cfg.AdminToken)
+	registerGroups(ui, pre, pool, cfg.AdminToken)
 	if px.access != nil {
 		registerAccess(ui, pre, px.access, cfg.AdminToken)
 	}
+	ui.HandleFunc("GET "+pre+"/api/recent", func(w http.ResponseWriter, r *http.Request) {
+		after, _ := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		json.NewEncoder(w).Encode(pool.RecentAfter(after))
+	})
 	ui.HandleFunc("GET "+pre+"/metrics", func(w http.ResponseWriter, r *http.Request) {
 		writeMetrics(w, pool.Status())
 	})

@@ -29,6 +29,23 @@ type DayStat struct {
 	TTFBCount int64 `json:"ttfb_count"`
 	QueueMs   int64 `json:"queue_ms"`
 	Bytes     int64 `json:"bytes"`
+	TokensIn  int64 `json:"tokens_in"`
+	TokensOut int64 `json:"tokens_out"`
+}
+
+// TokStat aggregates the requests of one client access token on one day.
+type TokStat struct {
+	Requests  int64   `json:"requests"`
+	TokensIn  int64   `json:"tokens_in"`
+	TokensOut int64   `json:"tokens_out"`
+	Cost      float64 `json:"cost"`
+}
+
+func (t *TokStat) add(o *TokStat) {
+	t.Requests += o.Requests
+	t.TokensIn += o.TokensIn
+	t.TokensOut += o.TokensOut
+	t.Cost += o.Cost
 }
 
 func (d *DayStat) add(o *DayStat) {
@@ -41,25 +58,34 @@ func (d *DayStat) add(o *DayStat) {
 	d.TTFBCount += o.TTFBCount
 	d.QueueMs += o.QueueMs
 	d.Bytes += o.Bytes
+	d.TokensIn += o.TokensIn
+	d.TokensOut += o.TokensOut
 }
 
 // Stats keeps per-day, per-backend counters and persists them to DATA_DIR/stats.json.
 type Stats struct {
 	mu       sync.Mutex
 	days     map[string]map[string]*DayStat // "2006-01-02" → backend → stat
+	tokdays  map[string]map[string]*TokStat // "2006-01-02" → client token name → stat
 	path     string
 	keepDays int
 	dirty    bool
 }
 
 func NewStats(dir string, keepDays int) *Stats {
-	s := &Stats{days: map[string]map[string]*DayStat{}, keepDays: keepDays}
+	s := &Stats{days: map[string]map[string]*DayStat{}, tokdays: map[string]map[string]*TokStat{}, keepDays: keepDays}
 	if dir != "" {
 		s.path = filepath.Join(dir, "stats.json")
 		data, err := os.ReadFile(s.path)
 		switch {
 		case err == nil:
-			if err := json.Unmarshal(data, &s.days); err != nil {
+			var f statsFile
+			if err := json.Unmarshal(data, &f); err == nil && f.Backends != nil {
+				s.days = f.Backends
+				if f.Tokens != nil {
+					s.tokdays = f.Tokens
+				}
+			} else if err := json.Unmarshal(data, &s.days); err != nil { // format of older versions
 				log.Printf("stats: %s unreadable, starting fresh: %v", s.path, err)
 				s.days = map[string]map[string]*DayStat{}
 			}
@@ -78,7 +104,7 @@ func (s *Stats) Record(r *ReqInfo) {
 	if backend == "" {
 		backend = NoBackend
 	}
-	d := DayStat{Requests: 1, Bytes: r.bytes.Load()}
+	d := DayStat{Requests: 1, Bytes: r.bytes.Load(), TokensIn: r.TokensIn, TokensOut: r.TokensOut}
 	switch {
 	case r.Status == 499:
 		d.Cancelled = 1
@@ -111,7 +137,25 @@ func (s *Stats) Record(r *ReqInfo) {
 		m[backend] = cur
 	}
 	cur.add(&d)
+	if r.Token != "" {
+		tm := s.tokdays[day]
+		if tm == nil {
+			tm = map[string]*TokStat{}
+			s.tokdays[day] = tm
+		}
+		ts := tm[r.Token]
+		if ts == nil {
+			ts = &TokStat{}
+			tm[r.Token] = ts
+		}
+		ts.add(&TokStat{Requests: 1, TokensIn: r.TokensIn, TokensOut: r.TokensOut, Cost: r.Cost})
+	}
 	s.dirty = true
+}
+
+type statsFile struct {
+	Backends map[string]map[string]*DayStat `json:"backends"`
+	Tokens   map[string]map[string]*TokStat `json:"tokens"`
 }
 
 // Flush writes the stats file if something changed and prunes old days.
@@ -126,11 +170,17 @@ func (s *Stats) Flush() {
 				s.dirty = true
 			}
 		}
+		for d := range s.tokdays {
+			if d < cutoff {
+				delete(s.tokdays, d)
+				s.dirty = true
+			}
+		}
 	}
 	if !s.dirty || s.path == "" {
 		return
 	}
-	data, _ := json.Marshal(s.days)
+	data, _ := json.Marshal(statsFile{Backends: s.days, Tokens: s.tokdays})
 	tmp := s.path + ".tmp"
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		log.Printf("stats: %v", err)
@@ -150,6 +200,7 @@ func (s *Stats) Flush() {
 func (s *Stats) Reset() {
 	s.mu.Lock()
 	s.days = map[string]map[string]*DayStat{}
+	s.tokdays = map[string]map[string]*TokStat{}
 	s.dirty = true
 	s.mu.Unlock()
 	s.Flush()
@@ -163,13 +214,18 @@ type StatsReport struct {
 	Backends []string                       `json:"backends"` // every backend name with data in range
 	Data     map[string]map[string]*DayStat `json:"data"`     // day → backend → stat (only non-empty)
 	Totals   map[string]*DayStat            `json:"totals"`   // backend → stat over the range
+	// per client access token
+	Tokens      []string                       `json:"tokens"`
+	TokenData   map[string]map[string]*TokStat `json:"token_data"`   // day → token → stat
+	TokenTotals map[string]*TokStat            `json:"token_totals"` // token → stat over the range
 }
 
 func (s *Stats) Report(days int, now time.Time) StatsReport {
 	if days <= 0 {
 		days = 30
 	}
-	rep := StatsReport{Data: map[string]map[string]*DayStat{}, Totals: map[string]*DayStat{}}
+	rep := StatsReport{Data: map[string]map[string]*DayStat{}, Totals: map[string]*DayStat{},
+		Tokens: []string{}, TokenData: map[string]map[string]*TokStat{}, TokenTotals: map[string]*TokStat{}}
 	start := now.In(time.Local).AddDate(0, 0, -(days - 1))
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -177,6 +233,19 @@ func (s *Stats) Report(days int, now time.Time) StatsReport {
 	for i := 0; i < days; i++ {
 		day := dayKey(start.AddDate(0, 0, i))
 		rep.Days = append(rep.Days, day)
+		if tm := s.tokdays[day]; len(tm) > 0 {
+			out := map[string]*TokStat{}
+			for name, ts := range tm {
+				c := *ts
+				out[name] = &c
+				if rep.TokenTotals[name] == nil {
+					rep.TokenTotals[name] = &TokStat{}
+					rep.Tokens = append(rep.Tokens, name)
+				}
+				rep.TokenTotals[name].add(ts)
+			}
+			rep.TokenData[day] = out
+		}
 		m := s.days[day]
 		if len(m) == 0 {
 			continue
@@ -195,6 +264,7 @@ func (s *Stats) Report(days int, now time.Time) StatsReport {
 		rep.Data[day] = out
 	}
 	sort.Strings(rep.Backends)
+	sort.Strings(rep.Tokens)
 	rep.From, rep.To = rep.Days[0], rep.Days[len(rep.Days)-1]
 	return rep
 }
@@ -225,7 +295,7 @@ func registerStats(mux *http.ServeMux, pre string, stats *Stats, token string) {
 			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="llm-balancer-stats_%s_%s.csv"`, rep.From, rep.To))
 			cw := csv.NewWriter(w)
 			cw.Comma = ';'
-			cw.Write([]string{"Tag", "Server", "Anfragen", "Fehler", "Abgebrochen", "Gesamtdauer_s", "Avg_Dauer_s", "Max_Dauer_s", "Avg_1.Byte_s", "Avg_Wartezeit_s", "Bytes"})
+			cw.Write([]string{"Tag", "Server", "Anfragen", "Fehler", "Abgebrochen", "Gesamtdauer_s", "Avg_Dauer_s", "Max_Dauer_s", "Avg_1.Byte_s", "Avg_Wartezeit_s", "Bytes", "Tokens_Ein", "Tokens_Aus"})
 			sec := func(ms, n int64) string {
 				if n == 0 {
 					return "0"
@@ -240,7 +310,7 @@ func registerStats(mux *http.ServeMux, pre string, stats *Stats, token string) {
 					}
 					cw.Write([]string{day, name, itoa(st.Requests), itoa(st.Errors), itoa(st.Cancelled),
 						sec(st.DurMs, 1), sec(st.DurMs, st.Requests), sec(st.MaxDurMs, 1),
-						sec(st.TTFBMs, st.TTFBCount), sec(st.QueueMs, st.Requests), itoa(st.Bytes)})
+						sec(st.TTFBMs, st.TTFBCount), sec(st.QueueMs, st.Requests), itoa(st.Bytes), itoa(st.TokensIn), itoa(st.TokensOut)})
 				}
 			}
 			cw.Flush()

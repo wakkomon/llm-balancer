@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/url"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,6 +26,9 @@ type Backend struct {
 	Max      int
 	Priority int
 	apiKey   string
+	group    string   // guarded by Pool.mu
+	models   []string // reported by the server via /v1/models
+	modelsAt time.Time
 
 	// guarded by Pool.mu
 	enabled      bool
@@ -57,7 +61,12 @@ type ReqInfo struct {
 	Stream    bool      `json:"stream"`
 	Client    string    `json:"client"`
 	Token     string    `json:"token,omitempty"` // name of the client access token
-	State     string    `json:"state"`           // queued | running | done
+	Group     string    `json:"group,omitempty"`
+	TokensIn  int64     `json:"tokens_in,omitempty"`
+	TokensOut int64     `json:"tokens_out,omitempty"`
+	Cost      float64   `json:"cost,omitempty"`
+	Seq       uint64    `json:"seq,omitempty"` // order in which requests finished
+	State     string    `json:"state"`         // queued | running | done
 	Backend   string    `json:"backend,omitempty"`
 	Attempts  int       `json:"attempts"`
 	QueuedAt  time.Time `json:"queued_at"`
@@ -77,6 +86,7 @@ type ReqInfo struct {
 
 type waiter struct {
 	req     *ReqInfo
+	model   string // routing is re-evaluated on every dispatch (groups/servers can change while waiting)
 	exclude map[*Backend]bool
 	ch      chan *Backend // buffered(1); written under Pool.mu
 }
@@ -90,15 +100,18 @@ type Pool struct {
 	active   map[uint64]*ReqInfo
 	recent   []*ReqInfo
 	nextID   uint64
+	nextSeq  uint64
 	started  time.Time
 	rr       int
 
-	store      *Store
-	initial    []BackendConfig // from BACKENDS / config.json, used for "reset"
-	source     string          // "env" or "saved"
-	healthKick chan struct{}
-	stats      *Stats
-	access     *Access
+	store         *Store
+	initial       []BackendConfig // from BACKENDS / config.json, used for "reset"
+	source        string          // "env" or "saved"
+	healthKick    chan struct{}
+	stats         *Stats
+	groups        []GroupConfig
+	initialGroups []GroupConfig
+	access        *Access
 
 	totalReqs     int64
 	totalRejected int64
@@ -109,15 +122,18 @@ type Pool struct {
 // saved list (edited in the UI), that one is used instead.
 func NewPool(cfg Config, initial []BackendConfig, store *Store) (*Pool, error) {
 	p := &Pool{cfg: cfg, active: map[uint64]*ReqInfo{}, started: time.Now(), store: store,
-		initial: initial, source: "env", healthKick: make(chan struct{}, 1)}
+		initial: initial, source: "env", healthKick: make(chan struct{}, 1),
+		initialGroups: append([]GroupConfig{}, cfg.Groups...)}
 	list := initial
+	p.groups = append([]GroupConfig{}, cfg.Groups...)
 	if store != nil {
 		saved, ok, err := store.Load()
 		if err != nil {
 			return nil, err
 		}
 		if ok {
-			list, p.source = saved, "saved"
+			list, p.source = saved.Backends, "saved"
+			p.groups = saved.Groups
 		}
 	}
 	for _, bc := range list {
@@ -169,11 +185,11 @@ func (p *Pool) NewRequest(method, path, client string) *ReqInfo {
 }
 
 // pickFree returns the best free backend or nil. Caller holds p.mu.
-func (p *Pool) pickFree(exclude map[*Backend]bool) *Backend {
+func (p *Pool) pickFree(exclude map[*Backend]bool, rt Route) *Backend {
 	now := time.Now()
 	var best *Backend
 	for _, b := range p.backends {
-		if exclude[b] || !b.usable(now) || b.active >= b.Max {
+		if exclude[b] || !rt.allows(b) || !b.usable(now) || b.active >= b.Max {
 			continue
 		}
 		if best == nil || better(b, best) {
@@ -207,22 +223,28 @@ func (p *Pool) assign(b *Backend, r *ReqInfo) {
 	}
 }
 
-// Acquire returns a backend with a free slot, waiting in the FIFO queue if necessary.
+// Acquire returns a backend with a free slot that may serve the request's model,
+// waiting in the FIFO queue if necessary.
 func (p *Pool) Acquire(ctx context.Context, r *ReqInfo, exclude map[*Backend]bool) (*Backend, error) {
 	p.mu.Lock()
-	if len(p.backends) == 0 || (len(exclude) > 0 && !p.anyCandidate(exclude)) {
+	rt := p.routeLocked(r.Model)
+	r.Group = rt.Group
+	if rt.Mode == "reject" {
+		p.totalRejected++
+		p.mu.Unlock()
+		return nil, ErrNoRoute
+	}
+	if len(p.backends) == 0 || (len(exclude) > 0 && !p.anyCandidate(exclude, rt)) {
 		p.mu.Unlock()
 		return nil, ErrNoBackend
 	}
-	// Only take a slot directly if nobody is waiting (FIFO fairness).
-	if len(p.queue) == 0 {
-		if b := p.pickFree(exclude); b != nil {
-			p.assign(b, r)
-			p.mu.Unlock()
-			return b, nil
-		}
+	// Take a free slot directly unless an earlier waiter could use that very server (FIFO fairness).
+	if b := p.pickFree(exclude, rt); b != nil && !p.someWaiterWants(b) {
+		p.assign(b, r)
+		p.mu.Unlock()
+		return b, nil
 	}
-	if !p.anyUsable() {
+	if !p.anyUsable(rt) {
 		// waiting makes no sense if no server could ever pick this up right now
 		p.totalRejected++
 		p.mu.Unlock()
@@ -233,7 +255,7 @@ func (p *Pool) Acquire(ctx context.Context, r *ReqInfo, exclude map[*Backend]boo
 		p.mu.Unlock()
 		return nil, ErrQueueFull
 	}
-	w := &waiter{req: r, exclude: exclude, ch: make(chan *Backend, 1)}
+	w := &waiter{req: r, model: r.Model, exclude: exclude, ch: make(chan *Backend, 1)}
 	r.State = "queued"
 	if len(exclude) > 0 {
 		// retries already waited once: put them at the front of the queue
@@ -244,7 +266,7 @@ func (p *Pool) Acquire(ctx context.Context, r *ReqInfo, exclude map[*Backend]boo
 	if len(p.queue) > p.maxQueueSeen {
 		p.maxQueueSeen = len(p.queue)
 	}
-	p.dispatchLocked() // a slot may be free for this waiter even if earlier waiters are blocked by exclusions
+	p.dispatchLocked()
 	p.mu.Unlock()
 
 	var timeout <-chan time.Time
@@ -282,33 +304,43 @@ func (p *Pool) abandon(w *waiter, err error) error {
 }
 
 // anyCandidate: is there any enabled backend not in exclude (busy or not)? Caller holds p.mu.
-func (p *Pool) anyCandidate(exclude map[*Backend]bool) bool {
+func (p *Pool) anyCandidate(exclude map[*Backend]bool, rt Route) bool {
 	for _, b := range p.backends {
-		if b.enabled && !exclude[b] {
+		if b.enabled && !exclude[b] && rt.allows(b) {
 			return true
 		}
 	}
 	return false
 }
 
-// dispatchLocked hands free slots to waiting requests in FIFO order. Caller holds p.mu.
+// someWaiterWants: could a queued request use server b? Caller holds p.mu.
+func (p *Pool) someWaiterWants(b *Backend) bool {
+	for _, w := range p.queue {
+		if !w.exclude[b] && p.routeLocked(w.model).allows(b) {
+			return true
+		}
+	}
+	return false
+}
+
+// dispatchLocked hands free slots to waiting requests in FIFO order. A waiter that cannot be
+// served (its group is busy) does not block waiters for other groups. Caller holds p.mu.
 func (p *Pool) dispatchLocked() {
 	for i := 0; i < len(p.queue); {
 		w := p.queue[i]
-		b := p.pickFree(w.exclude)
+		rt := p.routeLocked(w.model)
+		b := p.pickFree(w.exclude, rt)
 		if b == nil && len(w.exclude) > 0 {
 			// A retried request avoids the server that just failed/was busy – but if that server
 			// is completely idle again (and healthy), using it beats waiting for the others.
-			b = p.pickIdleExcluded(w.exclude)
+			b = p.pickIdleExcluded(w.exclude, rt)
 		}
 		if b == nil {
-			if len(w.exclude) == 0 {
-				return // nothing free for a normal waiter → nothing free for anyone after it
-			}
 			i++
 			continue
 		}
 		p.queue = append(p.queue[:i], p.queue[i+1:]...)
+		w.req.Group = rt.Group
 		p.assign(b, w.req)
 		w.ch <- b
 	}
@@ -382,6 +414,8 @@ func (p *Pool) Finish(r *ReqInfo, b *Backend, status int, errMsg string) {
 	r.Status = status
 	r.Error = errMsg
 	r.State = "done"
+	p.nextSeq++
+	r.Seq = p.nextSeq
 	delete(p.active, r.ID)
 	if b != nil && r.Status > 0 && r.Status < 500 && r.Status != 499 && r.Status != 401 && r.Status != 403 && errMsg == "" {
 		b.lastOkAt = r.EndedAt
@@ -430,6 +464,8 @@ type BackendStatus struct {
 	LastErrorAt string     `json:"last_error_at,omitempty"`
 	State       string     `json:"state"` // idle | busy | error | down | disabled
 	HasAPIKey   bool       `json:"has_api_key"`
+	Group       string     `json:"group"`
+	Models      []string   `json:"models"`
 	Running     []*ReqInfo `json:"running"`
 }
 
@@ -447,13 +483,16 @@ type Status struct {
 	DataFile   string          `json:"data_file,omitempty"`
 	AdminToken bool            `json:"admin_token_required"`
 	AccessAuth bool            `json:"access_auth"` // clients need an API token
-	States     map[string]int  `json:"states"`      // state → number of backends
+	Groups     []GroupStatus   `json:"groups"`
+	Currency   string          `json:"currency"`
+	States     map[string]int  `json:"states"` // state → number of backends
 	TotalSlots int             `json:"total_slots"`
 }
 
 func snapshot(r *ReqInfo, now time.Time) *ReqInfo {
 	c := &ReqInfo{
 		ID: r.ID, Method: r.Method, Path: r.Path, Model: r.Model, Stream: r.Stream, Client: r.Client, Token: r.Token,
+		Group: r.Group, TokensIn: r.TokensIn, TokensOut: r.TokensOut, Cost: r.Cost, Seq: r.Seq,
 		State: r.State, Backend: r.Backend, Attempts: r.Attempts, QueuedAt: r.QueuedAt,
 		StartedAt: r.StartedAt, EndedAt: r.EndedAt, Status: r.Status, Error: r.Error,
 	}
@@ -493,6 +532,34 @@ func (p *Pool) Status() Status {
 	if p.access != nil {
 		st.AccessAuth = p.access.Enabled()
 	}
+	st.Currency = p.cfg.Currency
+	st.Groups = []GroupStatus{}
+	for _, g := range p.groups {
+		gs := GroupStatus{Name: g.Name, Models: append([]string{}, g.Models...), Auto: g.auto(), Members: []string{}, Available: []string{}}
+		seen := map[string]bool{}
+		for _, m := range g.Models {
+			if !strings.Contains(m, "*") && !seen[strings.ToLower(m)] {
+				seen[strings.ToLower(m)] = true
+				gs.Available = append(gs.Available, m)
+			}
+		}
+		for _, b := range p.membersLocked(g.Name) {
+			gs.Members = append(gs.Members, b.Name)
+			for _, m := range b.models {
+				if !seen[strings.ToLower(m)] && (g.auto() || matchesAny(g.Models, m)) {
+					seen[strings.ToLower(m)] = true
+					gs.Available = append(gs.Available, m)
+				}
+			}
+		}
+		for _, w := range p.queue {
+			if strings.Contains(","+p.routeLocked(w.model).Group+",", ","+g.Name+",") {
+				gs.Queued++
+			}
+		}
+		sort.Slice(gs.Available, func(i, j int) bool { return strings.ToLower(gs.Available[i]) < strings.ToLower(gs.Available[j]) })
+		st.Groups = append(st.Groups, gs)
+	}
 	st.Backends = []BackendStatus{}
 	st.States = map[string]int{"idle": 0, "busy": 0, "error": 0, "down": 0, "disabled": 0}
 	running := map[string][]*ReqInfo{}
@@ -508,6 +575,8 @@ func (p *Pool) Status() Status {
 			Running: running[b.Name]}
 		bs.State = backendState(b, now)
 		bs.HasAPIKey = b.apiKey != ""
+		bs.Group = b.group
+		bs.Models = append([]string{}, b.models...)
 		st.States[bs.State]++
 		if bs.Running == nil {
 			bs.Running = []*ReqInfo{}
@@ -528,7 +597,7 @@ func (p *Pool) Status() Status {
 		st.Queue = append(st.Queue, snapshot(w.req, now))
 	}
 	st.Recent = []*ReqInfo{}
-	for i := len(p.recent) - 1; i >= 0; i-- {
+	for i := len(p.recent) - 1; i >= 0 && len(st.Recent) < 20; i-- { // full list: /api/recent
 		st.Recent = append(st.Recent, snapshot(p.recent[i], now))
 	}
 	return st
@@ -554,11 +623,11 @@ func backendState(b *Backend, now time.Time) string {
 }
 
 // pickIdleExcluded returns an excluded but healthy server with no running request. Caller holds p.mu.
-func (p *Pool) pickIdleExcluded(exclude map[*Backend]bool) *Backend {
+func (p *Pool) pickIdleExcluded(exclude map[*Backend]bool, rt Route) *Backend {
 	now := time.Now()
 	var best *Backend
 	for _, b := range p.backends {
-		if exclude[b] && b.usable(now) && b.active == 0 && (best == nil || better(b, best)) {
+		if exclude[b] && rt.allows(b) && b.usable(now) && b.active == 0 && (best == nil || better(b, best)) {
 			best = b
 		}
 	}
@@ -566,12 +635,53 @@ func (p *Pool) pickIdleExcluded(exclude map[*Backend]bool) *Backend {
 }
 
 // anyUsable: is at least one server enabled and reachable? Caller holds p.mu.
-func (p *Pool) anyUsable() bool {
+func (p *Pool) anyUsable(rt Route) bool {
 	now := time.Now()
 	for _, b := range p.backends {
-		if b.usable(now) {
+		if rt.allows(b) && b.usable(now) {
 			return true
 		}
 	}
 	return false
+}
+
+// setUsage stores the token counts of a request and books its cost on the client token.
+func (p *Pool) setUsage(r *ReqInfo, u Usage, acc *Access) {
+	cost := 0.0
+	if acc != nil {
+		cost = acc.AddUsage(r.Token, u)
+	}
+	p.mu.Lock()
+	r.TokensIn, r.TokensOut, r.Cost = u.In, u.Out, cost
+	p.mu.Unlock()
+}
+
+type GroupStatus struct {
+	Name      string   `json:"name"`
+	Models    []string `json:"models"` // configured names/patterns
+	Auto      bool     `json:"auto_models"`
+	Members   []string `json:"members"`
+	Available []string `json:"available"` // concrete models this group routes
+	Queued    int      `json:"queued"`
+}
+
+func matchesAny(patterns []string, model string) bool {
+	for _, p := range patterns {
+		if modelMatch(p, model) {
+			return true
+		}
+	}
+	return false
+}
+
+// RecentAfter returns finished requests with Seq > after, newest first.
+func (p *Pool) RecentAfter(after uint64) []*ReqInfo {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := time.Now()
+	out := []*ReqInfo{}
+	for i := len(p.recent) - 1; i >= 0 && p.recent[i].Seq > after; i-- {
+		out = append(out, snapshot(p.recent[i], now))
+	}
+	return out
 }
