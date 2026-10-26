@@ -143,8 +143,14 @@ erzwungene Name dieser Gruppe. In „Letzte Anfragen“ steht der angefragte und
    (bzw. – ohne Gruppen – einen anderen passenden Server). Ist der gerade belegt, wartet die Anfrage an der Spitze der Queue.
 2. Sind **alle Server der Gruppe** fehlgeschlagen (oder down), geht die Anfrage an die **Fallback-Gruppe** – sofort,
    ohne die eingestellte Wartezeit abzuwarten.
-3. Erst wenn auch dort alle Server scheitern, bekommt der Client **die letzte echte Fehlerantwort** (Statuscode und Text
+3. Ist auch die Fallback-Gruppe erschöpft (oder keine eingestellt), darf **jeder andere Server, der das Modell selbst meldet**
+   (`/v1/models`), die Anfrage übernehmen – auch aus einer anderen Gruppe.
+4. Erst wenn auch dort alle Server scheitern, bekommt der Client **die letzte echte Fehlerantwort** (Statuscode und Text
    des Servers, Header `X-LLM-Balancer-Attempts`). Waren alle Server unerreichbar, kommt HTTP 502 mit allen Verbindungsfehlern.
+
+Anfragen ohne Slot (z. B. `GET`) gehen an einen Server und bei einer Fehlerantwort an den nächsten.
+`GET /v1/models/<modell>` beantwortet der Balancer selbst aus den Modellen aller Server. Welche Version läuft, steht oben
+in der Web-UI (Branch · Commit) und in der ersten Log-Zeile.
 
 Jeder Server wird pro Anfrage höchstens einmal versucht. Als Fehler gelten Verbindungsfehler, alle 5xx und die Codes aus
 `RETRY_STATUS` (Standard `401,403,404,408,429` – falscher Server-Token, Modell dort nicht geladen, Timeout, überlastet).

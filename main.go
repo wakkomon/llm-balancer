@@ -19,7 +19,23 @@ import (
 //go:embed web/index.html
 var indexHTML []byte
 
-var version = "dev"
+var (
+	version = "dev"
+	commit  = ""
+	started = time.Now()
+)
+
+// versionString: "main · fb02400" – shown in the UI header and logged at start.
+func versionString() string {
+	c := commit
+	if len(c) > 7 {
+		c = c[:7]
+	}
+	if c == "" || c == "unknown" {
+		return version
+	}
+	return version + " · " + c
+}
 
 func main() {
 	cfg, err := loadConfig()
@@ -66,7 +82,7 @@ func main() {
 		// no Read/WriteTimeout: generations can stream for a long time
 	}
 
-	log.Printf("llm-balancer %s listening on %s, UI at %s/", version, cfg.Listen, cfg.UIPrefix)
+	log.Printf("llm-balancer %s (started %s) listening on %s, UI at %s/", versionString(), started.Format(time.RFC3339), cfg.Listen, cfg.UIPrefix)
 	pool.mu.Lock()
 	if pool.source == "saved" {
 		log.Printf("using backends saved in %s (BACKENDS/config.json ignored until reset in the UI)", pool.store.path)

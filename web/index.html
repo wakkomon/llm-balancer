@@ -182,6 +182,7 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
     <nav class="nav"><a href="#" data-page="main">Übersicht</a><a href="#gruppen" data-page="groups">Gruppen</a><a href="#statistik" data-page="stats">Statistik</a><a href="#anfragen" data-page="recent">Letzte Anfragen</a><a href="#zugriff" data-page="tokens">API-Zugriff</a></nav>
     <span class="sub live" id="live"><i></i><span id="livetxt">verbinde …</span></span>
     <span class="sub" id="uptime"></span>
+    <span class="sub" id="version" title="Version des laufenden Balancers (Branch · Commit)"></span>
   </header>
 
   <div id="page-main">
@@ -671,6 +672,7 @@ async function refresh() {
     const st = await (await fetch(`${base}/api/status`, {cache:'no-store'})).json();
     lastOk = Date.now();
     current = st;
+    $('version').textContent = st.version ? 'Version ' + st.version : '';
     $('t-free').textContent = `${st.free_slots}/${st.total_slots}`;
     $('t-queue').textContent = st.queue.length;
     $('t-total').textContent = st.total_requests;

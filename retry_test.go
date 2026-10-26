@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -141,3 +142,97 @@ func TestRetryStatusEnv(t *testing.T) {
 		t.Error("200 accepted")
 	}
 }
+
+// modelServer reports models via GET /v1/models, answers POSTs with code, counts calls.
+func modelServer(t *testing.T, models string, code int) *codeServer {
+	c := &codeServer{}
+	c.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			if r.URL.Path == "/v1/models" {
+				w.Write([]byte(`{"data":[` + models + `]}`))
+				return
+			}
+			c.calls.Add(1)
+			w.WriteHeader(code)
+			w.Write([]byte(`{"get":"` + r.URL.Path + `"}`))
+			return
+		}
+		c.calls.Add(1)
+		io.ReadAll(r.Body)
+		w.WriteHeader(code)
+		w.Write([]byte(`{"code":` + http.StatusText(code) + `}`))
+	}))
+	t.Cleanup(c.srv.Close)
+	return c
+}
+
+// Group and its fallback both fail with 404 – a server outside both that reports the model takes over.
+func TestLastResortOtherServerWithModel(t *testing.T) {
+	a := modelServer(t, `{"id":"qwen3-32b"}`, 404)
+	f := modelServer(t, `{"id":"llama"}`, 404)
+	other := modelServer(t, `{"id":"qwen3-32b"}`, 200)
+	srv, pool := setup(t, func(c *Config) {
+		c.Groups = []GroupConfig{
+			{Name: "g", Models: []string{"qwen*"}, AutoModels: boolPtr(false), Fallback: "fb", FallbackAfterSec: 60},
+			{Name: "fb", AutoModels: boolPtr(false)},
+			{Name: "rest", AutoModels: boolPtr(false)},
+		}
+		c.Backends = []BackendConfig{
+			{Name: "a", URL: a.srv.URL, Group: "g"}, {Name: "f", URL: f.srv.URL, Group: "fb"}, {Name: "o", URL: other.srv.URL, Group: "rest"},
+		}
+	})
+	discover(t, pool)
+	code, be := chatModel(t, srv.URL, "qwen3-32b", nil)
+	if code != 200 || be != "o" {
+		t.Fatalf("got %d via %q", code, be)
+	}
+	r := lastRecent(t, srv.URL)
+	if r.Trail != "a: 404 → f (Fallback): 404 → o (Fallback): 200" || r.Group != "g → rest" {
+		t.Errorf("trail %q group %q", r.Trail, r.Group)
+	}
+}
+
+func TestGroupWithoutFallbackUsesOtherServerWithModel(t *testing.T) {
+	a := modelServer(t, `{"id":"m"}`, 404)
+	b := modelServer(t, `{"id":"m"}`, 200)
+	srv, pool := setup(t, func(c *Config) {
+		c.Groups = []GroupConfig{{Name: "g1", Models: []string{"m"}, AutoModels: boolPtr(false)}, {Name: "g2", AutoModels: boolPtr(false)}}
+		c.Backends = []BackendConfig{{Name: "a", URL: a.srv.URL, Group: "g1"}, {Name: "b", URL: b.srv.URL, Group: "g2"}}
+	})
+	discover(t, pool)
+	if code, be := chatModel(t, srv.URL, "m", nil); code != 200 || be != "b" {
+		t.Errorf("got %d via %q", code, be)
+	}
+}
+
+func TestRetrieveModelAndPassthroughRetry(t *testing.T) {
+	a := modelServer(t, `{"id":"qwen3-32b"}`, 404)
+	b := modelServer(t, `{"id":"other"}`, 200)
+	srv, pool := setup(t, func(c *Config) {
+		c.Backends = []BackendConfig{{Name: "a", URL: a.srv.URL}, {Name: "b", URL: b.srv.URL}}
+	})
+	discover(t, pool)
+	resp, _ := http.Get(srv.URL + "/v1/models/qwen3-32b")
+	var m map[string]any
+	json.NewDecoder(resp.Body).Decode(&m)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || m["id"] != "qwen3-32b" {
+		t.Errorf("retrieve model: %d %v", resp.StatusCode, m)
+	}
+	// any other GET: a answers 404, b is tried and answers 200
+	for i := 0; i < 4; i++ {
+		resp, _ = http.Get(srv.URL + "/v1/something")
+		resp.Body.Close()
+		if resp.StatusCode != 200 || resp.Header.Get("X-LLM-Balancer-Backend") != "b" {
+			t.Errorf("passthrough %d: %d via %s", i, resp.StatusCode, resp.Header.Get("X-LLM-Balancer-Backend"))
+		}
+	}
+	// unknown model: every server is asked, the last 404 is passed on
+	resp, _ = http.Get(srv.URL + "/v1/models/nope")
+	resp.Body.Close()
+	if resp.StatusCode != 200 { // b answers 200 for any GET in this fake
+		t.Errorf("unknown model passthrough: %d", resp.StatusCode)
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }

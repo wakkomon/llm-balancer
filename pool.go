@@ -112,7 +112,7 @@ type ReqInfo struct {
 type waiter struct {
 	req     *ReqInfo
 	model   string // routing is re-evaluated on every dispatch (groups/servers can change while waiting)
-	force   bool   // fallback allowed right away (all servers of the group were down)
+	level   int    // route escalation: 1 = fallback group right away, 2 = also other servers with the model
 	exclude map[*Backend]bool
 	ch      chan *Backend // buffered(1); written under Pool.mu
 }
@@ -265,7 +265,11 @@ func (p *Pool) assignRoute(b *Backend, r *ReqInfo, rt Route) {
 		model = g.ForceModel // the server's own group may force a model name
 	}
 	if m, ok := rt.fallback[b]; ok {
-		r.Group = rt.Group + " → " + b.group
+		target := b.group
+		if target == "" {
+			target = "ohne Gruppe"
+		}
+		r.Group = rt.Group + " → " + target
 		if m != "" { // replacement model of the fallback setting wins
 			model = m
 		}
@@ -292,13 +296,16 @@ func (p *Pool) assign(b *Backend, r *ReqInfo) {
 // waiting in the FIFO queue if necessary.
 func (p *Pool) Acquire(ctx context.Context, r *ReqInfo, exclude map[*Backend]bool) (*Backend, error) {
 	p.mu.Lock()
-	rt := p.routeWaitLocked(r.Model, 0, false)
-	force := false
+	rt := p.routeWaitLocked(r.Model, 0, 0)
+	level := 0
 	if rt.Mode == "group" && !p.anyUsableEx(rt, exclude) {
 		// every server of the group is down, disabled or already failed for this request:
-		// use the fallback group right away
-		if rf := p.routeWaitLocked(r.Model, 0, true); p.anyUsableEx(rf, exclude) {
-			rt, force = rf, true
+		// 1. the fallback group right away, 2. any other server that reports the model
+		for lv := 1; lv <= 2; lv++ {
+			if rf := p.routeWaitLocked(r.Model, 0, lv); p.anyUsableEx(rf, exclude) {
+				rt, level = rf, lv
+				break
+			}
 		}
 	}
 	r.Group = rt.Group
@@ -332,7 +339,7 @@ func (p *Pool) Acquire(ctx context.Context, r *ReqInfo, exclude map[*Backend]boo
 		p.mu.Unlock()
 		return nil, ErrQueueFull
 	}
-	w := &waiter{req: r, model: r.Model, force: force, exclude: exclude, ch: make(chan *Backend, 1)}
+	w := &waiter{req: r, model: r.Model, level: level, exclude: exclude, ch: make(chan *Backend, 1)}
 	r.State = "queued"
 	if len(exclude) > 0 {
 		// retries already waited once: put them at the front of the queue
@@ -393,7 +400,7 @@ func (p *Pool) anyCandidate(exclude map[*Backend]bool, rt Route) bool {
 // someWaiterWants: could a queued request use server b? Caller holds p.mu.
 func (p *Pool) someWaiterWants(b *Backend) bool {
 	for _, w := range p.queue {
-		if !w.exclude[b] && p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), w.force).allows(b) {
+		if !w.exclude[b] && p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), w.level).allows(b) {
 			return true
 		}
 	}
@@ -405,7 +412,7 @@ func (p *Pool) someWaiterWants(b *Backend) bool {
 func (p *Pool) dispatchLocked() {
 	for i := 0; i < len(p.queue); {
 		w := p.queue[i]
-		rt := p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), w.force)
+		rt := p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), w.level)
 		b := p.pickFree(w.exclude, rt)
 		if b == nil && len(w.exclude) > 0 {
 			// A retried request avoids the server that just failed/was busy – but if that server
@@ -462,23 +469,41 @@ func (p *Pool) SetHealth(b *Backend, ok bool, msg string, checkedURL string) {
 	}
 }
 
-// PickPassthrough chooses a backend for requests that don't occupy a slot (e.g. GET /v1/models).
-func (p *Pool) PickPassthrough() (*Backend, string) {
+// PickPassthroughEx chooses a backend for requests that don't occupy a slot (e.g. GET /v1/models),
+// skipping the ones already tried: healthy ones first (by priority, round robin), then the others.
+func (p *Pool) PickPassthroughEx(tried map[*Backend]bool) (*Backend, string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := time.Now()
-	var cands []*Backend
+	var healthy, rest []*Backend
 	for _, b := range p.backends {
-		if b.usable(now) {
-			cands = append(cands, b)
+		if tried[b] || !b.enabled {
+			continue
 		}
+		if b.usable(now) {
+			healthy = append(healthy, b)
+		} else {
+			rest = append(rest, b)
+		}
+	}
+	cands := healthy
+	if len(cands) == 0 {
+		if len(tried) == 0 {
+			return nil, "" // nothing healthy at all
+		}
+		cands = rest
 	}
 	if len(cands) == 0 {
 		return nil, ""
 	}
 	sort.SliceStable(cands, func(i, j int) bool { return cands[i].Priority < cands[j].Priority })
 	p.rr++
-	b := cands[p.rr%len(cands)]
+	best := cands[0].Priority
+	n := 0
+	for n < len(cands) && cands[n].Priority == best {
+		n++
+	}
+	b := cands[p.rr%n]
 	return b, b.Name
 }
 
@@ -580,6 +605,7 @@ type Status struct {
 	AccessAuth bool            `json:"access_auth"` // clients need an API token
 	Groups     []GroupStatus   `json:"groups"`
 	Currency   string          `json:"currency"`
+	Version    string          `json:"version"`
 	States     map[string]int  `json:"states"` // state → number of backends
 	TotalSlots int             `json:"total_slots"`
 }
@@ -637,6 +663,7 @@ func (p *Pool) Status() Status {
 		st.AccessAuth = p.access.Enabled()
 	}
 	st.Currency = p.cfg.Currency
+	st.Version = versionString()
 	st.Groups = []GroupStatus{}
 	for _, g := range p.groups {
 		gs := GroupStatus{Name: g.Name, Models: append([]string{}, g.Models...), Auto: g.auto(), Members: []string{}, Available: []string{},

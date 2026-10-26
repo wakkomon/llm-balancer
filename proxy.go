@@ -363,30 +363,63 @@ func (px *Proxy) stream(w http.ResponseWriter, resp *http.Response, req *ReqInfo
 
 // passthrough forwards requests that don't need a slot (GET /v1/models, /health, ...).
 func (px *Proxy) passthrough(w http.ResponseWriter, r *http.Request, body []byte) {
-	if r.Method == http.MethodGet && strings.TrimRight(r.URL.Path, "/") == "/v1/models" && px.serveModelList(w) {
+	path := strings.TrimRight(r.URL.Path, "/")
+	if r.Method == http.MethodGet && path == "/v1/models" && px.serveModelList(w) {
 		return // models of all servers, so clients see everything the balancer can route
 	}
-	b, name := px.pool.PickPassthrough()
-	if b == nil {
+	if r.Method == http.MethodGet && strings.HasPrefix(path, "/v1/models/") && px.serveModel(w, strings.TrimPrefix(path, "/v1/models/")) {
+		return // a single model the balancer knows (OpenAI "retrieve model")
+	}
+	// Requests that don't need a slot (GET …) go to one server; on an error answer the next one is tried.
+	tried := map[*Backend]bool{}
+	var last *upstreamFail
+	var connErrs []string
+	for {
+		b, name := px.pool.PickPassthroughEx(tried)
+		if b == nil {
+			break
+		}
+		tried[b] = true
+		out, err := px.upstream(r.Context(), r, b, body)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		resp, err := px.transportFor(px.pool.skipVerify(b)).RoundTrip(out)
+		if err != nil {
+			if r.Context().Err() != nil {
+				return
+			}
+			connErrs = append(connErrs, fmt.Sprintf("%s: %s", name, explainNetErr(err)))
+			continue
+		}
+		if px.retryable(resp.StatusCode) {
+			eb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			resp.Body.Close()
+			last = &upstreamFail{status: resp.StatusCode, header: resp.Header.Clone(), body: eb, backend: name}
+			continue
+		}
+		defer resp.Body.Close()
+		stripHop(resp.Header)
+		copyHeaders(w.Header(), resp.Header)
+		w.Header().Set("X-LLM-Balancer-Backend", name)
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+		return
+	}
+	switch {
+	case last != nil:
+		stripHop(last.header)
+		last.header.Del("Content-Length")
+		copyHeaders(w.Header(), last.header)
+		w.Header().Set("X-LLM-Balancer-Backend", last.backend)
+		w.WriteHeader(last.status)
+		w.Write(last.body)
+	case len(connErrs) > 0:
+		jsonError(w, http.StatusBadGateway, "all servers failed: "+strings.Join(connErrs, "; "))
+	default:
 		jsonError(w, http.StatusServiceUnavailable, "no healthy backend")
-		return
 	}
-	out, err := px.upstream(r.Context(), r, b, body)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	resp, err := px.transportFor(px.pool.skipVerify(b)).RoundTrip(out)
-	if err != nil {
-		jsonError(w, http.StatusBadGateway, fmt.Sprintf("%s: %v", name, err))
-		return
-	}
-	defer resp.Body.Close()
-	stripHop(resp.Header)
-	copyHeaders(w.Header(), resp.Header)
-	w.Header().Set("X-LLM-Balancer-Backend", name)
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
 }
 
 // healthLoop actively probes idle backends.

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -122,11 +123,29 @@ type Route struct {
 
 // routeWaitLocked is routeLocked plus fallback groups: their servers are added once the request has
 // waited long enough (or force, when every server of the group is down). Caller holds p.mu.
-func (p *Pool) routeWaitLocked(model string, waited time.Duration, force bool) Route {
+// level 0: normal; 1: fallback group without waiting (group exhausted or down);
+// 2: additionally every other server that reports the model itself (last resort).
+func (p *Pool) routeWaitLocked(model string, waited time.Duration, level int) Route {
+	force := level >= 1
 	rt := p.routeLocked(model)
 	if rt.Mode != "group" {
 		return rt
 	}
+	defer func() {
+		if level < 2 || model == "" {
+			return
+		}
+		for _, b := range p.backends {
+			if rt.allow[b] || !b.reports(model) {
+				continue
+			}
+			if rt.fallback == nil {
+				rt.fallback = map[*Backend]string{}
+			}
+			rt.allow[b] = true
+			rt.fallback[b] = "" // the server has the model: send it unchanged
+		}
+	}()
 	for _, name := range rt.groups {
 		g := p.groupLocked(name)
 		if g == nil || g.Fallback == "" || p.groupLocked(g.Fallback) == nil {
@@ -302,6 +321,21 @@ func (p *Pool) AllModels() []string {
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i]) < strings.ToLower(out[j]) })
 	return out
+}
+
+// serveModel answers GET /v1/models/{id} for a model the balancer knows; false = unknown here.
+func (px *Proxy) serveModel(w http.ResponseWriter, id string) bool {
+	if u, err := url.PathUnescape(id); err == nil {
+		id = u
+	}
+	for _, m := range px.pool.AllModels() {
+		if strings.EqualFold(m, id) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"id": m, "object": "model", "created": px.pool.started.Unix(), "owned_by": "llm-balancer"})
+			return true
+		}
+	}
+	return false
 }
 
 // serveModelList answers GET /v1/models with the models of all servers.
