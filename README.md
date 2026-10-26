@@ -201,6 +201,29 @@ Der Client bekommt eine Fehlermeldung: läuft der Stream schon, ein letztes SSE-
 „abgebrochen“, nicht als Fehler des Servers. Per API: `POST /balancer/api/backends/{name}/stop` (alle laufenden Anfragen
 des Servers) oder `POST /balancer/api/requests/{id}/stop` (eine Anfrage, auch wartende).
 
+### Kostendeckel
+
+* **API-Token** (Tab API-Zugriff → Bearbeiten): Deckel für die eingehenden Kosten pro Tag, Monat oder gesamt. Ist er
+  erreicht, lehnt der Balancer Anfragen mit dem Token mit HTTP 429 (`insufficient_quota`, wie OpenAI bei aufgebrauchtem
+  Guthaben) ab. Im nächsten Tag/Monat oder nach Erhöhen des Deckels ist der Token automatisch wieder frei. Zusätzlich
+  kann ein Token mit „Sperren“ manuell abgeschaltet werden (HTTP 403).
+* **Server** (Server-Dialog): Deckel für die ausgehenden Kosten. Ist er erreicht, bekommt der Server keine Anfragen mehr
+  (Zustand „Kostendeckel“) und Anfragen gehen an die übrigen Server bzw. die Fallback-Gruppe – auch solche, die schon
+  warten. Laufende Anfragen werden zu Ende bearbeitet; dadurch kann der Deckel um die letzte Anfrage überschritten werden.
+
+Die Kosten pro Tag/Monat kommen aus der Tagesstatistik (Zeitzone `TZ`); „gesamt“ bei Servern umfasst den
+Statistikzeitraum (`STATS_DAYS`), bei Tokens die „Einnahmen gesamt“. „Statistik löschen“ setzt damit auch die Deckel zurück.
+
+### Report und E-Mail-Benachrichtigung
+
+Der Tab **Report** zeigt alle Ereignisse (Server nicht erreichbar / liefert Fehler / wieder da, Kostendeckel erreicht /
+wieder frei) und enthält die Einstellungen für E-Mails: SMTP-Server, Port, Verschlüsselung (STARTTLS, SSL/TLS, keine),
+Anmeldung, Absender, Empfänger, welche Ereignisse eine Mail auslösen, und nach wie vielen Sekunden eine Störung gemeldet
+wird – kurze Aussetzer lösen so keine Mail aus. Pro Störung gibt es eine Mail und eine, wenn sie vorbei ist. Mit
+„Testmail senden“ lässt sich die Verbindung prüfen. Gespeichert wird in `/data/notify.json` (inkl. Passwort, Dateirechte
+0600; das Passwort wird nie an die UI zurückgegeben), das Protokoll in `/data/events.json` (letzte 300 Ereignisse).
+Der Container muss den SMTP-Server erreichen können (Port 587/465/25).
+
 ### Eingehende und ausgehende Preise
 
 * **Eingehend (API-Tokens):** was ein Client pro 1 Mio. Input-/Output-Tokens bezahlt – Tab API-Zugriff → „Preis“.
@@ -322,11 +345,14 @@ Die Status-Ansicht ist ohne Anmeldung sichtbar; für Änderungen `ADMIN_TOKEN` s
 | POST | `/balancer/api/requests/{id}/stop` | eine Anfrage (laufend oder wartend) abbrechen |
 | POST | `/balancer/api/reset` | zurück zur Startkonfiguration |
 | GET/POST | `/balancer/api/tokens` | Client-Tokens auflisten / erzeugen (`{"name","token"?}`) |
-| PUT | `/balancer/api/tokens/{name}` | Preis setzen: `{"price_in":0.4,"price_out":1.6}` (pro 1 Mio. Tokens) |
+| PUT | `/balancer/api/tokens/{name}` | Preis, Deckel, Sperre: `{"price_in":0.4,"price_out":1.6,"cost_cap":10,"cap_period":"month","disabled":false}` |
 | DELETE | `/balancer/api/tokens/{name}` | Client-Token löschen |
 | POST | `/balancer/api/groups` | Gruppe anlegen: `{"name","models":[…],"auto_models","members":[…],"force_model","fallback","fallback_after_sec","fallback_model"}` |
 | PUT / DELETE | `/balancer/api/groups/{name}` | Gruppe ändern (umbenennen erlaubt; `members` weglassen = unverändert) / löschen |
 | GET | `/balancer/api/route?model=…` | Welche Gruppe/Server bekämen dieses Modell? |
+| GET/PUT | `/balancer/api/notify` | E-Mail-Einstellungen (Passwort-Feld weglassen = beibehalten) |
+| POST | `/balancer/api/notify/test` | Testmail senden |
+| GET | `/balancer/api/events` | Ereignisprotokoll |
 | GET | `/balancer/api/recent?after=<seq>` | Letzte Anfragen (max. 300), nur neuere als `seq` |
 | GET | `/balancer/api/stats?days=30` | Tagesstatistik pro Server, Modell und API-Token (`&format=csv`, `&by=model` für CSV nach Modell) |
 | POST | `/balancer/api/stats/reset` | Statistik löschen |

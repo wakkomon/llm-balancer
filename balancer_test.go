@@ -86,8 +86,13 @@ func setup(t *testing.T, mod func(*Config), backends ...*fakeLLM) (*httptest.Ser
 		t.Fatal(err)
 	}
 	px.access, pool.access = acc, acc
+	acc.onChange = pool.kickCaps
+	pool.notifier = NewNotifier(statsDir)
+	stop := make(chan struct{})
+	go pool.capsLoop(stop)
 	srv := httptest.NewServer(newMux(cfg, pool, px))
 	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(stop) })
 	testPools = append(testPools, testPool{srv.URL, pool})
 	return srv, pool
 }

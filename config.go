@@ -23,7 +23,10 @@ type BackendConfig struct {
 	// Outgoing prices: what this server costs per 1M input/output tokens (for the cost statistics)
 	PriceIn  float64 `json:"price_in,omitempty"`
 	PriceOut float64 `json:"price_out,omitempty"`
-	keep     int     // API update: fields not sent (keep current value)
+	// Outgoing cost cap: the server is taken out of rotation when its costs reach CostCap per CapPeriod
+	CostCap   float64 `json:"cost_cap,omitempty"`
+	CapPeriod string  `json:"cap_period,omitempty"` // day | month (default) | total
+	keep      int     // API update: fields not sent (keep current value)
 }
 
 // Config is the full balancer configuration.
@@ -266,6 +269,14 @@ func normalizeBackend(b *BackendConfig) error {
 	if b.PriceIn < 0 || b.PriceOut < 0 || b.PriceIn > 1e6 || b.PriceOut > 1e6 {
 		return fmt.Errorf("Preis muss zwischen 0 und 1.000.000 liegen")
 	}
+	if b.CostCap < 0 || b.CostCap > 1e9 {
+		return fmt.Errorf("Kostendeckel muss zwischen 0 und 1.000.000.000 liegen")
+	}
+	per, err := normalizePeriod(b.CapPeriod)
+	if err != nil {
+		return err
+	}
+	b.CapPeriod = per
 	return nil
 }
 

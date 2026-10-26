@@ -60,10 +60,16 @@ func main() {
 	px := NewProxy(cfg, pool)
 	px.access = access
 	pool.access = access
+	access.onChange = pool.kickCaps
+	pool.notifier = NewNotifier(cfg.DataDir)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go px.healthLoop(ctx)
+	pool.checkCaps() // before serving: a cap reached before a restart must apply right away
+	go pool.capsLoop(ctx.Done())
+	go pool.notifier.mailLoop(ctx.Done())
+	go pool.notifier.loop(pool, ctx.Done())
 	statsDone := make(chan struct{})
 	go func() { // statistics, token usage and counters: every minute (only what changed)
 		t := time.NewTicker(time.Minute)
@@ -145,6 +151,9 @@ func newMux(cfg Config, pool *Pool, px *Proxy) http.Handler {
 	registerAdmin(ui, pre, pool, cfg.AdminToken)
 	registerStats(ui, pre, pool.stats, cfg.AdminToken, pool.ResetCounters)
 	registerGroups(ui, pre, pool, cfg.AdminToken)
+	if pool.notifier != nil {
+		registerNotify(ui, pre, pool.notifier, cfg.AdminToken)
+	}
 	if px.access != nil {
 		registerAccess(ui, pre, px.access, cfg.AdminToken)
 	}

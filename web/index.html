@@ -46,6 +46,11 @@ h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--mute
 .card > .act{margin:2px 0 0}   /* beats the older .run/.err margins: same spacing in every state */
 .card.idle{border-top-color:var(--free)} .card.busy{border-top-color:var(--busy)} .card.error{border-top-color:var(--warn)}
 .card.down{border-top-color:var(--down)} .card.disabled{border-top-color:var(--off);opacity:.75}
+.card.capped{border-top-color:var(--warn)} .capped .pill{background:var(--warn)} .chip.capped .ic{background:var(--warn)} .lrow.capped .ldot{background:var(--warn)}
+.capbar{display:inline-block;width:60px;height:6px;border-radius:3px;background:var(--line);vertical-align:middle;margin-left:6px;overflow:hidden}
+.capbar i{display:block;height:100%;background:var(--busy)} .capbar.full i{background:var(--warn)}
+.tstate{font-size:11px;font-weight:650;padding:1px 7px;border-radius:99px;color:#fff;background:var(--free);white-space:nowrap}
+.tstate.capped{background:var(--warn)} .tstate.off{background:var(--off)}
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .name{font-weight:650;font-size:15px}
 .url{font:12px var(--mono);color:var(--muted);word-break:break-all}
@@ -145,6 +150,15 @@ td.tagerr{color:var(--warn);cursor:help}
 select,textarea{width:100%;font:inherit;font-size:14px;padding:7px 9px;border-radius:7px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
 textarea{font-family:var(--mono);font-size:13px;resize:vertical}
 .subhead{font-size:13px;font-weight:600;margin:18px 0 8px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.grid3{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px 14px}
+.evchecks{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:2px 14px}
+.evchecks label{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:13px;color:var(--ink)} .evchecks input{width:auto}
+.evk{font-size:11px;font-weight:650;padding:1px 7px;border-radius:99px;color:#fff;background:var(--off);white-space:nowrap}
+.evk.server_down,.evk.server_error{background:var(--down)} .evk.server_up,.evk.server_uncapped,.evk.token_uncapped{background:var(--free)}
+.evk.server_capped,.evk.token_capped{background:var(--warn)} .evk.test{background:var(--accent)}
+td.evtext{white-space:normal;min-width:320px}
+td.capcell{line-height:1.35}
 .tbl.scroll{max-height:calc(15 * 33px + 34px);overflow-y:auto}
 .tbl.scroll thead th{position:sticky;top:0;background:var(--panel);z-index:1;box-shadow:0 1px 0 var(--line)}
 .btns{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;margin-top:10px}
@@ -179,7 +193,7 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
 <main>
   <header>
     <h1>LLM Balancer</h1>
-    <nav class="nav"><a href="#" data-page="main">Übersicht</a><a href="#gruppen" data-page="groups">Gruppen</a><a href="#statistik" data-page="stats">Statistik</a><a href="#anfragen" data-page="recent">Letzte Anfragen</a><a href="#zugriff" data-page="tokens">API-Zugriff</a></nav>
+    <nav class="nav"><a href="#" data-page="main">Übersicht</a><a href="#gruppen" data-page="groups">Gruppen</a><a href="#statistik" data-page="stats">Statistik</a><a href="#anfragen" data-page="recent">Letzte Anfragen</a><a href="#zugriff" data-page="tokens">API-Zugriff</a><a href="#report" data-page="report">Report</a></nav>
     <span class="sub live" id="live"><i></i><span id="livetxt">verbinde …</span></span>
     <span class="sub" id="uptime"></span>
     <span class="sub" id="version"></span>
@@ -289,6 +303,47 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
     <tbody id="recent"></tbody>
   </table></div>
   </div>
+  <div id="page-report" hidden>
+  <div class="sechead">
+    <h2>Ereignisse</h2>
+    <div class="row"><span class="srcnote" id="evnote"></span><button class="danger" onclick="clearEvents()">Protokoll leeren</button></div>
+  </div>
+  <div class="tbl scroll"><table>
+    <thead><tr><th>Zeit</th><th>Ereignis</th><th>Betrifft</th><th>Details</th><th>E-Mail</th></tr></thead>
+    <tbody id="events"></tbody>
+  </table></div>
+
+  <div class="sechead">
+    <h2>E-Mail-Benachrichtigung</h2>
+    <span class="srcnote" id="nfnote"></span>
+  </div>
+  <form id="nform" class="panel">
+    <label class="chk"><input id="n-en" type="checkbox"> E-Mails senden</label>
+    <div class="grid3">
+      <div><label for="n-host">SMTP-Server</label><input id="n-host" placeholder="smtp.example.com" autocomplete="off"></div>
+      <div><label for="n-port">Port</label><input id="n-port" type="number" min="1" max="65535" placeholder="587"></div>
+      <div><label for="n-sec">Verschlüsselung</label><select id="n-sec"><option value="starttls">STARTTLS (587)</option><option value="tls">SSL/TLS (465)</option><option value="none">keine (25, nur im LAN)</option></select></div>
+      <div><label for="n-user">Benutzer</label><input id="n-user" autocomplete="off"></div>
+      <div><label for="n-pass">Passwort</label><input id="n-pass" type="password" autocomplete="new-password"></div>
+      <div><label class="chk" style="margin-top:28px"><input id="n-skip" type="checkbox"> Zertifikat nicht prüfen</label></div>
+      <div><label for="n-from">Absender</label><input id="n-from" placeholder="balancer@example.com" autocomplete="off"></div>
+      <div style="grid-column:span 2"><label for="n-to">Empfänger (mehrere mit Komma)</label><input id="n-to" placeholder="admin@example.com" autocomplete="off"></div>
+    </div>
+    <label>Benachrichtigen bei</label>
+    <div class="evchecks" id="n-events"></div>
+    <div class="grid3">
+      <div><label for="n-delay">Störung melden nach (Sekunden)</label><input id="n-delay" type="number" min="0" value="120"></div>
+      <div><label for="n-prefix">Betreff beginnt mit</label><input id="n-prefix" placeholder="[LLM-Balancer]"></div>
+      <div><label for="n-url">Adresse der Web-UI (Link in der Mail)</label><input id="n-url" placeholder="http://192.168.1.10:8080/balancer/"></div>
+    </div>
+    <div class="hint">Ein Server muss so lange nicht erreichbar sein oder Fehler liefern, bevor eine Mail rausgeht – kurze Aussetzer lösen keine Mail aus. Pro Störung gibt es eine Mail und eine, wenn sie vorbei ist.</div>
+    <div class="formerr" id="n-err"></div>
+    <div class="btns" style="justify-content:flex-start">
+      <button type="submit" class="primary">Speichern</button>
+      <button type="button" onclick="testMail()">Testmail senden</button>
+    </div>
+  </form>
+  </div>
   <div id="page-tokens" hidden>
   <div class="sechead">
     <h2>API-Zugriff</h2>
@@ -298,9 +353,9 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
   </div>
   <div id="accessnote" class="srcnote" style="margin-bottom:8px"></div>
   <div class="tbl"><table>
-    <thead><tr><th>Name</th><th>Token</th><th>Quelle</th><th>Zuletzt benutzt</th><th class="n">Anfragen</th>
+    <thead><tr><th>Name</th><th>Status</th><th>Token</th><th>Quelle</th><th>Zuletzt benutzt</th><th class="n">Anfragen</th>
       <th class="n">Preis Ein / Aus<br><span class="muted" style="font-weight:400">pro 1 Mio. Tokens</span></th>
-      <th class="n">Tokens Ein / Aus</th><th class="n">Einnahmen gesamt</th><th></th></tr></thead>
+      <th class="n">Tokens Ein / Aus</th><th class="n">Einnahmen gesamt</th><th class="n">Kostendeckel</th><th></th></tr></thead>
     <tbody id="tokens"></tbody>
   </table></div>
 
@@ -327,6 +382,11 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
       <div><label for="f-pout">Kosten Output pro 1 Mio. Tokens</label><input id="f-pout" type="number" min="0" step="0.01" placeholder="0"></div>
     </div>
     <div class="hint">Ausgehende Preise, z. B. Strom/Hardware oder ein bezahlter Anbieter – erscheinen als „Kosten Server“ in der Statistik.</div>
+    <div class="two">
+      <div><label for="f-cap">Kostendeckel (0 = keiner)</label><input id="f-cap" type="number" min="0" step="0.01" placeholder="0"></div>
+      <div><label for="f-capp">Zeitraum</label><select id="f-capp"><option value="day">pro Tag</option><option value="month" selected>pro Monat</option><option value="total">gesamt</option></select></div>
+    </div>
+    <div class="hint">Erreichen die Kosten des Servers den Deckel, bekommt er keine Anfragen mehr (Fallback greift) – bis zum nächsten Tag/Monat.</div>
     <label for="f-key">Bearer-Token des Servers (optional)</label>
     <input id="f-key" type="password" autocomplete="new-password" spellcheck="false">
     <div class="hint" id="f-keyhint">Wird als „Authorization: Bearer …“ an diesen Server geschickt.</div>
@@ -400,6 +460,11 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
       <div><label for="p-out">Output pro 1 Mio. Tokens</label><input id="p-out" type="number" min="0" step="0.01"></div>
     </div>
     <div class="hint" id="p-hint"></div>
+    <div class="two">
+      <div><label for="p-cap">Kostendeckel (0 = keiner)</label><input id="p-cap" type="number" min="0" step="0.01" placeholder="0"></div>
+      <div><label for="p-capp">Zeitraum</label><select id="p-capp"><option value="day">pro Tag</option><option value="month" selected>pro Monat</option><option value="total">gesamt</option></select></div>
+    </div>
+    <div class="hint">Erreicht der Token den Deckel, werden seine Anfragen mit HTTP 429 abgelehnt – bis zum nächsten Tag/Monat oder bis der Deckel erhöht wird.</div>
     <div class="formerr" id="p-err"></div>
     <div class="btns">
       <button type="button" onclick="$('pdlg').close()">Abbrechen</button>
@@ -498,6 +563,7 @@ function openEdit(name) {
   $('f-en').checked = b ? b.enabled : true;
   $('f-tls').checked = b ? !!b.tls_skip_verify : false;
   $('f-pin').value = b?.price_in || ''; $('f-pout').value = b?.price_out || '';
+  $('f-cap').value = b?.cost_cap || ''; $('f-capp').value = b?.cap_period || 'month';
   $('f-tls-row').style.display = (b ? b.url : '').startsWith('https') || $('f-tls').checked ? '' : 'none';
   $('f-group').innerHTML = '<option value="">– keine Gruppe –</option>' +
     (current.groups || []).map(g => `<option value="${esc(g.name)}">${esc(g.name)}</option>`).join('');
@@ -518,6 +584,7 @@ $('form').addEventListener('submit', async ev => {
     max_concurrent: parseInt($('f-max').value, 10) || 1, priority: parseInt($('f-prio').value, 10) || 0,
     enabled: $('f-en').checked, group: $('f-group').value, tls_skip_verify: $('f-tls').checked,
     price_in: parseFloat($('f-pin').value) || 0, price_out: parseFloat($('f-pout').value) || 0,
+    cost_cap: parseFloat($('f-cap').value) || 0, cap_period: $('f-capp').value,
   };
   const key = $('f-key').value.trim();
   if (key) body.api_key = key;
@@ -532,6 +599,7 @@ const STATE = {
   error:    {label:'fehlerhaft',  icon:'!', text:'erreichbar, letzte Anfrage fehlgeschlagen'},
   down:     {label:'down',        icon:'✕', text:'nicht erreichbar'},
   disabled: {label:'deaktiviert', icon:'–', text:'bekommt keine neuen Anfragen'},
+  capped:   {label:'Kostendeckel', icon:'€', text:'Kostendeckel erreicht – bekommt bis zum nächsten Zeitraum keine Anfragen'},
 };
 const stateLabel = b => STATE[b.state].label + (b.state === 'busy' && b.max > 1 ? ` ${b.active}/${b.max}` : '');
 
@@ -539,7 +607,7 @@ function renderOverview(st) {
   $('overview').innerHTML = st.backends.map(b => `<span class="chip ${b.state}" title="${esc(STATE[b.state].text)}">
     <span class="ic">${STATE[b.state].icon}</span><b>${esc(b.name)}</b><span class="st">${esc(stateLabel(b))}</span></span>`).join('');
   const n = st.states || {};
-  $('counts').innerHTML = ['busy','idle','error','down','disabled']
+  $('counts').innerHTML = ['busy','idle','error','down','capped','disabled']
     .map(k => `<span><b>${n[k] || 0}</b> ${STATE[k].label}</span>`).join('');
 }
 
@@ -555,10 +623,16 @@ function activity(b) {
     return `<div class="act run">${runLine(b.running[0])}${more}</div>`;
   }
   if ((b.state === 'down' || !b.healthy) && b.health_msg) return `<div class="act err" title="${esc(b.health_msg)}">${esc(b.health_msg)}</div>`;
+  if (b.state === 'capped') return `<div class="act" style="color:var(--warn)">Kostendeckel erreicht: ${esc(capText(b))} – bekommt keine Anfragen bis zum nächsten Zeitraum</div>`;
   if (b.last_error) return `<div class="act err" title="${esc(b.last_error)}">Letzter Fehler ${hms(b.last_error_at)}: ${esc(b.last_error)}</div>`;
   return `<div class="act muted">${b.state === 'disabled' ? 'deaktiviert – bekommt keine neuen Anfragen' : 'wartet auf Anfragen'}</div>`;
 }
-const priceBadge = b => b.price_in || b.price_out ? `<span class="gbadge" title="Kosten pro 1 Mio. Tokens Input / Output">${money(b.price_in)} / ${money(b.price_out)}</span>` : '';
+const PERIOD = {day: 'Tag', month: 'Monat', total: 'gesamt'};
+const capText = x => `${money(x.cap_spent)} / ${money(x.cost_cap)} ${x.cap_period === 'total' ? 'gesamt' : 'pro ' + PERIOD[x.cap_period || 'month']}`;
+const capBar = x => { const r = x.cost_cap ? Math.min(1, (x.cap_spent || 0) / x.cost_cap) : 0;
+  return `<span class="capbar ${r >= 1 ? 'full' : ''}"><i style="width:${Math.round(r * 100)}%"></i></span>`; };
+const priceBadge = b => (b.price_in || b.price_out ? `<span class="gbadge" title="Kosten pro 1 Mio. Tokens Input / Output">${money(b.price_in)} / ${money(b.price_out)}</span>` : '')
+  + (b.cost_cap ? `<span class="gbadge" title="Kostendeckel: ${esc(capText(b))}">Deckel ${Math.round(100 * (b.cap_spent || 0) / b.cost_cap)} %</span>` : '');
 
 function backendCard(b) {
   const state = b.state;
@@ -825,28 +899,37 @@ async function loadTokens(interactive) {
   let resp;
   try { resp = await fetch(base + '/api/tokens', {headers, cache:'no-store'}); } catch { return; }
   if (resp.status === 401) {
-    $('tokens').innerHTML = `<tr><td colspan="9" class="empty">Zum Anzeigen wird der Admin-Token benötigt. <button onclick="askAdmin()">Admin-Token eingeben</button></td></tr>`;
+    $('tokens').innerHTML = `<tr><td colspan="11" class="empty">Zum Anzeigen wird der Admin-Token benötigt. <button onclick="askAdmin()">Admin-Token eingeben</button></td></tr>`;
     return;
   }
   if (!resp.ok) return;
   tokenList = await resp.json();
   const list = tokenList;
   $('tokens').innerHTML = list.length ? list.map(t => `<tr>
-    <td>${esc(t.name)}</td><td style="font-family:var(--mono)">…${esc(t.hint)}</td>
+    <td>${esc(t.name)}</td>
+    <td>${t.disabled ? '<span class="tstate off">gesperrt</span>' : t.capped ? '<span class="tstate capped" title="Kostendeckel erreicht">Deckel erreicht</span>' : '<span class="tstate">aktiv</span>'}</td>
+    <td style="font-family:var(--mono)">…${esc(t.hint)}</td>
     <td>${t.source === 'env' ? 'API_KEYS' : 'Web-UI'}</td>
     <td>${dateFmt(t.last_used)}</td><td class="n">${num(t.requests)}</td>
     <td class="n">${t.price_in || t.price_out ? money(t.price_in) + ' / ' + money(t.price_out) : '<span class="muted">kein Preis</span>'}</td>
     <td class="n">${ktok(t.tokens_in)} / ${ktok(t.tokens_out)}</td><td class="n"><b>${money(t.cost)}</b></td>
-    <td style="text-align:right;white-space:nowrap"><button onclick='openPrice(${attr(t.name)})'>Preis</button>
+    <td class="n capcell">${t.cost_cap ? `${money(t.cap_spent)} / ${money(t.cost_cap)}<br><span class="muted">${t.cap_period === 'total' ? 'gesamt' : 'pro ' + PERIOD[t.cap_period || 'month']}</span>${capBar(t)}` : '<span class="muted">–</span>'}</td>
+    <td style="text-align:right;white-space:nowrap"><button onclick='openPrice(${attr(t.name)})' title="Preis und Kostendeckel">Bearbeiten</button>
+      <button onclick='toggleToken(${attr(t.name)}, ${!t.disabled})'>${t.disabled ? 'Freigeben' : 'Sperren'}</button>
       ${t.source === 'env' ? '<span class="muted" title="Token aus API_KEYS">ENV</span>' : `<button class="danger" onclick='deleteToken(${attr(t.name)})'>Löschen</button>`}</td></tr>`).join('')
-    : '<tr><td colspan="9" class="empty">Keine Tokens – die LLM-API ist offen.</td></tr>';
+    : '<tr><td colspan="11" class="empty">Keine Tokens – die LLM-API ist offen.</td></tr>';
 }
 let tokenList = [], pricing = null;
+async function toggleToken(name, disable) {
+  if (disable && !confirm(`API-Token „${name}“ sperren? Anfragen damit werden mit HTTP 403 abgelehnt.`)) return;
+  if (await call('PUT', `/tokens/${enc(name)}`, {disabled: disable})) loadTokens();
+}
 function openPrice(name) {
   pricing = name;
   const t = tokenList.find(x => x.name === name);
-  $('ptitle').textContent = `Preis für „${name}“`;
+  $('ptitle').textContent = `Preis & Kostendeckel für „${name}“`;
   $('p-in').value = t?.price_in || 0; $('p-out').value = t?.price_out || 0;
+  $('p-cap').value = t?.cost_cap || ''; $('p-capp').value = t?.cap_period || 'month';
   $('p-hint').textContent = `Währung: ${current?.currency || '€'}. Gilt für neue Anfragen; bisher gezählte Kosten bleiben unverändert.`;
   $('p-err').textContent = '';
   $('pdlg').showModal(); $('p-in').focus();
@@ -854,9 +937,10 @@ function openPrice(name) {
 $('pform').addEventListener('submit', async ev => {
   ev.preventDefault();
   $('formerr').textContent = '';
-  const ok = await call('PUT', `/tokens/${enc(pricing)}`, {price_in: parseFloat($('p-in').value) || 0, price_out: parseFloat($('p-out').value) || 0});
+  const ok = await call('PUT', `/tokens/${enc(pricing)}`, {price_in: parseFloat($('p-in').value) || 0, price_out: parseFloat($('p-out').value) || 0,
+    cost_cap: parseFloat($('p-cap').value) || 0, cap_period: $('p-capp').value});
   if (!ok) { $('p-err').textContent = $('formerr').textContent; return; }
-  $('pdlg').close(); toast('Preis gespeichert'); loadTokens();
+  $('pdlg').close(); toast('Gespeichert'); setTimeout(loadTokens, 300);
 });
 async function askAdmin() {
   const t = prompt('Admin-Token:', ''); if (t === null) return;
@@ -885,6 +969,58 @@ function renderAccessNote(st) {
     ? 'Anfragen an die LLM-API brauchen einen Token (Header <code>Authorization: Bearer …</code> oder <code>x-api-key</code>).'
     : '<span class="bad">Kein Token eingerichtet – jeder, der den Balancer erreicht, kann die LLMs nutzen.</span>';
 }
+
+// ---------------- report: events & e-mail ----------------
+const EVENT_ORDER = ['server_down', 'server_error', 'server_up', 'server_capped', 'server_uncapped', 'token_capped', 'token_uncapped'];
+let notifyCfg = null;
+async function loadEvents() {
+  let list;
+  try { list = await (await fetch(base + '/api/events', {cache: 'no-store'})).json(); } catch { return; }
+  $('evnote').textContent = list.length ? `${list.length} Ereignisse` : '';
+  setHTML($('events'), list.length ? list.map(e => `<tr>
+    <td>${dateFmt(e.time)}</td><td><span class="evk ${esc(e.kind)}">${esc(e.title)}</span></td><td>${esc(e.object || '–')}</td>
+    <td class="evtext">${esc(e.text).replace(/\n/g, '<br>')}</td>
+    <td class="${e.mail.startsWith('Fehler') ? 'bad' : e.mail === 'gesendet' ? 'ok' : 'muted'}" title="${esc(e.mail)}">${esc(e.mail ? shortText(e.mail, 40) : 'keine')}</td></tr>`).join('')
+    : '<tr><td colspan="5" class="empty">Noch keine Ereignisse.</td></tr>');
+}
+const shortText = (s, n) => s.length > n ? s.slice(0, n) + '…' : s;
+async function loadNotify() {
+  const headers = {}; const tok = getToken(); if (tok) headers['X-Admin-Token'] = tok;
+  let resp;
+  try { resp = await fetch(base + '/api/notify', {headers, cache: 'no-store'}); } catch { return; }
+  if (resp.status === 401) { $('nfnote').innerHTML = 'Zum Bearbeiten wird der Admin-Token benötigt. <button onclick="askAdmin(); loadNotify()">Admin-Token eingeben</button>'; return; }
+  const c = notifyCfg = await resp.json();
+  $('n-en').checked = c.enabled; $('n-host').value = c.smtp_host || ''; $('n-port').value = c.smtp_port || '';
+  $('n-sec').value = c.smtp_security || 'starttls'; $('n-user').value = c.smtp_username || ''; $('n-skip').checked = c.smtp_skip_verify;
+  $('n-pass').value = ''; $('n-pass').placeholder = c.has_password ? '•••••• gespeichert – leer lassen zum Beibehalten' : '';
+  $('n-from').value = c.from || ''; $('n-to').value = (c.to || []).join(', ');
+  $('n-delay').value = c.down_delay_sec ?? 120; $('n-prefix').value = c.subject_prefix || ''; $('n-url').value = c.public_url || '';
+  $('n-events').innerHTML = EVENT_ORDER.map(k => `<label><input type="checkbox" data-k="${k}" ${c.events?.[k] ? 'checked' : ''}> ${esc(c.titles?.[k] || k)}</label>`).join('');
+  $('nfnote').textContent = c.enabled ? 'aktiv' : 'aus';
+}
+function notifyBody() {
+  const ev = {}; $('n-events').querySelectorAll('input').forEach(i => ev[i.dataset.k] = i.checked);
+  const body = {enabled: $('n-en').checked, smtp_host: $('n-host').value.trim(), smtp_port: parseInt($('n-port').value, 10) || 0,
+    smtp_security: $('n-sec').value, smtp_username: $('n-user').value.trim(), smtp_skip_verify: $('n-skip').checked,
+    from: $('n-from').value.trim(), to: [$('n-to').value], events: ev, down_delay_sec: parseInt($('n-delay').value, 10) || 0,
+    subject_prefix: $('n-prefix').value.trim(), public_url: $('n-url').value.trim()};
+  if ($('n-pass').value) body.smtp_password = $('n-pass').value;
+  return body;
+}
+$('nform').addEventListener('submit', async ev => {
+  ev.preventDefault(); $('formerr').textContent = ''; $('n-err').textContent = '';
+  if (await call('PUT', '/notify', notifyBody())) { toast('Gespeichert'); loadNotify(); }
+  else $('n-err').textContent = $('formerr').textContent;
+});
+$('n-sec').addEventListener('change', () => { const def = {starttls: 587, tls: 465, none: 25}; if (!$('n-port').value || [25, 465, 587].includes(+$('n-port').value)) $('n-port').value = def[$('n-sec').value]; });
+async function testMail() {
+  $('formerr').textContent = ''; $('n-err').textContent = '';
+  if (!(await call('PUT', '/notify', notifyBody()))) { $('n-err').textContent = $('formerr').textContent; return; }
+  toast('Testmail wird gesendet …');
+  if (await call('POST', '/notify/test')) toast('Testmail gesendet');
+  else $('n-err').textContent = 'Testmail fehlgeschlagen: ' + $('formerr').textContent;
+}
+async function clearEvents() { if (confirm('Ereignisprotokoll leeren?') && await call('POST', '/events/clear')) loadEvents(); }
 
 // ---------------- statistics ----------------
 let stRange = 30, stMetric = 'requests', stData = null, stBy = 'server';
@@ -1084,12 +1220,13 @@ async function resetStats() {
 }
 let rsz; window.addEventListener('resize', () => { clearTimeout(rsz); rsz = setTimeout(renderChart, 150); });
 
-const PAGES = {'': 'main', '#gruppen': 'groups', '#statistik': 'stats', '#anfragen': 'recent', '#zugriff': 'tokens'};
+const PAGES = {'': 'main', '#gruppen': 'groups', '#statistik': 'stats', '#anfragen': 'recent', '#zugriff': 'tokens', '#report': 'report'};
 function showPage() {
   const page = PAGES[location.hash] || 'main';
   for (const p of Object.values(PAGES)) $('page-' + p).hidden = p !== page;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.page === page));
   if (page === 'tokens') loadTokens();
+  if (page === 'report') { loadEvents(); loadNotify(); }
   if (page === 'stats') { renderChart(); renderStatTables(); }
 }
 window.addEventListener('hashchange', showPage);
@@ -1102,6 +1239,8 @@ setInterval(loadTokens, 30000);
 setInterval(refresh, 1000);
 loadRecent();
 setInterval(loadRecent, 2000);
+setInterval(() => { if (location.hash === '#report') loadEvents(); }, 5000);
+setInterval(() => { if (location.hash === '#zugriff') loadTokens(); }, 10000);
 setInterval(loadStats, 30000);
 </script>
 </body>

@@ -133,13 +133,21 @@ func (px *Proxy) upstream(ctx context.Context, r *http.Request, b *Backend, body
 func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	tokenName := ""
 	if px.access != nil {
-		name, ok := px.access.Check(r)
-		if !ok {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="llm-balancer"`)
+		name, code, msg := px.access.Check(r)
+		if code != 0 {
+			typ, ecode := "invalid_request_error", "invalid_api_key"
+			switch code {
+			case http.StatusUnauthorized:
+				w.Header().Set("WWW-Authenticate", `Bearer realm="llm-balancer"`)
+			case http.StatusForbidden:
+				ecode = "api_key_disabled"
+			case http.StatusTooManyRequests:
+				typ, ecode = "insufficient_quota", "insufficient_quota" // same as OpenAI for an exhausted budget
+			}
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
+			w.WriteHeader(code)
 			json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
-				"message": "llm-balancer: invalid or missing API key", "type": "invalid_request_error", "code": "invalid_api_key"}})
+				"message": "llm-balancer: " + msg, "type": typ, "code": ecode}})
 			return
 		}
 		tokenName = name

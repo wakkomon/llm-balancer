@@ -77,19 +77,22 @@ func newBackend(bc BackendConfig) *Backend {
 	u, _ := url.Parse(bc.URL)
 	return &Backend{
 		Name: bc.Name, URL: bc.URL, target: u, Max: bc.MaxConcurrent, Priority: bc.Priority,
-		apiKey:   bc.APIKey,
-		group:    bc.Group,
-		insecure: bc.TLSSkipVerify,
-		priceIn:  bc.PriceIn,
-		priceOut: bc.PriceOut,
-		enabled:  bc.Enabled == nil || *bc.Enabled,
-		healthy:  true, // optimistic until the first health check says otherwise
+		apiKey:    bc.APIKey,
+		group:     bc.Group,
+		insecure:  bc.TLSSkipVerify,
+		priceIn:   bc.PriceIn,
+		priceOut:  bc.PriceOut,
+		costCap:   bc.CostCap,
+		capPeriod: bc.CapPeriod,
+		enabled:   bc.Enabled == nil || *bc.Enabled,
+		healthy:   true, // optimistic until the first health check says otherwise
 	}
 }
 
 func (b *Backend) config() BackendConfig {
 	en := b.enabled
-	return BackendConfig{Name: b.Name, URL: b.URL, MaxConcurrent: b.Max, Priority: b.Priority, Enabled: &en, APIKey: b.apiKey, Group: b.group, TLSSkipVerify: b.insecure, PriceIn: b.priceIn, PriceOut: b.priceOut}
+	return BackendConfig{Name: b.Name, URL: b.URL, MaxConcurrent: b.Max, Priority: b.Priority, Enabled: &en, APIKey: b.apiKey, Group: b.group, TLSSkipVerify: b.insecure, PriceIn: b.priceIn, PriceOut: b.priceOut,
+		CostCap: b.costCap, CapPeriod: b.capPeriod}
 }
 
 // configsLocked returns the current list as config entries. Caller holds p.mu.
@@ -153,6 +156,7 @@ func (p *Pool) AddBackend(bc BackendConfig) error {
 	}
 	p.backends = append(p.backends, newBackend(bc))
 	log.Printf("backend %s (%s) added via UI", bc.Name, bc.URL)
+	defer p.kickCaps()
 	defer p.kickHealth()
 	p.dispatchLocked()
 	return p.persistLocked()
@@ -195,6 +199,12 @@ func (p *Pool) UpdateBackend(name string, bc BackendConfig, key, group *string) 
 	if bc.keep&keepPriceOut != 0 {
 		bc.PriceOut = b.priceOut
 	}
+	if bc.keep&keepCap != 0 {
+		bc.CostCap = b.costCap
+	}
+	if bc.keep&keepCapPeriod != 0 {
+		bc.CapPeriod = b.capPeriod
+	}
 	if b.insecure != bc.TLSSkipVerify || (key != nil && strings.TrimSpace(*key) != b.apiKey) {
 		// connection settings changed: give the server a fresh chance and check it right away
 		b.healthy, b.healthMsg, b.unhealthyTil = true, "", time.Time{}
@@ -202,6 +212,11 @@ func (p *Pool) UpdateBackend(name string, bc BackendConfig, key, group *string) 
 	}
 	b.Name, b.Max, b.Priority, b.insecure = bc.Name, bc.MaxConcurrent, bc.Priority, bc.TLSSkipVerify
 	b.priceIn, b.priceOut = bc.PriceIn, bc.PriceOut
+	capChanged := b.costCap != bc.CostCap || b.capPeriod != bc.CapPeriod
+	b.costCap, b.capPeriod = bc.CostCap, bc.CapPeriod
+	if capChanged {
+		defer p.kickCaps()
+	}
 	if key != nil { // nil = keep the stored token
 		b.apiKey = strings.TrimSpace(*key)
 	}
@@ -260,6 +275,7 @@ func (p *Pool) ResetBackends() error {
 			// keep runtime state (active slots, stats) of unchanged servers
 			b.Max, b.Priority, b.enabled, b.apiKey, b.group, b.insecure = bc.MaxConcurrent, bc.Priority, bc.Enabled == nil || *bc.Enabled, bc.APIKey, bc.Group, bc.TLSSkipVerify
 			b.priceIn, b.priceOut = bc.PriceIn, bc.PriceOut
+			b.costCap, b.capPeriod = bc.CostCap, bc.CapPeriod
 			next = append(next, b)
 		} else {
 			next = append(next, newBackend(bc))
@@ -323,6 +339,8 @@ type backendInput struct {
 	TLSSkipVerify *bool    `json:"tls_skip_verify"`
 	PriceIn       *float64 `json:"price_in"`
 	PriceOut      *float64 `json:"price_out"`
+	CostCap       *float64 `json:"cost_cap"`
+	CapPeriod     *string  `json:"cap_period"`
 }
 
 func decodeBackend(r *http.Request) (BackendConfig, *string, *string, error) {
@@ -348,6 +366,16 @@ func decodeBackend(r *http.Request) (BackendConfig, *string, *string, error) {
 	} else {
 		bc.keep |= keepPriceOut
 	}
+	if in.CostCap != nil {
+		bc.CostCap = *in.CostCap
+	} else {
+		bc.keep |= keepCap
+	}
+	if in.CapPeriod != nil {
+		bc.CapPeriod = *in.CapPeriod
+	} else {
+		bc.keep |= keepCapPeriod
+	}
 	if in.APIKey != nil {
 		bc.APIKey = strings.TrimSpace(*in.APIKey)
 	}
@@ -369,6 +397,8 @@ type backendView struct {
 	TLSSkipVerify bool    `json:"tls_skip_verify"`
 	PriceIn       float64 `json:"price_in"`
 	PriceOut      float64 `json:"price_out"`
+	CostCap       float64 `json:"cost_cap"`
+	CapPeriod     string  `json:"cap_period"`
 }
 
 func registerAdmin(mux *http.ServeMux, pre string, pool *Pool, token string) {
@@ -376,7 +406,7 @@ func registerAdmin(mux *http.ServeMux, pre string, pool *Pool, token string) {
 		pool.mu.Lock()
 		list := []backendView{}
 		for _, bc := range pool.configsLocked() {
-			list = append(list, backendView{bc.Name, bc.URL, bc.MaxConcurrent, bc.Priority, *bc.Enabled, bc.APIKey != "", bc.Group, bc.TLSSkipVerify, bc.PriceIn, bc.PriceOut})
+			list = append(list, backendView{bc.Name, bc.URL, bc.MaxConcurrent, bc.Priority, *bc.Enabled, bc.APIKey != "", bc.Group, bc.TLSSkipVerify, bc.PriceIn, bc.PriceOut, bc.CostCap, bc.CapPeriod})
 		}
 		pool.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
@@ -437,4 +467,6 @@ const (
 	keepTLS = 1 << iota
 	keepPriceIn
 	keepPriceOut
+	keepCap
+	keepCapPeriod
 )

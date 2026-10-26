@@ -3,6 +3,18 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.1.0 – 2026-10-26
+
+- **Kostendeckel für API-Tokens** (eingehend, pro Tag / Monat / gesamt): bei Erreichen werden Anfragen mit dem Token mit
+  HTTP 429 `insufficient_quota` abgelehnt, im neuen Zeitraum oder nach Erhöhen des Deckels automatisch wieder frei;
+  Tokens lassen sich außerdem manuell sperren (HTTP 403)
+- **Kostendeckel für Server** (ausgehend): bei Erreichen bekommt der Server keine Anfragen mehr (Zustand „Kostendeckel“),
+  die Fallback-Logik greift sofort – auch für schon wartende Anfragen
+- **Report-Seite** (`#report`): Ereignisprotokoll und E-Mail-Benachrichtigung per SMTP (STARTTLS, SSL/TLS oder
+  unverschlüsselt) bei Server nicht erreichbar / liefert Fehler / wieder da, Kostendeckel erreicht / wieder frei;
+  Verzögerung gegen kurze Aussetzer, Testmail
+- Deckel werden schon beim Start geprüft (gilt nach einem Neustart sofort)
+
 ## 1.0.2 – 2026-10-26
 
 - Fehler, die bisher beim Client (z. B. Hermes-Agent) ankamen und dort dessen eigenen Fallback auslösten, leitet der

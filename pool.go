@@ -21,18 +21,22 @@ var (
 
 // Backend is the runtime state of one upstream server.
 type Backend struct {
-	Name     string
-	URL      string
-	target   *url.URL
-	Max      int
-	Priority int
-	apiKey   string
-	insecure bool // don't verify the TLS certificate (self-signed)
-	priceIn  float64
-	priceOut float64
-	group    string   // guarded by Pool.mu
-	models   []string // reported by the server via /v1/models
-	modelsAt time.Time
+	Name      string
+	URL       string
+	target    *url.URL
+	Max       int
+	Priority  int
+	apiKey    string
+	insecure  bool    // don't verify the TLS certificate (self-signed)
+	costCap   float64 // outgoing cost cap (0 = none) …
+	capPeriod string  // … per day / month / total
+	capped    bool    // cap reached: out of rotation until the next period
+	capSpent  float64
+	priceIn   float64
+	priceOut  float64
+	group     string   // guarded by Pool.mu
+	models    []string // reported by the server via /v1/models
+	modelsAt  time.Time
 
 	// guarded by Pool.mu
 	enabled      bool
@@ -60,7 +64,7 @@ type Backend struct {
 }
 
 func (b *Backend) usable(now time.Time) bool {
-	return b.enabled && (b.healthy || (!b.unhealthyTil.IsZero() && now.After(b.unhealthyTil)))
+	return b.enabled && !b.capped && (b.healthy || (!b.unhealthyTil.IsZero() && now.After(b.unhealthyTil)))
 }
 
 // ReqInfo tracks one client request for the status UI.
@@ -135,6 +139,8 @@ type Pool struct {
 	source        string          // "env" or "saved"
 	healthKick    chan struct{}
 	stats         *Stats
+	notifier      *Notifier
+	capKick       chan struct{}
 	countersPath  string
 	countersSaved []byte
 	groups        []GroupConfig
@@ -150,7 +156,7 @@ type Pool struct {
 // saved list (edited in the UI), that one is used instead.
 func NewPool(cfg Config, initial []BackendConfig, store *Store) (*Pool, error) {
 	p := &Pool{cfg: cfg, active: map[uint64]*ReqInfo{}, started: time.Now(), store: store,
-		initial: initial, source: "env", healthKick: make(chan struct{}, 1),
+		initial: initial, source: "env", healthKick: make(chan struct{}, 1), capKick: make(chan struct{}, 1),
 		initialGroups: append([]GroupConfig{}, cfg.Groups...)}
 	list := initial
 	p.groups = append([]GroupConfig{}, cfg.Groups...)
@@ -546,6 +552,7 @@ func (p *Pool) Finish(r *ReqInfo, b *Backend, status int, errMsg string) {
 	}
 	if p.stats != nil {
 		p.stats.Record(r)
+		p.kickCaps() // costs changed: re-check the caps right away
 	}
 	if b != nil && !r.StartedAt.IsZero() {
 		b.finished++
@@ -593,6 +600,10 @@ type BackendStatus struct {
 	TagErrors   int64      `json:"tag_errors"`
 	HasAPIKey   bool       `json:"has_api_key"`
 	TLSSkip     bool       `json:"tls_skip_verify"`
+	CostCap     float64    `json:"cost_cap"`
+	CapPeriod   string     `json:"cap_period"`
+	CapSpent    float64    `json:"cap_spent"`
+	Capped      bool       `json:"capped"`
 	PriceIn     float64    `json:"price_in"`
 	PriceOut    float64    `json:"price_out"`
 	Group       string     `json:"group"`
@@ -706,7 +717,7 @@ func (p *Pool) Status() Status {
 		st.Groups = append(st.Groups, gs)
 	}
 	st.Backends = []BackendStatus{}
-	st.States = map[string]int{"idle": 0, "busy": 0, "error": 0, "down": 0, "disabled": 0}
+	st.States = map[string]int{"idle": 0, "busy": 0, "error": 0, "down": 0, "disabled": 0, "capped": 0}
 	running := map[string][]*ReqInfo{}
 	for _, r := range p.active {
 		if r.State == "running" {
@@ -731,6 +742,7 @@ func (p *Pool) Status() Status {
 		bs.LastTPS, bs.TagErrors = b.lastTPS, b.tagErrors
 		bs.HasAPIKey = b.apiKey != ""
 		bs.TLSSkip = b.insecure
+		bs.CostCap, bs.CapPeriod, bs.CapSpent, bs.Capped = b.costCap, b.capPeriod, b.capSpent, b.capped
 		bs.PriceIn, bs.PriceOut = b.priceIn, b.priceOut
 		bs.Group = b.group
 		bs.Models = append([]string{}, b.models...)
@@ -769,6 +781,8 @@ func backendState(b *Backend, now time.Time) string {
 	switch {
 	case !b.enabled:
 		return "disabled"
+	case b.capped:
+		return "capped"
 	case !b.usable(now):
 		return "down"
 	case b.active > 0:
@@ -938,5 +952,13 @@ func (p *Pool) setSoftRetry(r *ReqInfo, b *Backend, soft bool) {
 func (p *Pool) failedAttempt(backend string) {
 	if p.stats != nil {
 		p.stats.RecordFailedAttempt(backend, time.Now())
+	}
+}
+
+func (p *Pool) emit(e Event) {
+	if p.notifier != nil {
+		p.notifier.Emit(e)
+	} else {
+		log.Printf("event %s %s: %s", e.Kind, e.Object, e.Text)
 	}
 }

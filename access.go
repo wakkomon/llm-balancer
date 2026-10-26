@@ -35,15 +35,22 @@ type AccessToken struct {
 	TokensIn  int64   `json:"tokens_in"`
 	TokensOut int64   `json:"tokens_out"`
 	Cost      float64 `json:"cost"`
+	// Incoming cost cap: the token is blocked when its costs reach CostCap per CapPeriod.
+	CostCap   float64 `json:"cost_cap,omitempty"`
+	CapPeriod string  `json:"cap_period,omitempty"`
+	Disabled  bool    `json:"disabled,omitempty"` // switched off by the admin
+	capped    bool
+	capSpent  float64
 }
 
 // Access holds the client tokens: from API_KEYS (always valid, read-only in the UI)
 // plus tokens created in the UI (persisted in DATA_DIR/access.json).
 type Access struct {
-	mu     sync.Mutex
-	tokens []*AccessToken
-	path   string
-	dirty  bool
+	onChange func() // called after settings changed (re-check caps)
+	mu       sync.Mutex
+	tokens   []*AccessToken
+	path     string
+	dirty    bool
 }
 
 func hashToken(t string) string {
@@ -102,6 +109,7 @@ func NewAccess(dir, envKeys string) (*Access, error) {
 			if e.FromEnv && e.Name == t.Name {
 				e.Created, e.LastUsed, e.Requests = t.Created, t.LastUsed, t.Requests
 				e.PriceIn, e.PriceOut, e.TokensIn, e.TokensOut, e.Cost = t.PriceIn, t.PriceOut, t.TokensIn, t.TokensOut, t.Cost
+				e.CostCap, e.CapPeriod, e.Disabled = t.CostCap, t.CapPeriod, t.Disabled
 			}
 		}
 	}
@@ -129,28 +137,34 @@ func tokenFromRequest(r *http.Request) string {
 	return strings.TrimSpace(r.Header.Get("Api-Key")) // Azure style
 }
 
-// Check returns the token name for a valid request, or ok=false.
+// Check returns the token name for an allowed request; otherwise an HTTP status and message.
 // If no tokens are configured at all, every request is allowed (name "").
-func (a *Access) Check(r *http.Request) (name string, ok bool) {
+func (a *Access) Check(r *http.Request) (name string, code int, msg string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if len(a.tokens) == 0 {
-		return "", true
+		return "", 0, ""
 	}
 	tok := tokenFromRequest(r)
 	if tok == "" {
-		return "", false
+		return "", http.StatusUnauthorized, "invalid or missing API key"
 	}
 	h := hashToken(tok)
 	for _, t := range a.tokens {
 		if subtle.ConstantTimeCompare([]byte(h), []byte(t.Hash)) == 1 {
+			if t.Disabled {
+				return t.Name, http.StatusForbidden, "API key " + t.Name + " is disabled"
+			}
+			if t.capped {
+				return t.Name, http.StatusTooManyRequests, "cost limit of API key " + t.Name + " reached"
+			}
 			t.LastUsed = time.Now()
 			t.Requests++
 			a.dirty = true
-			return t.Name, true
+			return t.Name, 0, ""
 		}
 	}
-	return "", false
+	return "", http.StatusUnauthorized, "invalid or missing API key"
 }
 
 func (a *Access) saveLocked() error {
@@ -192,6 +206,53 @@ func (a *Access) Flush() {
 }
 
 // SetPrice changes the prices (per 1M tokens). Costs already counted are not recalculated.
+type tokenUpdate struct {
+	PriceIn   *float64 `json:"price_in"`
+	PriceOut  *float64 `json:"price_out"`
+	CostCap   *float64 `json:"cost_cap"`
+	CapPeriod *string  `json:"cap_period"`
+	Disabled  *bool    `json:"disabled"`
+}
+
+// Update changes prices, cost cap and on/off of a token (fields left out stay as they are).
+func (a *Access) Update(name string, u tokenUpdate) error {
+	if err := a.SetPrice(name, u.PriceIn, u.PriceOut); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, t := range a.tokens {
+		if t.Name != name {
+			continue
+		}
+		if u.CostCap != nil {
+			if *u.CostCap < 0 || *u.CostCap > 1e9 {
+				return httpErr{400, errors.New("Kostendeckel muss zwischen 0 und 1.000.000.000 liegen")}
+			}
+			t.CostCap = *u.CostCap
+			if t.CostCap == 0 {
+				t.capped = false
+			}
+		}
+		if u.CapPeriod != nil {
+			p, err := normalizePeriod(*u.CapPeriod)
+			if err != nil {
+				return httpErr{400, err}
+			}
+			t.CapPeriod = p
+		}
+		if t.CapPeriod == "" {
+			t.CapPeriod = PeriodMonth
+		}
+		if u.Disabled != nil {
+			t.Disabled = *u.Disabled
+			log.Printf("access token %q %s via UI", name, map[bool]string{true: "disabled", false: "enabled"}[t.Disabled])
+		}
+		return a.saveLocked()
+	}
+	return httpErr{404, errors.New("unbekannter Token")}
+}
+
 func (a *Access) SetPrice(name string, in, out *float64) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -297,6 +358,11 @@ type tokenView struct {
 	TokensIn  int64   `json:"tokens_in"`
 	TokensOut int64   `json:"tokens_out"`
 	Cost      float64 `json:"cost"`
+	CostCap   float64 `json:"cost_cap"`
+	CapPeriod string  `json:"cap_period"`
+	CapSpent  float64 `json:"cap_spent"`
+	Capped    bool    `json:"capped"`
+	Disabled  bool    `json:"disabled"`
 }
 
 func (a *Access) List() []tokenView {
@@ -305,7 +371,11 @@ func (a *Access) List() []tokenView {
 	out := []tokenView{}
 	for _, t := range a.tokens {
 		v := tokenView{Name: t.Name, Hint: t.Hint, Source: "ui", Created: fmtTime(t.Created), LastUsed: fmtTime(t.LastUsed), Requests: t.Requests,
-			PriceIn: t.PriceIn, PriceOut: t.PriceOut, TokensIn: t.TokensIn, TokensOut: t.TokensOut, Cost: t.Cost}
+			PriceIn: t.PriceIn, PriceOut: t.PriceOut, TokensIn: t.TokensIn, TokensOut: t.TokensOut, Cost: t.Cost,
+			CostCap: t.CostCap, CapPeriod: t.CapPeriod, CapSpent: t.capSpent, Capped: t.capped, Disabled: t.Disabled}
+		if v.CapPeriod == "" {
+			v.CapPeriod = PeriodMonth
+		}
 		if t.FromEnv {
 			v.Source = "env"
 		}
@@ -345,15 +415,16 @@ func registerAccess(mux *http.ServeMux, pre string, acc *Access, adminToken stri
 		json.NewEncoder(w).Encode(resp)
 	}))
 	mux.HandleFunc("PUT "+pre+"/api/tokens/{name}", adminAuth(adminToken, func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			PriceIn  *float64 `json:"price_in"`
-			PriceOut *float64 `json:"price_out"`
-		}
+		var req tokenUpdate
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
 			writeAPIError(w, 400, fmt.Errorf("ungültiges JSON: %v", err))
 			return
 		}
-		writeResult(w, acc.SetPrice(r.PathValue("name"), req.PriceIn, req.PriceOut))
+		err := acc.Update(r.PathValue("name"), req)
+		if err == nil && acc.onChange != nil {
+			acc.onChange() // re-check the cost caps right away
+		}
+		writeResult(w, err)
 	}))
 	mux.HandleFunc("DELETE "+pre+"/api/tokens/{name}", adminAuth(adminToken, func(w http.ResponseWriter, r *http.Request) {
 		writeResult(w, acc.Delete(r.PathValue("name")))
