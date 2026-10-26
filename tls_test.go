@@ -36,6 +36,8 @@ func TestHTTPSBackendSelfSigned(t *testing.T) {
 	if code, be := chatModel(t, srv.URL, "m", nil); code != 200 || be != "secure" {
 		t.Fatalf("with skip verify: %d %s", code, be)
 	}
+	// the response reaches the client a moment before the slot is released; discovery skips busy servers
+	waitFor(t, func() bool { return status(t, srv.URL).Backends[0].Active == 0 })
 	px := NewProxy(pool.cfg, pool)
 	for _, ht := range pool.idleTargets() {
 		px.discoverModels(nil, ht, nil)
