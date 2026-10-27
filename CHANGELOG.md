@@ -3,6 +3,16 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.4.0 – 2026-10-27
+
+- **Routing innerhalb einer Gruppe nach Modell**: haben die Server einer Gruppe verschiedene Modelle, bekommt eine Anfrage
+  nur die Server, die das Modell haben (bisher jeder Server der Gruppe – mit Fehlversuch und Weiterleitung); sind sie
+  belegt, wartet sie auf diese. Kennt kein Server der Gruppe das Modell, darf es wie bisher die ganze Gruppe. Gilt auch
+  für die Fallback-Gruppe (mit dem dort eingestellten Modell)
+- **Modellfilter pro Server**: Namen/Muster im Dialog „Bearbeiten“, optional ohne die vom Server gemeldeten Modelle
+- **Exakt vor Muster**: ein exakt bekanntes Modell (gemeldet oder ohne `*` eingetragen) hat Vorrang vor `*`-Treffern –
+  bei der Wahl der Gruppe und des Servers
+
 ## 1.3.0 – 2026-10-27
 
 - **Benutzerverwaltung** (Einstellungen): Anmeldung mit Benutzername + Passwort, Rollen Administrator / Operator

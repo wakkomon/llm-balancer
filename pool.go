@@ -21,23 +21,25 @@ var (
 
 // Backend is the runtime state of one upstream server.
 type Backend struct {
-	Name      string
-	URL       string
-	target    *url.URL
-	Max       int
-	Priority  int
-	apiKey    string
-	insecure  bool    // don't verify the TLS certificate (self-signed)
-	costCap   float64 // outgoing cost cap (0 = none) …
-	capPeriod string  // … per day / month / total
-	capped    bool    // cap reached: out of rotation until the next period
-	groupOff  bool    // its group is disabled (kept in sync by syncGroupsLocked)
-	capSpent  float64
-	priceIn   float64
-	priceOut  float64
-	group     string   // guarded by Pool.mu
-	models    []string // reported by the server via /v1/models
-	modelsAt  time.Time
+	Name       string
+	URL        string
+	target     *url.URL
+	Max        int
+	Priority   int
+	apiKey     string
+	insecure   bool     // don't verify the TLS certificate (self-signed)
+	costCap    float64  // outgoing cost cap (0 = none) …
+	capPeriod  string   // … per day / month / total
+	capped     bool     // cap reached: out of rotation until the next period
+	groupOff   bool     // its group is disabled (kept in sync by syncGroupsLocked)
+	manual     []string // model filter set by the admin (names / patterns)
+	autoModels bool     // models reported by the server count as well
+	capSpent   float64
+	priceIn    float64
+	priceOut   float64
+	group      string   // guarded by Pool.mu
+	models     []string // reported by the server via /v1/models
+	modelsAt   time.Time
 
 	// guarded by Pool.mu
 	enabled      bool
@@ -615,7 +617,9 @@ type BackendStatus struct {
 	PriceIn     float64    `json:"price_in"`
 	PriceOut    float64    `json:"price_out"`
 	Group       string     `json:"group"`
-	Models      []string   `json:"models"`
+	Models      []string   `json:"models"`        // reported by the server
+	Manual      []string   `json:"manual_models"` // admin's filter
+	AutoModels  bool       `json:"auto_models"`
 	Running     []*ReqInfo `json:"running"`
 }
 
@@ -710,8 +714,12 @@ func (p *Pool) Status() Status {
 		}
 		for _, b := range p.membersLocked(g.Name) {
 			gs.Members = append(gs.Members, b.Name)
-			for _, m := range b.models {
-				if !seen[strings.ToLower(m)] && (g.auto() || matchesAny(g.Models, m)) {
+			served := append([]string{}, b.manual...)
+			if b.autoModels {
+				served = append(served, b.models...)
+			}
+			for _, m := range served {
+				if !strings.Contains(m, "*") && !seen[strings.ToLower(m)] && (g.auto() || matchesAny(g.Models, m)) {
 					seen[strings.ToLower(m)] = true
 					gs.Available = append(gs.Available, m)
 				}
@@ -755,6 +763,7 @@ func (p *Pool) Status() Status {
 		bs.PriceIn, bs.PriceOut = b.priceIn, b.priceOut
 		bs.Group = b.group
 		bs.Models = append([]string{}, b.models...)
+		bs.Manual, bs.AutoModels = append([]string{}, b.manual...), b.autoModels
 		st.States[bs.State]++
 		if bs.Running == nil {
 			bs.Running = []*ReqInfo{}

@@ -77,22 +77,29 @@ func newBackend(bc BackendConfig) *Backend {
 	u, _ := url.Parse(bc.URL)
 	return &Backend{
 		Name: bc.Name, URL: bc.URL, target: u, Max: bc.MaxConcurrent, Priority: bc.Priority,
-		apiKey:    bc.APIKey,
-		group:     bc.Group,
-		insecure:  bc.TLSSkipVerify,
-		priceIn:   bc.PriceIn,
-		priceOut:  bc.PriceOut,
-		costCap:   bc.CostCap,
-		capPeriod: bc.CapPeriod,
-		enabled:   bc.Enabled == nil || *bc.Enabled,
-		healthy:   true, // optimistic until the first health check says otherwise
+		apiKey:     bc.APIKey,
+		group:      bc.Group,
+		insecure:   bc.TLSSkipVerify,
+		priceIn:    bc.PriceIn,
+		priceOut:   bc.PriceOut,
+		costCap:    bc.CostCap,
+		capPeriod:  bc.CapPeriod,
+		enabled:    bc.Enabled == nil || *bc.Enabled,
+		manual:     bc.Models,
+		autoModels: bc.AutoModels == nil || *bc.AutoModels,
+		healthy:    true, // optimistic until the first health check says otherwise
 	}
 }
 
 func (b *Backend) config() BackendConfig {
 	en := b.enabled
-	return BackendConfig{Name: b.Name, URL: b.URL, MaxConcurrent: b.Max, Priority: b.Priority, Enabled: &en, APIKey: b.apiKey, Group: b.group, TLSSkipVerify: b.insecure, PriceIn: b.priceIn, PriceOut: b.priceOut,
-		CostCap: b.costCap, CapPeriod: b.capPeriod}
+	c := BackendConfig{Name: b.Name, URL: b.URL, MaxConcurrent: b.Max, Priority: b.Priority, Enabled: &en, APIKey: b.apiKey, Group: b.group, TLSSkipVerify: b.insecure, PriceIn: b.priceIn, PriceOut: b.priceOut,
+		CostCap: b.costCap, CapPeriod: b.capPeriod, Models: append([]string(nil), b.manual...)}
+	if !b.autoModels {
+		f := false
+		c.AutoModels = &f
+	}
+	return c
 }
 
 // configsLocked returns the current list as config entries. Caller holds p.mu.
@@ -205,6 +212,13 @@ func (p *Pool) UpdateBackend(name string, bc BackendConfig, key, group *string) 
 	if bc.keep&keepCapPeriod != 0 {
 		bc.CapPeriod = b.capPeriod
 	}
+	if bc.keep&keepModels != 0 {
+		bc.Models = b.manual
+	}
+	if bc.keep&keepAuto == 0 {
+		b.autoModels = bc.AutoModels == nil || *bc.AutoModels
+	}
+	b.manual = bc.Models
 	if b.insecure != bc.TLSSkipVerify || (key != nil && strings.TrimSpace(*key) != b.apiKey) {
 		// connection settings changed: give the server a fresh chance and check it right away
 		b.healthy, b.healthMsg, b.unhealthyTil = true, "", time.Time{}
@@ -289,6 +303,7 @@ func (p *Pool) replaceLocked(bcs []BackendConfig, groups []GroupConfig) {
 			b.Max, b.Priority, b.enabled, b.apiKey, b.group, b.insecure = bc.MaxConcurrent, bc.Priority, bc.Enabled == nil || *bc.Enabled, bc.APIKey, bc.Group, bc.TLSSkipVerify
 			b.priceIn, b.priceOut = bc.PriceIn, bc.PriceOut
 			b.costCap, b.capPeriod = bc.CostCap, bc.CapPeriod
+			b.manual, b.autoModels = bc.Models, bc.AutoModels == nil || *bc.AutoModels
 			next = append(next, b)
 		} else {
 			next = append(next, newBackend(bc))
@@ -339,18 +354,20 @@ func writeResult(w http.ResponseWriter, err error) {
 
 // backendInput is the API body; api_key absent = keep the stored token, "" = remove it.
 type backendInput struct {
-	Name          string   `json:"name"`
-	URL           string   `json:"url"`
-	MaxConcurrent int      `json:"max_concurrent"`
-	Priority      int      `json:"priority"`
-	Enabled       *bool    `json:"enabled"`
-	APIKey        *string  `json:"api_key"`
-	Group         *string  `json:"group"`
-	TLSSkipVerify *bool    `json:"tls_skip_verify"`
-	PriceIn       *float64 `json:"price_in"`
-	PriceOut      *float64 `json:"price_out"`
-	CostCap       *float64 `json:"cost_cap"`
-	CapPeriod     *string  `json:"cap_period"`
+	Name          string    `json:"name"`
+	URL           string    `json:"url"`
+	MaxConcurrent int       `json:"max_concurrent"`
+	Priority      int       `json:"priority"`
+	Enabled       *bool     `json:"enabled"`
+	APIKey        *string   `json:"api_key"`
+	Group         *string   `json:"group"`
+	TLSSkipVerify *bool     `json:"tls_skip_verify"`
+	PriceIn       *float64  `json:"price_in"`
+	PriceOut      *float64  `json:"price_out"`
+	CostCap       *float64  `json:"cost_cap"`
+	CapPeriod     *string   `json:"cap_period"`
+	Models        *[]string `json:"models"`
+	AutoModels    *bool     `json:"auto_models"`
 }
 
 func decodeBackend(r *http.Request) (BackendConfig, *string, *string, error) {
@@ -385,6 +402,16 @@ func decodeBackend(r *http.Request) (BackendConfig, *string, *string, error) {
 		bc.CapPeriod = *in.CapPeriod
 	} else {
 		bc.keep |= keepCapPeriod
+	}
+	if in.Models != nil {
+		bc.Models = *in.Models
+	} else {
+		bc.keep |= keepModels
+	}
+	if in.AutoModels != nil {
+		bc.AutoModels = in.AutoModels
+	} else {
+		bc.keep |= keepAuto
 	}
 	if in.APIKey != nil {
 		bc.APIKey = strings.TrimSpace(*in.APIKey)
@@ -479,4 +506,6 @@ const (
 	keepPriceOut
 	keepCap
 	keepCapPeriod
+	keepModels
+	keepAuto
 )

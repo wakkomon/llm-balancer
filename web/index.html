@@ -177,6 +177,7 @@ td.tagerr{color:var(--warn);cursor:help}
 @media (max-width:900px){.lrow{grid-template-columns:12px 1fr 80px 44px 132px}.lrow .lact,.lrow .ln{display:none}}
 .mchip{font:11.5px var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--ink)}
 .mchip.pat{border-style:dashed;color:var(--muted)}
+.mchip.man{background:color-mix(in srgb, var(--accent) 10%, var(--bg));border-color:color-mix(in srgb, var(--accent) 40%, var(--line))}
 .mchip.hit{border-color:var(--accent);color:var(--accent)}
 .gbadge{font-size:11px;border:1px solid var(--line);border-radius:99px;padding:1px 8px;color:var(--muted);white-space:nowrap}
 .gcard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
@@ -523,6 +524,11 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
     <div class="hint">Kleinere Priorität wird bevorzugt, wenn mehrere Server frei sind.</div>
     <label for="f-group">Gruppe</label>
     <select id="f-group"></select>
+    <label for="f-models">Modelle (Filter, eins pro Zeile)</label>
+    <textarea id="f-models" rows="3" placeholder="z. B.&#10;qwen3-32b&#10;llama3*"></textarea>
+    <label class="chk" style="margin-top:6px"><input id="f-auto" type="checkbox" checked> zusätzlich die vom Server gemeldeten Modelle</label>
+    <div class="hint">Bestimmt, welcher Server einer Gruppe eine Anfrage bekommt. Ein exakt bekanntes Modell (vom Server gemeldet oder hier
+      ohne * eingetragen) hat Vorrang vor einem Treffer über *. Leer + Haken = nur die gemeldeten Modelle.</div>
     <div class="two">
       <div><label for="f-pin">Kosten Ein (Prompt) pro 1 Mio. Tokens</label><input id="f-pin" type="number" min="0" step="0.01" placeholder="0"></div>
       <div><label for="f-pout">Kosten Aus (Antwort) pro 1 Mio. Tokens</label><input id="f-pout" type="number" min="0" step="0.01" placeholder="0"></div>
@@ -715,6 +721,8 @@ function openEdit(name) {
   $('f-group').innerHTML = '<option value="">– keine Gruppe –</option>' +
     (current.groups || []).map(g => `<option value="${esc(g.name)}">${esc(g.name)}</option>`).join('');
   $('f-group').value = b ? (b.group || '') : '';
+  $('f-models').value = b ? (b.manual_models || []).join('\n') : '';
+  $('f-auto').checked = b ? b.auto_models !== false : true;
   $('f-key').value = '';
   $('f-keydel').checked = false;
   $('f-key').placeholder = b?.has_api_key ? '•••••• gespeichert – leer lassen zum Beibehalten' : 'kein Token';
@@ -730,6 +738,7 @@ $('form').addEventListener('submit', async ev => {
     name: $('f-name').value.trim(), url: $('f-url').value.trim(),
     max_concurrent: parseInt($('f-max').value, 10) || 1, priority: parseInt($('f-prio').value, 10) || 0,
     enabled: $('f-en').checked, group: $('f-group').value, tls_skip_verify: $('f-tls').checked,
+    models: $('f-models').value.split('\n').map(x => x.trim()).filter(Boolean), auto_models: $('f-auto').checked,
     price_in: parseFloat($('f-pin').value) || 0, price_out: parseFloat($('f-pout').value) || 0,
     cost_cap: parseFloat($('f-cap').value) || 0, cap_period: $('f-capp').value,
   };
@@ -795,7 +804,10 @@ function backendCard(b) {
   const slots = Array.from({length: Math.min(b.max, 16)}, (_, i) => `<div class="slot ${i < b.active ? 'on' : ''}" ${i < b.active ? `style="${phase(900)}"` : ''}></div>`).join('');
   const dim = route && route.mode !== 'all' && !route.backends.includes(b.name) ? ' dim' : '';
   const fl = filterModel.toLowerCase();
-  const chips = b.models.map(m => `<span class="mchip${fl && m.toLowerCase() === fl ? ' hit' : ''}">${esc(m)}</span>`).join('');
+  const man = b.manual_models || [], rep = b.auto_models === false ? [] : b.models.filter(m => !man.some(x => x.toLowerCase() === m.toLowerCase()));
+  const chips = man.map(m => `<span class="mchip man${m.includes('*') ? ' pat' : ''}${fl && m.toLowerCase() === fl ? ' hit' : ''}" title="Filter${m.includes('*') ? ' (Muster)' : ''}">${esc(m)}</span>`)
+    .concat(rep.map(m => `<span class="mchip${fl && m.toLowerCase() === fl ? ' hit' : ''}" title="vom Server gemeldet">${esc(m)}</span>`)).join('');
+  const chipTitle = (man.length ? 'Filter: ' + man.join(', ') + '\n' : '') + (b.auto_models === false ? 'gemeldete Modelle ausgeschaltet' : 'gemeldet: ' + (b.models.join(', ') || '–'));
   return `<div class="card ${state}${dim}">
     <div class="row"><div class="ell"><div class="name ell">${esc(b.name)}</div><div class="url ell" title="${esc(b.url)}">${esc(b.url)}</div></div>
       <span class="pill">${b.state === 'busy' ? `<i class="play" style="${phase(1400)}"></i>` : ''}${stateLabel(b)}</span></div>
@@ -806,7 +818,7 @@ function backendCard(b) {
       ${b.has_api_key ? '<span class="gbadge" title="Bearer-Token hinterlegt">🔑 Token</span>' : ''}
       ${b.tls_skip_verify ? '<span class="gbadge" title="TLS-Zertifikat wird nicht geprüft">⚠ TLS</span>' : ''}
     </div>
-    <div class="line mchips" title="${esc(b.models.join(', '))}">${chips || '<span class="muted" style="font-size:12px">keine Modelle gemeldet</span>'}</div>
+    <div class="line mchips" title="${esc(chipTitle)}">${chips || '<span class="muted" style="font-size:12px">keine Modelle gemeldet</span>'}</div>
     <div class="slots" title="${b.active}/${b.max} Slots belegt">${slots}</div>
     ${activity(b)}
     <div class="stats">
@@ -975,7 +987,7 @@ async function refresh() {
 let filterModel = '', route = null;
 function renderModelList(st) {
   const all = new Set();
-  st.backends.forEach(b => b.models.forEach(m => all.add(m)));
+  st.backends.forEach(b => { b.models.forEach(m => all.add(m)); (b.manual_models || []).filter(m => !m.includes('*')).forEach(m => all.add(m)); });
   st.groups.forEach(g => g.available.forEach(m => all.add(m)));
   const html = [...all].sort((a, b) => a.localeCompare(b)).map(m => `<option value="${esc(m)}">`).join('');
   if ($('mlist').innerHTML !== html) $('mlist').innerHTML = html;

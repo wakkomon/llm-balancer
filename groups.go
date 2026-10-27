@@ -124,6 +124,67 @@ func (b *Backend) reports(model string) bool {
 	return false
 }
 
+// serves: the server takes this model – by its manual filter, or because it reports it (unless the
+// admin switched reported models off for this server).
+func (b *Backend) serves(model string) bool { return b.serveLevel(model) > 0 }
+
+// match quality: an exactly known model beats a wildcard rule
+const (
+	matchNone    = 0
+	matchPattern = 1 // only via a filter with *
+	matchExact   = 2 // reported by the server, or listed by name in the filter
+)
+
+func (b *Backend) serveLevel(model string) int {
+	if model == "" {
+		return matchNone
+	}
+	if b.autoModels && b.reports(model) {
+		return matchExact
+	}
+	return patternLevel(b.manual, model)
+}
+
+// patternLevel: how a list of names/patterns matches a model.
+func patternLevel(list []string, model string) int {
+	lvl := matchNone
+	for _, p := range list {
+		if !strings.Contains(p, "*") {
+			if strings.EqualFold(p, model) {
+				return matchExact
+			}
+		} else if modelMatch(p, model) {
+			lvl = matchPattern
+		}
+	}
+	return lvl
+}
+
+// servingMembers narrows a group to the members that serve the model (or the model the group forces).
+// If no member is known to serve it (pattern match, servers without a model list), the whole group
+// may take it, as before.
+// Members that know the model by name are preferred over members that only match a wildcard.
+func servingMembers(g *GroupConfig, members []*Backend, model string) []*Backend {
+	best, out := matchNone, []*Backend(nil)
+	for _, b := range members {
+		lvl := b.serveLevel(model)
+		if g != nil && g.ForceModel != "" {
+			lvl = max(lvl, b.serveLevel(g.ForceModel))
+		}
+		switch {
+		case lvl == matchNone || lvl < best:
+		case lvl > best:
+			best, out = lvl, []*Backend{b}
+		default:
+			out = append(out, b)
+		}
+	}
+	if len(out) == 0 {
+		return members
+	}
+	return out
+}
+
 func (p *Pool) groupLocked(name string) *GroupConfig {
 	for i := range p.groups {
 		if p.groups[i].Name == name {
@@ -167,7 +228,7 @@ func (p *Pool) routeWaitLocked(model string, waited time.Duration, level int) Ro
 			return
 		}
 		for _, b := range p.backends {
-			if rt.allow[b] || !b.reports(model) {
+			if rt.allow[b] || !b.serves(model) {
 				continue
 			}
 			if rt.fallback == nil {
@@ -185,7 +246,11 @@ func (p *Pool) routeWaitLocked(model string, waited time.Duration, level int) Ro
 		if !force && waited < time.Duration(g.FallbackAfterSec)*time.Second {
 			continue
 		}
-		for _, b := range p.membersLocked(g.Fallback) {
+		target := model
+		if g.FallbackModel != "" {
+			target = g.FallbackModel
+		}
+		for _, b := range servingMembers(p.groupLocked(g.Fallback), p.membersLocked(g.Fallback), target) {
 			if rt.allow[b] {
 				continue
 			}
@@ -209,37 +274,41 @@ func (p *Pool) routeLocked(model string) Route {
 	}
 	allow := map[*Backend]bool{}
 	var names []string
-	for _, g := range p.groups {
+	// groups that know the model by name win over groups that only match a wildcard
+	best := matchNone
+	for i := range p.groups {
+		g := &p.groups[i]
 		members := p.membersLocked(g.Name)
-		hit := false
-		for _, pat := range g.Models {
-			if modelMatch(pat, model) {
-				hit = true
-				break
+		lvl := patternLevel(g.Models, model)
+		if g.auto() {
+			for _, b := range members {
+				lvl = max(lvl, b.serveLevel(model))
 			}
 		}
-		if !hit && g.auto() {
-			for _, b := range members {
-				if b.reports(model) {
-					hit = true
-					break
-				}
-			}
+		if lvl == matchNone || lvl < best {
+			continue
 		}
-		if hit {
-			names = append(names, g.Name)
-			for _, b := range members {
-				allow[b] = true
-			}
+		if lvl > best {
+			best, names, allow = lvl, nil, map[*Backend]bool{}
+		}
+		names = append(names, g.Name)
+		for _, b := range servingMembers(g, members, model) { // only the members that have the model
+			allow[b] = true
 		}
 	}
 	if len(names) > 0 {
 		return Route{allow: allow, Group: strings.Join(names, ","), Mode: "group", groups: names}
 	}
+	best = matchNone
 	for _, b := range p.backends {
-		if b.reports(model) {
-			allow[b] = true
+		lvl := b.serveLevel(model)
+		if lvl == matchNone || lvl < best {
+			continue
 		}
+		if lvl > best {
+			best, allow = lvl, map[*Backend]bool{}
+		}
+		allow[b] = true
 	}
 	if len(allow) > 0 {
 		return Route{allow: allow, Mode: "model"}
@@ -338,8 +407,15 @@ func (p *Pool) AllModels() []string {
 	}
 	for _, b := range p.backends {
 		if b.enabled {
-			for _, m := range b.models {
-				add(m)
+			if b.autoModels {
+				for _, m := range b.models {
+					add(m)
+				}
+			}
+			for _, m := range b.manual {
+				if !strings.Contains(m, "*") {
+					add(m)
+				}
 			}
 		}
 	}

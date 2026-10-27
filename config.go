@@ -26,7 +26,11 @@ type BackendConfig struct {
 	// Outgoing cost cap: the server is taken out of rotation when its costs reach CostCap per CapPeriod
 	CostCap   float64 `json:"cost_cap,omitempty"`
 	CapPeriod string  `json:"cap_period,omitempty"` // day | month (default) | total
-	keep      int     // API update: fields not sent (keep current value)
+	// Model filter: names/patterns this server serves (in addition to the models it reports in
+	// /v1/models, unless AutoModels is false). Used to pick the right server inside a group.
+	Models     []string `json:"models,omitempty"`
+	AutoModels *bool    `json:"auto_models,omitempty"` // default true
+	keep       int      // API update: fields not sent (keep current value)
 }
 
 // Config is the full balancer configuration.
@@ -266,6 +270,15 @@ func normalizeBackend(b *BackendConfig) error {
 	if b.MaxConcurrent <= 0 {
 		b.MaxConcurrent = 1
 	}
+	var ms []string
+	seen := map[string]bool{}
+	for _, m := range b.Models {
+		if m = strings.TrimSpace(m); m != "" && !seen[strings.ToLower(m)] {
+			seen[strings.ToLower(m)] = true
+			ms = append(ms, m)
+		}
+	}
+	b.Models = ms
 	if b.PriceIn < 0 || b.PriceOut < 0 || b.PriceIn > 1e6 || b.PriceOut > 1e6 {
 		return fmt.Errorf("Preis muss zwischen 0 und 1.000.000 liegen")
 	}

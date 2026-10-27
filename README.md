@@ -139,10 +139,21 @@ Eine Gruppe ist eine Menge von Servern plus die Modelle, die sie bedienen. Ein S
 (Dialog „Bearbeiten“ des Servers oder Dialog der Gruppe). Die Zuordnung einer Anfrage passiert über das Feld `model`:
 
 1. Gruppen, deren Modellliste passt – eingetragene Namen oder Muster mit `*` (z. B. `qwen3*`), und, wenn
-   „zusätzlich gemeldete Modelle“ aktiv ist (Standard), alle Modelle, die ihre Server über `/v1/models` melden.
+   „zusätzlich gemeldete Modelle“ aktiv ist (Standard), alle Modelle ihrer Server (gemeldet oder im Filter des Servers).
    Passen mehrere Gruppen, zählen die Server aller passenden Gruppen.
-2. Sonst: alle Server, die das Modell selbst melden (auch ohne Gruppe).
+   **Innerhalb der Gruppe** bekommen nur die Server die Anfrage, die das Modell haben; sind sie belegt, wartet die
+   Anfrage auf sie. Kennt keiner der Server das Modell (z. B. nur über das Muster der Gruppe), darf es die ganze Gruppe.
+2. Sonst: alle Server, die das Modell selbst haben (auch ohne Gruppe).
 3. Sonst: alle Server – oder 404, wenn `UNKNOWN_MODEL=reject` gesetzt ist.
+
+**Exakt vor Muster:** Ein Modell, das exakt bekannt ist – vom Server gemeldet oder ohne `*` eingetragen – hat Vorrang vor
+Treffern über `*`, sowohl bei der Wahl der Gruppe als auch des Servers. Beispiel: Gruppe A hat `qwen*`, ein Server in
+Gruppe B meldet `qwen3-32b` → eine Anfrage für `qwen3-32b` geht nur nach B; `qwen2.5-7b` (kennt niemand exakt) nach A.
+
+**Modellfilter pro Server** (Dialog „Bearbeiten“): Namen oder Muster, die der Server bedient, eins pro Zeile – für Server,
+die keine Modellliste liefern, oder um die Zuordnung festzulegen. Mit „zusätzlich die vom Server gemeldeten Modelle“
+(Standard an) zählen auch die per `/v1/models` gemeldeten; ausgeschaltet gilt nur der Filter. Auf der Karte erscheinen
+Filter-Einträge farbig hinterlegt (Muster gestrichelt), gemeldete Modelle grau.
 
 Groß-/Kleinschreibung spielt keine Rolle. Die Modelle der Server werden beim Health-Check (alle 15 s, nur bei freien Servern)
 neu abgefragt. Im Feld **Modell** über der Serverliste lässt sich ein Modell auswählen: die UI zeigt dann, welche Gruppe
@@ -408,7 +419,7 @@ Mit Benutzern ist alles erst nach der Anmeldung sichtbar; Betrachter sehen keine
 |---|---|---|
 | GET | `/balancer/api/status` | kompletter Status |
 | GET | `/balancer/api/backends` | aktuelle Server-Liste |
-| POST | `/balancer/api/backends` | Server hinzufügen, Body `{"name","url","max_concurrent","priority","enabled","api_key"}` |
+| POST | `/balancer/api/backends` | Server hinzufügen, Body `{"name","url","max_concurrent","priority","enabled","api_key","group","models":[…],"auto_models"}` |
 | PUT | `/balancer/api/backends/{name}` | Server ändern (gleicher Body, Umbenennen erlaubt; `api_key` weglassen = behalten, `""` = entfernen) |
 | DELETE | `/balancer/api/backends/{name}` | Server entfernen |
 | POST | `/balancer/api/backends/{name}/enable` bzw. `/disable` | aktivieren / drain |
