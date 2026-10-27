@@ -527,6 +527,10 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
     <label for="f-models">Modelle (Filter, eins pro Zeile)</label>
     <textarea id="f-models" rows="3" placeholder="z. B.&#10;qwen3-32b&#10;llama3*"></textarea>
     <label class="chk" style="margin-top:6px"><input id="f-auto" type="checkbox" checked> zusätzlich die vom Server gemeldeten Modelle</label>
+    <label for="f-force">Modell erzwingen (optional)</label>
+    <input id="f-force" placeholder="z. B. qwen3:8b" autocomplete="off" list="f-forcelist"><datalist id="f-forcelist"></datalist>
+    <div class="hint">Wird statt des angefragten Modells gesendet, wenn der Server dieses nicht exakt kennt – also bei Treffern über * im Filter
+      oder wenn er die Anfrage als Teil seiner Gruppe bekommt. Exakt bekannte Modelle gehen unverändert durch.</div>
     <div class="hint">Bestimmt, welcher Server einer Gruppe eine Anfrage bekommt. Ein exakt bekanntes Modell (vom Server gemeldet oder hier
       ohne * eingetragen) hat Vorrang vor einem Treffer über *. Leer + Haken = nur die gemeldeten Modelle.</div>
     <div class="two">
@@ -723,6 +727,8 @@ function openEdit(name) {
   $('f-group').value = b ? (b.group || '') : '';
   $('f-models').value = b ? (b.manual_models || []).join('\n') : '';
   $('f-auto').checked = b ? b.auto_models !== false : true;
+  $('f-force').value = b?.force_model || '';
+  $('f-forcelist').innerHTML = (b?.models || []).map(m => `<option value="${esc(m)}">`).join('');
   $('f-key').value = '';
   $('f-keydel').checked = false;
   $('f-key').placeholder = b?.has_api_key ? '•••••• gespeichert – leer lassen zum Beibehalten' : 'kein Token';
@@ -738,7 +744,7 @@ $('form').addEventListener('submit', async ev => {
     name: $('f-name').value.trim(), url: $('f-url').value.trim(),
     max_concurrent: parseInt($('f-max').value, 10) || 1, priority: parseInt($('f-prio').value, 10) || 0,
     enabled: $('f-en').checked, group: $('f-group').value, tls_skip_verify: $('f-tls').checked,
-    models: $('f-models').value.split('\n').map(x => x.trim()).filter(Boolean), auto_models: $('f-auto').checked,
+    models: $('f-models').value.split('\n').map(x => x.trim()).filter(Boolean), auto_models: $('f-auto').checked, force_model: $('f-force').value.trim(),
     price_in: parseFloat($('f-pin').value) || 0, price_out: parseFloat($('f-pout').value) || 0,
     cost_cap: parseFloat($('f-cap').value) || 0, cap_period: $('f-capp').value,
   };
@@ -814,6 +820,7 @@ function backendCard(b) {
     <div class="line badges">
       <span class="gbadge" title="Kleinere Priorität wird bevorzugt">Prio ${b.priority}</span>
       ${b.group ? `<span class="gbadge">Gruppe ${esc(b.group)}</span>` : ''}
+      ${b.force_model ? `<span class="gbadge" title="Modelle, die der Server nicht exakt kennt, werden als ${esc(b.force_model)} gesendet">→ ${esc(b.force_model)}</span>` : ''}
       ${priceBadge(b)}
       ${b.has_api_key ? '<span class="gbadge" title="Bearer-Token hinterlegt">🔑 Token</span>' : ''}
       ${b.tls_skip_verify ? '<span class="gbadge" title="TLS-Zertifikat wird nicht geprüft">⚠ TLS</span>' : ''}

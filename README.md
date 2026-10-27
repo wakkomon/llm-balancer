@@ -155,6 +155,12 @@ die keine Modellliste liefern, oder um die Zuordnung festzulegen. Mit „zusätz
 (Standard an) zählen auch die per `/v1/models` gemeldeten; ausgeschaltet gilt nur der Filter. Auf der Karte erscheinen
 Filter-Einträge farbig hinterlegt (Muster gestrichelt), gemeldete Modelle grau.
 
+**Modell erzwingen pro Server**: optionaler Modellname, der statt des angefragten gesendet wird, wenn der Server dieses
+nicht exakt kennt – etwa bei Filter `qwen*` und Ersatz `qwen3:8b`: eine Anfrage für `qwen2.5-72b` kommt dort als
+`qwen3:8b` an, exakt gemeldete oder eingetragene Modelle gehen unverändert durch. Greift nach „Modellname erzwingen“ der
+Gruppe bzw. „Modell dort“ der Fallback-Gruppe, falls der Server auch deren Ergebnis nicht kennt. In „Letzte Anfragen“
+erscheint das als `qwen2.5-72b → qwen3:8b`.
+
 Groß-/Kleinschreibung spielt keine Rolle. Die Modelle der Server werden beim Health-Check (alle 15 s, nur bei freien Servern)
 neu abgefragt. Im Feld **Modell** über der Serverliste lässt sich ein Modell auswählen: die UI zeigt dann, welche Gruppe
 und welche Server es bekommen, und blendet die übrigen Server aus. `GET /balancer/api/route?model=…` liefert dasselbe als JSON.
@@ -419,7 +425,7 @@ Mit Benutzern ist alles erst nach der Anmeldung sichtbar; Betrachter sehen keine
 |---|---|---|
 | GET | `/balancer/api/status` | kompletter Status |
 | GET | `/balancer/api/backends` | aktuelle Server-Liste |
-| POST | `/balancer/api/backends` | Server hinzufügen, Body `{"name","url","max_concurrent","priority","enabled","api_key","group","models":[…],"auto_models"}` |
+| POST | `/balancer/api/backends` | Server hinzufügen, Body `{"name","url","max_concurrent","priority","enabled","api_key","group","models":[…],"auto_models","force_model"}` |
 | PUT | `/balancer/api/backends/{name}` | Server ändern (gleicher Body, Umbenennen erlaubt; `api_key` weglassen = behalten, `""` = entfernen) |
 | DELETE | `/balancer/api/backends/{name}` | Server entfernen |
 | POST | `/balancer/api/backends/{name}/enable` bzw. `/disable` | aktivieren / drain |

@@ -153,3 +153,31 @@ func TestExactModelBeatsWildcard(t *testing.T) {
 		t.Errorf("exact filter route: %s %v", rt.Group, rt.allow)
 	}
 }
+
+func TestServerForceModel(t *testing.T) {
+	x := newModelLLM(t, "x", 10*time.Millisecond, "qwen3:8b", "phi4")
+	srv, pool := setup(t, func(c *Config) {
+		c.Backends = []BackendConfig{{Name: "x", URL: x.srv.URL, Models: []string{"qwen*", "gpt-4o"}, ForceModel: "qwen3:8b"}}
+	})
+	discover(t, pool)
+	for model, want := range map[string]string{"qwen2.5-72b": "qwen3:8b", "phi4": "", "gpt-4o": "", "qwen3:8b": ""} {
+		chatModel(t, srv.URL, model, nil)
+		waitFor(t, func() bool { st := status(t, srv.URL); return len(st.Recent) > 0 && st.Recent[0].Model == model })
+		if r := status(t, srv.URL).Recent[0]; r.Effective != want {
+			t.Errorf("%s: sent as %q, want %q", model, r.Effective, want)
+		}
+	}
+	// kept when omitted, cleared with ""
+	api(t, "PUT", srv.URL+"/balancer/api/backends/x", `{"name":"x","url":"`+x.srv.URL+`"}`, "")
+	pool.mu.Lock()
+	if pool.backends[0].forceModel != "qwen3:8b" {
+		t.Error("force model not kept")
+	}
+	pool.mu.Unlock()
+	api(t, "PUT", srv.URL+"/balancer/api/backends/x", `{"name":"x","url":"`+x.srv.URL+`","force_model":""}`, "")
+	pool.mu.Lock()
+	if pool.backends[0].forceModel != "" {
+		t.Error("force model not cleared")
+	}
+	pool.mu.Unlock()
+}

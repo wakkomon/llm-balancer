@@ -3,6 +3,11 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.4.1 – 2026-10-27
+
+- **Modell erzwingen pro Server**: Ersatzmodell, das gesendet wird, wenn der Server das angefragte Modell nicht exakt
+  kennt (Treffer über `*` im Filter oder als Teil seiner Gruppe); exakt bekannte Modelle bleiben unverändert
+
 ## 1.4.0 – 2026-10-27
 
 - **Routing innerhalb einer Gruppe nach Modell**: haben die Server einer Gruppe verschiedene Modelle, bekommt eine Anfrage

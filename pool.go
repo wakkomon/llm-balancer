@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log"
@@ -34,6 +35,7 @@ type Backend struct {
 	groupOff   bool     // its group is disabled (kept in sync by syncGroupsLocked)
 	manual     []string // model filter set by the admin (names / patterns)
 	autoModels bool     // models reported by the server count as well
+	forceModel string   // replacement model when the requested one is not known by name
 	capSpent   float64
 	priceIn    float64
 	priceOut   float64
@@ -284,6 +286,10 @@ func (p *Pool) assignRoute(b *Backend, r *ReqInfo, rt Route) {
 		if m != "" { // replacement model of the fallback setting wins
 			model = m
 		}
+	}
+	// the server's own override: when it does not know the model it would get by name
+	if final := cmp.Or(model, r.Model); b.forceModel != "" && final != "" && b.serveLevel(final) < matchExact {
+		model = b.forceModel
 	}
 	if model != "" && !strings.EqualFold(model, r.Model) {
 		r.rewrite, r.Effective = model, model
@@ -620,6 +626,7 @@ type BackendStatus struct {
 	Models      []string   `json:"models"`        // reported by the server
 	Manual      []string   `json:"manual_models"` // admin's filter
 	AutoModels  bool       `json:"auto_models"`
+	ForceModel  string     `json:"force_model,omitempty"`
 	Running     []*ReqInfo `json:"running"`
 }
 
@@ -763,7 +770,7 @@ func (p *Pool) Status() Status {
 		bs.PriceIn, bs.PriceOut = b.priceIn, b.priceOut
 		bs.Group = b.group
 		bs.Models = append([]string{}, b.models...)
-		bs.Manual, bs.AutoModels = append([]string{}, b.manual...), b.autoModels
+		bs.Manual, bs.AutoModels, bs.ForceModel = append([]string{}, b.manual...), b.autoModels, b.forceModel
 		st.States[bs.State]++
 		if bs.Running == nil {
 			bs.Running = []*ReqInfo{}

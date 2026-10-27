@@ -87,6 +87,7 @@ func newBackend(bc BackendConfig) *Backend {
 		enabled:    bc.Enabled == nil || *bc.Enabled,
 		manual:     bc.Models,
 		autoModels: bc.AutoModels == nil || *bc.AutoModels,
+		forceModel: bc.ForceModel,
 		healthy:    true, // optimistic until the first health check says otherwise
 	}
 }
@@ -94,7 +95,7 @@ func newBackend(bc BackendConfig) *Backend {
 func (b *Backend) config() BackendConfig {
 	en := b.enabled
 	c := BackendConfig{Name: b.Name, URL: b.URL, MaxConcurrent: b.Max, Priority: b.Priority, Enabled: &en, APIKey: b.apiKey, Group: b.group, TLSSkipVerify: b.insecure, PriceIn: b.priceIn, PriceOut: b.priceOut,
-		CostCap: b.costCap, CapPeriod: b.capPeriod, Models: append([]string(nil), b.manual...)}
+		CostCap: b.costCap, CapPeriod: b.capPeriod, Models: append([]string(nil), b.manual...), ForceModel: b.forceModel}
 	if !b.autoModels {
 		f := false
 		c.AutoModels = &f
@@ -219,6 +220,9 @@ func (p *Pool) UpdateBackend(name string, bc BackendConfig, key, group *string) 
 		b.autoModels = bc.AutoModels == nil || *bc.AutoModels
 	}
 	b.manual = bc.Models
+	if bc.keep&keepForce == 0 {
+		b.forceModel = bc.ForceModel
+	}
 	if b.insecure != bc.TLSSkipVerify || (key != nil && strings.TrimSpace(*key) != b.apiKey) {
 		// connection settings changed: give the server a fresh chance and check it right away
 		b.healthy, b.healthMsg, b.unhealthyTil = true, "", time.Time{}
@@ -303,7 +307,7 @@ func (p *Pool) replaceLocked(bcs []BackendConfig, groups []GroupConfig) {
 			b.Max, b.Priority, b.enabled, b.apiKey, b.group, b.insecure = bc.MaxConcurrent, bc.Priority, bc.Enabled == nil || *bc.Enabled, bc.APIKey, bc.Group, bc.TLSSkipVerify
 			b.priceIn, b.priceOut = bc.PriceIn, bc.PriceOut
 			b.costCap, b.capPeriod = bc.CostCap, bc.CapPeriod
-			b.manual, b.autoModels = bc.Models, bc.AutoModels == nil || *bc.AutoModels
+			b.manual, b.autoModels, b.forceModel = bc.Models, bc.AutoModels == nil || *bc.AutoModels, bc.ForceModel
 			next = append(next, b)
 		} else {
 			next = append(next, newBackend(bc))
@@ -368,6 +372,7 @@ type backendInput struct {
 	CapPeriod     *string   `json:"cap_period"`
 	Models        *[]string `json:"models"`
 	AutoModels    *bool     `json:"auto_models"`
+	ForceModel    *string   `json:"force_model"`
 }
 
 func decodeBackend(r *http.Request) (BackendConfig, *string, *string, error) {
@@ -407,6 +412,11 @@ func decodeBackend(r *http.Request) (BackendConfig, *string, *string, error) {
 		bc.Models = *in.Models
 	} else {
 		bc.keep |= keepModels
+	}
+	if in.ForceModel != nil {
+		bc.ForceModel = *in.ForceModel
+	} else {
+		bc.keep |= keepForce
 	}
 	if in.AutoModels != nil {
 		bc.AutoModels = in.AutoModels
@@ -508,4 +518,5 @@ const (
 	keepCapPeriod
 	keepModels
 	keepAuto
+	keepForce
 )

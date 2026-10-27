@@ -30,7 +30,10 @@ type BackendConfig struct {
 	// /v1/models, unless AutoModels is false). Used to pick the right server inside a group.
 	Models     []string `json:"models,omitempty"`
 	AutoModels *bool    `json:"auto_models,omitempty"` // default true
-	keep       int      // API update: fields not sent (keep current value)
+	// ForceModel: sent instead of the requested model when the server does not know that model by
+	// name (it got the request via a * filter or as part of its group).
+	ForceModel string `json:"force_model,omitempty"`
+	keep       int    // API update: fields not sent (keep current value)
 }
 
 // Config is the full balancer configuration.
@@ -279,6 +282,7 @@ func normalizeBackend(b *BackendConfig) error {
 		}
 	}
 	b.Models = ms
+	b.ForceModel = strings.TrimSpace(b.ForceModel)
 	if b.PriceIn < 0 || b.PriceOut < 0 || b.PriceIn > 1e6 || b.PriceOut > 1e6 {
 		return fmt.Errorf("Preis muss zwischen 0 und 1.000.000 liegen")
 	}
