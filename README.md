@@ -34,6 +34,11 @@ Hermes-Agent ─► LiteLLM ─► llm-balancer :8080 ─┬─► LLM-Server A 
 * **Tokens pro Sekunde** pro Anfrage und Server (Generierung und Prompt-Verarbeitung), live geschätzt während des Streams
 * Statistik auch **nach Modell**
 * Status-Übersicht pro Server: **beschäftigt**, **idle**, **fehlerhaft** (erreichbar, aber letzte Anfrage fehlgeschlagen – bis zur nächsten erfolgreichen, max. 15 min), **down** (Health-Check/Verbindung fehlgeschlagen), **deaktiviert**
+* **Tagesansicht der Auslastung**: pro Stunde, wie viel der Slot-Zeit gerechnet wurde – heute im Vergleich zum Ø der letzten 7 Tage, dazu die aktuelle Auslastung, pro Server und gesamt; ebenso Anfragen und wartende Anfragen pro Stunde
+* **Statistik der Warteschlange** pro Tag: wie viele Anfragen warten mussten, Ø/max. Wartezeit, max. Länge, abgelehnte
+* **Sessions** in „Letzte Anfragen“: zusammengehörende Anfragen (eine Unterhaltung / ein Agenten-Lauf) bekommen dieselbe Kennung, per Klick filterbar
+* Alle Tabellen per Klick auf die Spaltenüberschrift sortierbar, das Ereignisprotokoll zusätzlich filterbar
+* **Gruppen deaktivierbar**: ihre Server bekommen keine Anfragen mehr, die Fallback-Gruppe übernimmt sofort
 * Statistik pro Tag und Server (7/30/90/365 Tage): Anfragen, Fehler, Abbrüche, Rechenzeit, Ø/Max-Dauer, Ø Zeit bis zum ersten Byte, Ø Wartezeit in der Queue, Datenmenge – als gestapelte Balkengrafik und Tabelle, CSV-Export; gespeichert in `/data/stats.json`
 * Web-UI unter `/balancer/` mit Tabs Übersicht, Gruppen (`#gruppen`), Statistik (`#statistik`), Letzte Anfragen (`#anfragen`) und API-Zugriff (`#zugriff`); Server als Kacheln mit fester Größe oder als kompakte Liste (eine Zeile pro Server, nach Gruppen, auf-/zuklappbar): Slots, laufende Anfragen (Prompt-Verarbeitung vs. Streaming, Dauer, Bytes), Warteschlange, letzte Anfragen, Ø Zeit bis zum ersten Byte / Ø Dauer, Server per Klick deaktivieren (drain) und aktivieren
 * Server-Liste **im laufenden Betrieb** in der Web-UI ändern: hinzufügen, bearbeiten (URL, Name, Slots, Priorität), entfernen – ohne Neustart, laufende Anfragen laufen weiter
@@ -171,6 +176,33 @@ deaktiviert, wird sofort auf die Fallback-Gruppe ausgewichen. Mit „Modell dort
 der Anfrage für den Fallback-Server (z. B. `qwen3-32b` → `llama3.2:3b`), sonst geht der Modellname unverändert durch.
 Die Queue wird jede Sekunde neu geprüft. In „Letzte Anfragen“ erscheint so eine Anfrage als `qwen-gross → klein` und
 `qwen3-32b → llama3.2:3b`. Der Fallback reicht eine Stufe weit (der Fallback des Fallbacks wird nicht verwendet).
+
+Eine Gruppe lässt sich auf der Seite Gruppen **deaktivieren**: ihre Server bekommen dann keine neuen Anfragen (laufende
+laufen zu Ende, die Server erscheinen als „Gruppe aus“), Anfragen für die Gruppe gehen sofort an die Fallback-Gruppe –
+auch die, die schon warten. Ohne Fallback gehen sie an andere Server, die das Modell selbst melden.
+
+### Sessions
+
+Agenten wie Hermes schicken bei jedem Schritt die ganze Unterhaltung mit. „Letzte Anfragen“ zeigt deshalb pro Anfrage eine
+kurze Session-Kennung (8 Zeichen, Klick filtert darauf). Ermittelt wird sie in dieser Reihenfolge:
+
+1. eine vom Client mitgeschickte ID: Header `X-Session-Id`, `Session-Id`, `X-Conversation-Id`, `X-Thread-Id`, `X-Chat-Id`
+   oder ein Feld im Body (`session_id`, `conversation_id`, `thread_id`, `chat_id`, `metadata.session_id`,
+   `metadata.user_id` (Anthropic), `prompt_cache_key`, `user` …)
+2. sonst ein Fingerabdruck aus System-Prompt und erster Nutzer-Nachricht – gleich für alle Schritte einer Unterhaltung,
+   verschieden für zwei Aufgaben, auch wenn sie vom gleichen API-Token und Rechner kommen
+
+Die Kennung ist ein Hash (zusammen mit dem API-Token), die eigentliche ID oder der Text wird nicht angezeigt. Der Tooltip
+nennt die Quelle. Startet ein Agent mit identischem Prompt neu, landen beide Läufe in derselben Session.
+
+### Tagesansicht und Warteschlange
+
+Unter Statistik → **Tag**: pro Stunde der Anteil der Slot-Zeit, in der die Server gerechnet haben (Balken = heute, Linie =
+Ø der letzten 7 Tage mit Daten), umschaltbar auf Anfragen und wartende Anfragen pro Stunde, für alle Server oder einen.
+Dazu: Auslastung jetzt (belegte Slots), heute bis jetzt im Vergleich zum Ø der Vortage bis zur gleichen Uhrzeit, Ø ganzer
+Tag und eine Tabelle pro Server. Die Stundenwerte werden 62 Tage aufgehoben (in `stats.json`). Die Tabelle
+**Warteschlange** zeigt pro Tag: Anfragen, wie viele mindestens 0,25 s warten mussten, Ø/max. Wartezeit, maximale Länge
+der Queue und abgelehnte Anfragen.
 
 ### Prüfung der Tags im generierten Text
 
@@ -353,13 +385,15 @@ Die Status-Ansicht ist ohne Anmeldung sichtbar; für Änderungen `ADMIN_TOKEN` s
 | PUT | `/balancer/api/tokens/{name}` | Preis, Deckel, Sperre: `{"price_in":0.4,"price_out":1.6,"cost_cap":10,"cap_period":"month","disabled":false}` |
 | DELETE | `/balancer/api/tokens/{name}` | Client-Token löschen |
 | POST | `/balancer/api/groups` | Gruppe anlegen: `{"name","models":[…],"auto_models","members":[…],"force_model","fallback","fallback_after_sec","fallback_model"}` |
-| PUT / DELETE | `/balancer/api/groups/{name}` | Gruppe ändern (umbenennen erlaubt; `members` weglassen = unverändert) / löschen |
+| PUT / DELETE | `/balancer/api/groups/{name}` | Gruppe ändern (umbenennen erlaubt; `members` / `disabled` weglassen = unverändert) / löschen |
+| POST | `/balancer/api/groups/{name}/disable` bzw. `/enable` | Gruppe deaktivieren (Fallback übernimmt) / aktivieren |
 | GET | `/balancer/api/route?model=…` | Welche Gruppe/Server bekämen dieses Modell? |
 | GET/PUT | `/balancer/api/notify` | E-Mail-Einstellungen (Passwort-Feld weglassen = beibehalten) |
 | POST | `/balancer/api/notify/test` | Testmail senden |
 | GET | `/balancer/api/events` | Ereignisprotokoll |
 | GET | `/balancer/api/recent?after=<seq>` | Letzte Anfragen (max. 300), nur neuere als `seq` |
 | GET | `/balancer/api/stats?days=30` | Tagesstatistik pro Server, Modell und API-Token (`&format=csv`, `&by=model` für CSV nach Modell) |
+| GET | `/balancer/api/stats/day?days=7` | Tagesansicht: Stundenwerte heute und Ø der letzten Tage, Warteschlange pro Stunde |
 | POST | `/balancer/api/stats/reset` | Statistik löschen |
 
 ## Fehlersuche

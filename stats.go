@@ -78,9 +78,12 @@ func (d *DayStat) add(o *DayStat) {
 // Stats keeps per-day, per-backend counters and persists them to DATA_DIR/stats.json.
 type Stats struct {
 	mu       sync.Mutex
-	days     map[string]map[string]*DayStat // "2006-01-02" → backend → stat
-	tokdays  map[string]map[string]*TokStat // "2006-01-02" → client token name → stat
-	moddays  map[string]map[string]*DayStat // "2006-01-02" → model → stat
+	days     map[string]map[string]*DayStat  // "2006-01-02" → backend → stat
+	tokdays  map[string]map[string]*TokStat  // "2006-01-02" → client token name → stat
+	moddays  map[string]map[string]*DayStat  // "2006-01-02" → model → stat
+	hours    map[string]map[string]*HourStat // "2006-01-02T15" → backend → stat
+	qhours   map[string]*QueueStat           // "2006-01-02T15" → queue
+	qdays    map[string]*QueueStat           // "2006-01-02" → queue
 	path     string
 	keepDays int
 	dirty    bool
@@ -88,6 +91,7 @@ type Stats struct {
 
 func NewStats(dir string, keepDays int) *Stats {
 	s := &Stats{days: map[string]map[string]*DayStat{}, tokdays: map[string]map[string]*TokStat{}, moddays: map[string]map[string]*DayStat{}, keepDays: keepDays}
+	s.initHourly()
 	if dir != "" {
 		s.path = filepath.Join(dir, "stats.json")
 		data, err := os.ReadFile(s.path)
@@ -101,6 +105,15 @@ func NewStats(dir string, keepDays int) *Stats {
 				}
 				if f.Models != nil {
 					s.moddays = f.Models
+				}
+				if f.Hours != nil {
+					s.hours = f.Hours
+				}
+				if f.QueueHours != nil {
+					s.qhours = f.QueueHours
+				}
+				if f.QueueDays != nil {
+					s.qdays = f.QueueDays
 				}
 			} else if err := json.Unmarshal(data, &s.days); err != nil { // format of older versions
 				log.Printf("stats: %s unreadable, starting fresh: %v", s.path, err)
@@ -191,13 +204,17 @@ func (s *Stats) Record(r *ReqInfo) {
 		}
 		ts.add(&TokStat{Requests: 1, TokensIn: r.TokensIn, TokensOut: r.TokensOut, Cost: r.Cost})
 	}
+	s.recordHourlyLocked(r, backend)
 	s.dirty = true
 }
 
 type statsFile struct {
-	Backends map[string]map[string]*DayStat `json:"backends"`
-	Tokens   map[string]map[string]*TokStat `json:"tokens"`
-	Models   map[string]map[string]*DayStat `json:"models"`
+	Backends   map[string]map[string]*DayStat  `json:"backends"`
+	Tokens     map[string]map[string]*TokStat  `json:"tokens"`
+	Models     map[string]map[string]*DayStat  `json:"models"`
+	Hours      map[string]map[string]*HourStat `json:"hours,omitempty"`
+	QueueHours map[string]*QueueStat           `json:"queue_hours,omitempty"`
+	QueueDays  map[string]*QueueStat           `json:"queue_days,omitempty"`
 }
 
 // Flush writes the stats file if something changed and prunes old days.
@@ -224,11 +241,19 @@ func (s *Stats) Flush() {
 				s.dirty = true
 			}
 		}
+		for d := range s.qdays {
+			if d < cutoff {
+				delete(s.qdays, d)
+				s.dirty = true
+			}
+		}
 	}
+	s.pruneHourlyLocked(time.Now())
 	if !s.dirty || s.path == "" {
 		return
 	}
-	data, _ := json.Marshal(statsFile{Backends: s.days, Tokens: s.tokdays, Models: s.moddays})
+	data, _ := json.Marshal(statsFile{Backends: s.days, Tokens: s.tokdays, Models: s.moddays,
+		Hours: s.hours, QueueHours: s.qhours, QueueDays: s.qdays})
 	tmp := s.path + ".tmp"
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		log.Printf("stats: %v", err)
@@ -250,6 +275,7 @@ func (s *Stats) Reset() {
 	s.days = map[string]map[string]*DayStat{}
 	s.tokdays = map[string]map[string]*TokStat{}
 	s.moddays = map[string]map[string]*DayStat{}
+	s.initHourly()
 	s.dirty = true
 	s.mu.Unlock()
 	s.Flush()
@@ -271,6 +297,9 @@ type StatsReport struct {
 	Models      []string                       `json:"models"`
 	ModelData   map[string]map[string]*DayStat `json:"model_data"`
 	ModelTotals map[string]*DayStat            `json:"model_totals"`
+	// queue
+	QueueData  map[string]*QueueStat `json:"queue_data"` // day → queue
+	QueueTotal QueueStat             `json:"queue_total"`
 }
 
 func (s *Stats) Report(days int, now time.Time) StatsReport {
@@ -279,7 +308,8 @@ func (s *Stats) Report(days int, now time.Time) StatsReport {
 	}
 	rep := StatsReport{Backends: []string{}, Data: map[string]map[string]*DayStat{}, Totals: map[string]*DayStat{},
 		Tokens: []string{}, TokenData: map[string]map[string]*TokStat{}, TokenTotals: map[string]*TokStat{},
-		Models: []string{}, ModelData: map[string]map[string]*DayStat{}, ModelTotals: map[string]*DayStat{}}
+		Models: []string{}, ModelData: map[string]map[string]*DayStat{}, ModelTotals: map[string]*DayStat{},
+		QueueData: map[string]*QueueStat{}}
 	start := now.In(time.Local).AddDate(0, 0, -(days - 1))
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -287,6 +317,11 @@ func (s *Stats) Report(days int, now time.Time) StatsReport {
 	for i := 0; i < days; i++ {
 		day := dayKey(start.AddDate(0, 0, i))
 		rep.Days = append(rep.Days, day)
+		if q := s.qdays[day]; q != nil {
+			c := *q
+			rep.QueueData[day] = &c
+			rep.QueueTotal.add(q)
+		}
 		if tm := s.tokdays[day]; len(tm) > 0 {
 			out := map[string]*TokStat{}
 			for name, ts := range tm {

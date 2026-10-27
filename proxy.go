@@ -177,6 +177,7 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(body) > 0 && json.Unmarshal(body, &meta) == nil {
 		req.Model, req.Stream = meta.Model, meta.Stream
 	}
+	req.Session, req.SessionSrc = detectSession(r, body, tokenName)
 	// Ask OpenAI-compatible servers to report token usage at the end of a stream (needed for prices/stats).
 	if px.cfg.StreamUsage && meta.Stream && strings.HasSuffix(r.URL.Path, "/completions") {
 		if nb, ok := withStreamUsage(body); ok {

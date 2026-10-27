@@ -36,21 +36,40 @@ h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--mute
 .tile.busy .sdot{background:var(--busy)} .tile.idle .sdot{background:var(--free)} .tile.error .sdot{background:var(--warn)}
 .tile.down .sdot{background:var(--down)} .tile.capped .sdot{background:var(--warn)}
 .tile.st.on b{color:var(--ink);font-weight:600}
-.tile.busy.on{border-color:var(--busy);background:color-mix(in srgb, var(--busy) 10%, var(--panel))}
-.tile.busy.on b{color:var(--busy)}
-.tile.busy.on .sdot{animation:pulse 1.6s ease-out infinite}
-.tile.down.on{border-color:var(--down);background:color-mix(in srgb, var(--down) 8%, var(--panel))}
-.tile.error.on,.tile.capped.on{border-color:var(--warn);background:color-mix(in srgb, var(--warn) 8%, var(--panel))}
 @keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb, var(--busy) 70%, transparent)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
 @keyframes pulsew{0%{box-shadow:0 0 0 0 rgba(255,255,255,.85)}70%{box-shadow:0 0 0 6px rgba(255,255,255,0)}100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}}
 @keyframes stripes{from{background-position:0 0}to{background-position:28px 0}}
 .pill{display:inline-flex;align-items:center;gap:6px}
-.pdot{width:7px;height:7px;border-radius:50%;background:#fff;animation:pulsew 1.6s ease-out infinite}
-.busy .pill{box-shadow:0 0 0 3px color-mix(in srgb, var(--busy) 18%, transparent)}
+/* busy: a pulsing blue play button instead of the dot */
+.play{display:inline-block;width:0;height:0;border-style:solid;border-width:5px 0 5px 9px;border-color:transparent transparent transparent var(--busy);
+  flex:none;animation:waber 1.4s ease-in-out infinite;transform-origin:35% 50%}
+@keyframes waber{0%,100%{transform:scale(.85);opacity:.65;filter:drop-shadow(0 0 0 transparent)}50%{transform:scale(1.25);opacity:1;filter:drop-shadow(0 0 3px color-mix(in srgb, var(--busy) 80%, transparent))}}
+.card.busy .pill{background:color-mix(in srgb, var(--busy) 14%, var(--panel));color:var(--busy);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--busy) 45%, transparent)}
+.lplay{display:flex;justify-content:center;width:10px}
 .slot.on{background:repeating-linear-gradient(-45deg, var(--busy) 0 7px, color-mix(in srgb, var(--busy) 72%, #fff) 7px 14px);
   background-size:28px 8px;animation:stripes .9s linear infinite}
-.lrow.busy .ldot{animation:pulse 1.6s ease-out infinite}
-@media (prefers-reduced-motion: reduce){.pdot,.slot.on,.lrow.busy .ldot,.tile.busy.on .sdot{animation:none}}
+@media (prefers-reduced-motion: reduce){.play,.slot.on{animation:none}}
+/* sortable tables */
+th.sortable{cursor:pointer;user-select:none} th.sortable:hover{color:var(--ink)}
+th.sortable::after{content:'';display:inline-block;width:10px;margin-left:3px;font-size:9px}
+th.sortable.asc::after{content:'▲'} th.sortable.desc::after{content:'▼'}
+th.sortable.asc,th.sortable.desc{color:var(--ink)}
+tr.sum td{border-top:1px solid var(--line);font-weight:600}
+/* session chips */
+.sess{font:11.5px var(--mono);border-radius:5px;padding:1px 6px;cursor:pointer;border:1px solid transparent;white-space:nowrap}
+.sess:hover{border-color:currentColor}
+.fpill{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;background:var(--panel);border:1px solid var(--accent);color:var(--accent);border-radius:99px;padding:2px 4px 2px 10px}
+.fpill button{border:0;padding:0 6px;color:inherit}
+/* day view */
+.dtiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+.dtiles .tile b{font-size:22px}
+.dtiles .tile small{display:block;color:var(--muted);font-size:11.5px;margin-top:2px}
+.ubar{display:inline-block;width:70px;height:7px;border-radius:4px;background:var(--line);overflow:hidden;vertical-align:middle;margin-left:8px}
+.ubar i{display:block;height:100%;background:var(--busy)}
+#daychart svg{display:block;width:100%;height:auto;overflow:visible}
+#daychart .grid line{stroke:var(--line)} #daychart text{fill:var(--muted);font-size:11px;font-family:system-ui,sans-serif}
+#daychart .hit{fill:transparent} #daychart .hit:hover{fill:var(--ink);fill-opacity:.05}
+.gcard.off{opacity:.6} .tstate.goff{background:var(--off)}
 .tile b{display:block;font:600 24px/1.1 var(--mono)}
 .tile span{color:var(--muted);font-size:12px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
@@ -119,9 +138,9 @@ tr:last-child td{border-bottom:0}
 #chart svg{display:block;width:100%;height:auto;overflow:visible}
 #chart .grid line{stroke:var(--line)} #chart text{fill:var(--muted);font-size:11px;font-family:system-ui,sans-serif}
 #chart .hit{fill:transparent;cursor:default} #chart .hit:hover{fill:var(--ink);fill-opacity:.05}
-#tip{position:absolute;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.15);display:none;min-width:170px;z-index:2}
-#tip .r{display:flex;justify-content:space-between;gap:14px} #tip .r b{font-family:var(--mono);font-weight:600}
-#tip i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:6px}
+#tip,.tipbox{position:absolute;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.15);display:none;min-width:170px;z-index:2}
+#tip .r,.tipbox .r{display:flex;justify-content:space-between;gap:14px} #tip .r b,.tipbox .r b{font-family:var(--mono);font-weight:600}
+#tip i,.tipbox i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:6px}
 details{margin-top:12px} summary{cursor:pointer;color:var(--muted);font-size:13px;margin-bottom:8px}
 td.sw i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:7px}
 .muted{color:var(--muted)}
@@ -165,7 +184,7 @@ td.tagerr{color:var(--warn);cursor:help}
 .gcard .lbl{font-size:11px;color:var(--muted);margin-top:10px;text-transform:uppercase;letter-spacing:.06em}
 .mem{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;margin:4px 10px 0 0}
 .mem i{width:8px;height:8px;border-radius:50%;background:var(--off)}
-.mem.idle i{background:var(--free)} .mem.busy i{background:var(--busy)} .mem.error i{background:var(--warn)} .mem.down i{background:var(--down)}
+.mem.idle i{background:var(--free)} .mem.busy i{display:none} .mem.error i{background:var(--warn)} .mem.down i{background:var(--down)}
 .members{display:flex;flex-direction:column;gap:2px}
 .members label{display:flex;align-items:center;gap:8px;margin:0;font-size:13px;color:var(--ink)}
 .members input{width:auto}
@@ -277,36 +296,55 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
   </div>
   <div class="stbar">
     <div class="seg" id="rangeSeg">
-      <button data-v="7">7 Tage</button><button data-v="30" class="on">30 Tage</button><button data-v="90">90 Tage</button><button data-v="365">1 Jahr</button>
+      <button data-v="1">Tag</button><button data-v="7">7 Tage</button><button data-v="30" class="on">30 Tage</button><button data-v="90">90 Tage</button><button data-v="365">1 Jahr</button>
     </div>
     <div class="seg" id="bySeg">
       <button data-v="server" class="on">nach Server</button><button data-v="model">nach Modell</button>
     </div>
+    <div class="seg" id="daySeg" hidden>
+      <button data-v="util" class="on">Auslastung</button><button data-v="requests">Anfragen</button><button data-v="queue">Warteschlange</button>
+    </div>
+    <select id="dayServer" hidden style="width:auto"></select>
     <div class="seg" id="metricSeg">
       <button data-v="requests" class="on">Anfragen</button><button data-v="duration">Rechenzeit</button><button data-v="avg">Ø Dauer</button><button data-v="tokens">Tokens</button>
     </div>
   </div>
-  <div class="chartbox">
+  <div id="daypanel" hidden>
+    <div class="dtiles" id="daytiles"></div>
+    <div class="chartbox">
+      <div class="charttitle" id="daytitle"></div>
+      <div class="legend" id="daylegend"></div>
+      <div id="daychart"></div>
+      <div id="daytip" class="tipbox"></div>
+    </div>
+    <div class="tbl" style="margin-top:12px"><table data-sort>
+      <thead><tr><th>Server</th><th class="n">Slots</th><th class="n" title="belegte Slots gerade eben">jetzt</th><th class="n" title="Anteil der Slot-Zeit seit Mitternacht, in der gerechnet wurde">heute</th>
+        <th class="n" id="dayavghead" title="gleicher Zeitraum (00:00 bis jetzt) an den letzten Tagen">Ø letzte Tage</th><th class="n">Ø ganzer Tag</th><th class="n">Anfragen heute</th><th class="n">Ø Anfragen bis jetzt</th></tr></thead>
+      <tbody id="dayservers"></tbody>
+    </table></div>
+  </div>
+  <div class="chartbox" id="mainchart">
     <div class="charttitle" id="charttitle"></div>
     <div class="legend" id="legend"></div>
     <div id="chart"></div>
     <div id="tip"></div>
   </div>
-  <div class="tbl" style="margin-top:12px"><table>
+  <div class="tbl" style="margin-top:12px"><table data-sort>
     <thead><tr><th id="stbyhead">Server</th><th class="n">Anfragen</th><th class="n">Anteil</th><th class="n">Fehler</th><th class="n">Abgebr.</th>
       <th class="n">Rechenzeit</th><th class="n">Ø Dauer</th><th class="n">Max. Dauer</th><th class="n">Ø 1. Byte</th><th class="n">Ø Wartezeit</th>
       <th class="n" title="Sicht des Servers: Prompt-Tokens, die der Server bekommt">Tokens Ein<br><span class="muted" style="font-weight:400">Prompt</span></th><th class="n" title="Sicht des Servers: Antwort-Tokens, die der Server erzeugt">Tokens Aus<br><span class="muted" style="font-weight:400">Antwort</span></th><th class="n">Ø tok/s</th><th class="n">Tag-Fehler</th><th class="n">Daten</th>
       <th class="n" title="Eingehend: nach den Preisen der API-Tokens">Einnahmen</th><th class="n" title="Ausgehend: nach den Preisen der Server">Kosten Server</th><th class="n">Saldo</th></tr></thead>
     <tbody id="sttotals"></tbody>
   </table></div>
-  <h3 class="subhead">Einnahmen pro API-Token im Zeitraum <span class="muted" style="font-weight:400">(Preise der API-Tokens)</span></h3>
-  <div class="tbl"><table>
-    <thead><tr><th>API-Token</th><th class="n">Anfragen</th><th class="n" title="Sicht der Anwendung: gesendete Prompt-Tokens">Tokens Aus<br><span class="muted" style="font-weight:400">Prompt</span></th><th class="n" title="Sicht der Anwendung: empfangene Antwort-Tokens">Tokens Ein<br><span class="muted" style="font-weight:400">Antwort</span></th><th class="n">Einnahmen</th></tr></thead>
-    <tbody id="sttokens"></tbody>
+  <h3 class="subhead">Warteschlange <span class="muted" style="font-weight:400" id="qsub"></span></h3>
+  <div class="tbl"><table data-sort>
+    <thead><tr><th>Tag</th><th class="n">Anfragen</th><th class="n" title="mussten mindestens 0,25 s auf einen freien Server warten">gewartet</th><th class="n">Anteil</th>
+      <th class="n" title="Wartezeit pro Anfrage, über alle Anfragen">Ø Wartezeit</th><th class="n" title="Ø Wartezeit der Anfragen, die warten mussten">Ø wenn gewartet</th><th class="n">Max. Wartezeit</th><th class="n">Max. Länge</th><th class="n" title="Queue voll, Timeout oder kein Server erreichbar">abgelehnt</th></tr></thead>
+    <tbody id="stqueue"></tbody>
   </table></div>
   <details>
     <summary id="stdaysum">Pro Tag und Server</summary>
-    <div class="tbl"><table>
+    <div class="tbl"><table data-sort>
       <thead><tr><th>Tag</th><th id="stbyhead2">Server</th><th class="n">Anfragen</th><th class="n">Fehler</th><th class="n">Abgebr.</th>
         <th class="n">Rechenzeit</th><th class="n">Ø Dauer</th><th class="n">Max. Dauer</th><th class="n">Ø 1. Byte</th><th class="n">Ø Wartezeit</th>
         <th class="n" title="Sicht des Servers: Prompt-Tokens, die der Server bekommt">Tokens Ein<br><span class="muted" style="font-weight:400">Prompt</span></th><th class="n" title="Sicht des Servers: Antwort-Tokens, die der Server erzeugt">Tokens Aus<br><span class="muted" style="font-weight:400">Antwort</span></th><th class="n">Ø tok/s</th><th class="n">Tag-Fehler</th><th class="n">Daten</th>
@@ -319,11 +357,11 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
   <div id="page-recent" hidden>
   <div class="sechead">
     <h2>Letzte Anfragen</h2>
-    <div class="row"><label class="chkf"><input type="checkbox" id="onlytag"> nur Antworten mit Tag-Fehlern</label>
+    <div class="row"><span id="sessfilter"></span><label class="chkf"><input type="checkbox" id="onlytag"> nur Antworten mit Tag-Fehlern</label>
     <span class="srcnote" id="recentnote"></span></div>
   </div>
-  <div class="tbl scroll"><table>
-    <thead><tr><th>Zeit</th><th>#</th><th>Modell</th><th>Gruppe</th><th>Client</th><th>Server</th><th>Status</th>
+  <div class="tbl scroll"><table data-sort>
+    <thead><tr><th>Zeit</th><th class="n">#</th><th title="Gehört zur gleichen Unterhaltung/Agenten-Sitzung – anklicken zum Filtern">Session</th><th>Modell</th><th>Gruppe</th><th>Client</th><th>Server</th><th>Status</th>
       <th class="n">Wartezeit</th><th class="n">1. Byte</th><th class="n">Dauer</th><th class="n" title="Prompt-Tokens / Antwort-Tokens">Tokens<br><span class="muted" style="font-weight:400">Prompt / Antwort</span></th><th class="n">Tok/s</th><th class="n" title="nach Preis des API-Tokens">Einnahme</th><th class="n" title="nach Preis des Servers">Kosten Server</th><th>Tags</th></tr></thead>
     <tbody id="recent"></tbody>
   </table></div>
@@ -333,7 +371,11 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
     <h2>Ereignisse</h2>
     <div class="row"><span class="srcnote" id="evnote"></span><button class="danger" onclick="clearEvents()">Protokoll leeren</button></div>
   </div>
-  <div class="tbl scroll"><table>
+  <div class="filterbar">
+    <input id="evq" placeholder="Filtern (Server, Token, Text …)" autocomplete="off">
+    <select id="evkind" style="width:auto"><option value="">alle Ereignisse</option></select>
+  </div>
+  <div class="tbl scroll"><table data-sort>
     <thead><tr><th>Zeit</th><th>Ereignis</th><th>Betrifft</th><th>Details</th><th>E-Mail</th></tr></thead>
     <tbody id="events"></tbody>
   </table></div>
@@ -377,14 +419,20 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
     </div>
   </div>
   <div id="accessnote" class="srcnote" style="margin-bottom:8px"></div>
-  <div class="tbl"><table>
-    <thead><tr><th>Name</th><th>Status</th><th>Token</th><th>Quelle</th><th>Zuletzt benutzt</th><th class="n">Anfragen</th>
+  <div class="stbar">
+    <span class="srcnote">Anfragen, Tokens und Einnahmen:</span>
+    <div class="seg" id="tokRangeSeg">
+      <button data-v="1">Heute</button><button data-v="7">7 Tage</button><button data-v="30">30 Tage</button><button data-v="90">90 Tage</button><button data-v="365">1 Jahr</button><button data-v="0" class="on">gesamt</button>
+    </div>
+  </div>
+  <div class="tbl"><table data-sort>
+    <thead><tr><th>Name</th><th>Status</th><th>Token</th><th>Quelle</th><th data-type="date">Zuletzt benutzt</th><th class="n">Anfragen</th>
       <th class="n" title="Sicht der Anwendung: Preis pro 1 Mio. gesendete Prompt-Tokens / empfangene Antwort-Tokens">Preis Aus / Ein<br><span class="muted" style="font-weight:400">Prompt / Antwort, pro 1 Mio.</span></th>
-      <th class="n" title="Sicht der Anwendung: gesendete Prompt-Tokens / empfangene Antwort-Tokens">Tokens Aus / Ein<br><span class="muted" style="font-weight:400">Prompt / Antwort</span></th><th class="n">Einnahmen gesamt</th><th class="n">Kostendeckel</th><th></th></tr></thead>
+      <th class="n" title="Sicht der Anwendung: gesendete Prompt-Tokens">Tokens Aus<br><span class="muted" style="font-weight:400">Prompt</span></th><th class="n" title="Sicht der Anwendung: empfangene Antwort-Tokens">Tokens Ein<br><span class="muted" style="font-weight:400">Antwort</span></th><th class="n" id="tokrevhead">Einnahmen gesamt</th><th class="n">Kostendeckel</th><th data-nosort></th></tr></thead>
     <tbody id="tokens"></tbody>
   </table></div>
 
-  <p class="srcnote">Preise und Tokens hier aus Sicht der Anwendung: Aus = gesendeter Prompt, Ein = empfangene Antwort. Ausgehende Preise (was ein Server kostet) stellst du beim jeweiligen Server ein. Beides steht im Tab Statistik.</p>
+  <p class="srcnote">Preise und Tokens hier aus Sicht der Anwendung: Aus = gesendeter Prompt, Ein = empfangene Antwort. Ausgehende Preise (was ein Server kostet) stellst du beim jeweiligen Server ein. Die Einnahmen pro Server und Modell stehen im Tab Statistik.</p>
   </div>
 </main>
 <dialog id="dlg">
@@ -626,7 +674,7 @@ const STATE = {
   disabled: {label:'deaktiviert', icon:'–', text:'bekommt keine neuen Anfragen'},
   capped:   {label:'Kostendeckel', icon:'€', text:'Kostendeckel erreicht – bekommt bis zum nächsten Zeitraum keine Anfragen'},
 };
-const stateLabel = b => STATE[b.state].label + (b.state === 'busy' && b.max > 1 ? ` ${b.active}/${b.max}` : '');
+const stateLabel = b => (b.group_disabled && b.enabled ? 'Gruppe aus' : STATE[b.state].label) + (b.state === 'busy' && b.max > 1 ? ` ${b.active}/${b.max}` : '');
 
 // state counters in the tile row; the tile lights up when the count is > 0, hover shows which servers
 function renderOverview(st) {
@@ -658,6 +706,7 @@ function activity(b) {
   if ((b.state === 'down' || !b.healthy) && b.health_msg) return `<div class="act err" title="${esc(b.health_msg)}">${esc(b.health_msg)}</div>`;
   if (b.state === 'capped') return `<div class="act" style="color:var(--warn)">Kostendeckel erreicht: ${esc(capText(b))} – bekommt keine Anfragen bis zum nächsten Zeitraum</div>`;
   if (b.last_error) return `<div class="act err" title="${esc(b.last_error)}">Letzter Fehler ${hms(b.last_error_at)}: ${esc(b.last_error)}</div>`;
+  if (b.group_disabled) return `<div class="act muted">Gruppe „${esc(b.group)}“ deaktiviert – bekommt keine neuen Anfragen</div>`;
   return `<div class="act muted">${b.state === 'disabled' ? 'deaktiviert – bekommt keine neuen Anfragen' : 'wartet auf Anfragen'}</div>`;
 }
 const PERIOD = {day: 'Tag', month: 'Monat', total: 'gesamt'};
@@ -675,7 +724,7 @@ function backendCard(b) {
   const chips = b.models.map(m => `<span class="mchip${fl && m.toLowerCase() === fl ? ' hit' : ''}">${esc(m)}</span>`).join('');
   return `<div class="card ${state}${dim}">
     <div class="row"><div class="ell"><div class="name ell">${esc(b.name)}</div><div class="url ell" title="${esc(b.url)}">${esc(b.url)}</div></div>
-      <span class="pill">${b.state === 'busy' ? `<i class="pdot" style="${phase(1600)}"></i>` : ''}${stateLabel(b)}</span></div>
+      <span class="pill">${b.state === 'busy' ? `<i class="play" style="${phase(1400)}"></i>` : ''}${stateLabel(b)}</span></div>
     <div class="line badges">
       <span class="gbadge" title="Kleinere Priorität wird bevorzugt">Prio ${b.priority}</span>
       ${b.group ? `<span class="gbadge">Gruppe ${esc(b.group)}</span>` : ''}
@@ -723,7 +772,7 @@ function listRow(b) {
     : ((b.state === 'down' || !b.healthy) && b.health_msg) ? `<span class="bad" title="${esc(b.health_msg)}">${esc(b.health_msg)}</span>`
     : b.last_error ? `<span class="bad" title="${esc(b.last_error)}">${esc(b.last_error)}</span>` : '<span class="muted">–</span>';
   return `<div class="lrow ${b.state}${dim}">
-    <span class="ldot" title="${esc(STATE[b.state].text)}" ${b.state === 'busy' ? `style="${phase(1600)}"` : ''}></span>
+    ${b.state === 'busy' ? `<span class="lplay" title="${esc(STATE.busy.text)}"><i class="play" style="${phase(1400)}"></i></span>` : `<span class="ldot" title="${esc(STATE[b.state].text)}"></span>`}
     <span class="lname ell" title="${esc(b.url)}"><b>${esc(b.name)}</b> <span class="muted">${esc(b.url.replace(/^https?:\/\//, ''))}</span></span>
     <span class="lstate">${esc(stateLabel(b))}</span>
     <span class="lslots" title="belegte Slots">${b.active}/${b.max}</span>
@@ -749,7 +798,7 @@ function renderList(st) {
     const q = (st.groups.find(x => x.name === g.name) || {}).queued || 0;
     return `<div class="lgroup">
       <div class="lghead" onclick='toggleGroup(${attr(key)})'>
-        <span class="chev">${closed ? '▸' : '▾'}</span><b>${g.name ? esc(g.name) : 'Ohne Gruppe'}</b>
+        <span class="chev">${closed ? '▸' : '▾'}</span><b>${g.name ? esc(g.name) : 'Ohne Gruppe'}</b>${(st.groups.find(x => x.name === g.name) || {}).disabled ? ' <span class="tstate goff">deaktiviert</span>' : ''}
         <span class="muted">${g.members.length} Server · ${busy} beschäftigt${down ? ` · <span class="bad">${down} down</span>` : ''}${q ? ` · ${q} wartend` : ''}</span>
       </div>
       ${closed ? '' : (g.members.map(listRow).join('') || '<div class="lrow empty">keine Server</div>')}
@@ -766,7 +815,55 @@ function setHTML(el, html) {
   if (pointerDown || el.__html === html) return;
   el.__html = html;
   el.innerHTML = html;
+  if (el.tagName === 'TBODY') applySort(el);
 }
+
+// ---------- sortable tables: click a column header; the order survives re-renders ----------
+const sortState = {}; // tbody id → {col, dir}
+function parseNum(t) {
+  if (!t || /^[–-]$/.test(t)) return null;
+  if (/^[\d.]+\s*(ms|s|min|h|d)\b/.test(t)) // durations from dur(): "850 ms", "1.5 s", "3 min 4 s"
+    return [...t.matchAll(/(\d+(?:\.\d+)?)\s*(ms|s|min|h|d)(?![a-zA-Z])/g)].reduce((a, m) => a + parseFloat(m[1]) * {ms: 1, s: 1e3, min: 6e4, h: 36e5, d: 864e5}[m[2]], 0);
+  const b = t.match(/^(\d+(?:\.\d+)?)\s*(B|KB|MB)$/); if (b) return parseFloat(b[1]) * {B: 1, KB: 1024, MB: 1048576}[b[2]];
+  const m = t.match(/-?\d[\d.]*(?:,\d+)?/); if (!m) return null;
+  let v = parseFloat(m[0].replace(/\./g, '').replace(',', '.'));
+  if (/\sMio\./.test(t)) v *= 1e6; else if (/\d\s*k\b/.test(t)) v *= 1e3;
+  return v;
+}
+function sortVal(td, num) {
+  if (!td) return null;
+  if (td.dataset.v != null) { const n = Number(td.dataset.v); return td.dataset.v === '' ? null : isNaN(n) ? td.dataset.v : n; }
+  const t = td.textContent.trim();
+  return num ? parseNum(t) : (t === '–' || t === '' ? null : t);
+}
+function applySort(tbody) {
+  const st = sortState[tbody.id]; if (!st) return;
+  const th = tbody.closest('table').tHead.rows[0].cells[st.col]; if (!th) return;
+  const num = th.classList.contains('n');
+  const rows = [...tbody.rows], fixed = rows.filter(r => r.classList.contains('sum') || r.querySelector('td.empty'));
+  const data = rows.filter(r => !fixed.includes(r)).map(r => [r, sortVal(r.cells[st.col], num)]);
+  data.sort(([, x], [, y]) => {
+    if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1; // empty cells always last
+    return st.dir * (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'de', {numeric: true}));
+  });
+  tbody.append(...data.map(d => d[0]), ...fixed);
+}
+function initSortable(table) {
+  const tbody = table.tBodies[0];
+  [...table.tHead.rows[0].cells].forEach((th, i) => {
+    if (th.hasAttribute('data-nosort')) return;
+    th.classList.add('sortable'); th.title = (th.title ? th.title + '\n' : '') + 'Klicken zum Sortieren';
+    th.addEventListener('click', () => {
+      const cur = sortState[tbody.id];
+      const dir = cur && cur.col === i ? -cur.dir : (th.classList.contains('n') ? -1 : 1); // numbers: largest first
+      sortState[tbody.id] = {col: i, dir};
+      table.tHead.querySelectorAll('th').forEach(h => h.classList.remove('asc', 'desc'));
+      th.classList.add(dir > 0 ? 'asc' : 'desc');
+      applySort(tbody);
+    });
+  });
+}
+document.querySelectorAll('table[data-sort]').forEach(initSortable);
 function renderServers(st) {
   if (view === 'list') renderList(st);
   else setHTML($('backends'), st.backends.length ? st.backends.map(backendCard).join('')
@@ -794,6 +891,7 @@ async function refresh() {
       : '<div class="empty">Leer – alle Anfragen werden sofort bedient.</div>';
     renderGroups(st);
     renderModelList(st);
+    if (location.hash === '#statistik' && stRange === 1) renderDay(false);
   } catch (e) { /* shown via live indicator */ }
   const stale = Date.now() - lastOk > 4000;
   $('live').classList.toggle('stale', stale);
@@ -832,26 +930,29 @@ function renderGroups(st) {
   const hitGroups = route?.mode === 'group' ? route.group.split(',') : [];
   const stateOf = n => st.backends.find(b => b.name === n)?.state || 'disabled';
   const ungrouped = st.backends.filter(b => !b.group).map(b => b.name);
+  const memChip = n => { const s = stateOf(n); return `<span class="mem ${s}">${s === 'busy' ? `<i class="play" style="${phase(1400)}"></i>` : '<i></i>'}${esc(n)}</span>`; };
   setHTML($('groups'), (st.groups.length ? st.groups.map(g => {
     const pats = g.models.filter(m => m.includes('*'));
     const chips = g.available.map(m => `<span class="mchip${fl && m.toLowerCase() === fl ? ' hit' : ''}">${esc(m)}</span>`)
       .concat(pats.map(m => `<span class="mchip pat" title="Muster">${esc(m)}</span>`)).join('');
-    return `<div class="gcard${hitGroups.includes(g.name) ? ' hit' : ''}">
-      <div class="row"><div class="name">${esc(g.name)}</div>
+    return `<div class="gcard${hitGroups.includes(g.name) ? ' hit' : ''}${g.disabled ? ' off' : ''}">
+      <div class="row"><div class="name">${esc(g.name)} ${g.disabled ? '<span class="tstate goff">deaktiviert</span>' : ''}</div>
         <span class="gbadge">${g.members.length} Server${g.queued ? ' · ' + g.queued + ' wartend' : ''}</span></div>
       <div class="lbl">Server</div>
-      <div>${g.members.length ? g.members.map(n => `<span class="mem ${stateOf(n)}"><i></i>${esc(n)}</span>`).join('') : '<span class="muted" style="font-size:12.5px">noch keine</span>'}</div>
+      <div>${g.members.length ? g.members.map(memChip).join('') : '<span class="muted" style="font-size:12.5px">noch keine</span>'}</div>
       <div class="lbl">Modelle${g.auto_models ? ' <span style="text-transform:none;letter-spacing:0">(inkl. von den Servern gemeldete)</span>' : ''}</div>
       <div class="mchips">${chips || '<span class="muted" style="font-size:12.5px">keine – Modelle eintragen oder Server melden lassen</span>'}</div>
       ${g.force_model ? `<div class="fb">Modellname erzwungen: <b>${esc(g.force_model)}</b></div>` : ''}
       ${g.fallback ? `<div class="fb">Fallback → <b>${esc(g.fallback)}</b> nach ${g.fallback_after_sec} s Wartezeit${g.fallback_model ? ` · Modell dort: <b>${esc(g.fallback_model)}</b>` : ''}</div>` : ''}
+      ${g.disabled ? `<div class="fb">Server dieser Gruppe bekommen keine Anfragen – ${g.fallback ? `Anfragen gehen direkt an <b>${esc(g.fallback)}</b>` : 'Anfragen gehen an andere Server, die das Modell melden'}</div>` : ''}
       <div class="btns">
+        <button onclick='toggleGroupOff(${attr(g.name)}, ${!g.disabled})'>${g.disabled ? 'Aktivieren' : 'Deaktivieren'}</button>
         <button onclick='openGroup(${attr(g.name)})'>Bearbeiten</button>
         <button class="danger" onclick='deleteGroup(${attr(g.name)})'>Löschen</button>
       </div></div>`;
   }).join('') : '<div class="empty-card">Keine Gruppen – alle Server teilen sich alle Modelle. Mit Gruppen gehen Anfragen nur an die Server, die das Modell bedienen.</div>')
   + (st.groups.length && ungrouped.length ? `<div class="gcard"><div class="name">Ohne Gruppe</div>
-      <div class="lbl">Server</div><div>${ungrouped.map(n => `<span class="mem ${stateOf(n)}"><i></i>${esc(n)}</span>`).join('')}</div>
+      <div class="lbl">Server</div><div>${ungrouped.map(memChip).join('')}</div>
       <div class="hint" style="margin-top:10px">Bekommen Modelle, die sie selbst melden, und Anfragen für Modelle, die keine Gruppe kennt.</div></div>` : ''));
 }
 let editingGroup = null;
@@ -891,6 +992,12 @@ $('gform').addEventListener('submit', async ev => {
   if (!ok) { $('g-err').textContent = $('formerr').textContent; return; }
   $('gdlg').close(); toast('Gespeichert'); updateRoute();
 });
+function toggleGroupOff(name, off) {
+  const g = current?.groups.find(x => x.name === name);
+  if (off && !confirm(`Gruppe „${name}“ deaktivieren?\nIhre Server bekommen keine neuen Anfragen mehr (laufende laufen zu Ende).\n` +
+    (g?.fallback ? `Anfragen für die Gruppe gehen sofort an die Fallback-Gruppe „${g.fallback}“.` : 'Die Gruppe hat keinen Fallback: Anfragen gehen nur noch an andere Server, die das Modell selbst melden.'))) return;
+  call('POST', `/groups/${enc(name)}/${off ? 'disable' : 'enable'}`);
+}
 function deleteGroup(name) {
   if (confirm(`Gruppe „${name}“ löschen? Die Server bleiben erhalten und sind danach ohne Gruppe.`)) call('DELETE', `/groups/${enc(name)}`);
 }
@@ -906,23 +1013,36 @@ async function loadRecent() {
   renderRecent();
 }
 $('onlytag').addEventListener('change', () => renderRecent());
+let sessFilter = '';
+const sessHue = id => parseInt(id.slice(0, 6), 16) % 360;
+const sessChip = (id, src, n) => `<span class="sess" style="color:hsl(${sessHue(id)} 62% 46%);background:hsl(${sessHue(id)} 62% 50% / .13)"
+  title="${esc((src || '') + (n ? `\n${n} Anfragen in der Liste` : '') + '\nAnklicken: nur diese Session zeigen')}" onclick='setSess(${attr(id)})'>${esc(id)}</span>`;
+function setSess(id) {
+  sessFilter = sessFilter === id ? '' : id;
+  $('sessfilter').innerHTML = sessFilter ? `<span class="fpill">Session ${esc(sessFilter)} <button title="Filter entfernen" onclick="setSess('')">✕</button></span>` : '';
+  renderRecent();
+}
 function renderRecent() {
   const onlyTag = $('onlytag').checked;
-  const rows = onlyTag ? recent.filter(r => r.tag_issues?.length) : recent;
+  let rows = onlyTag ? recent.filter(r => r.tag_issues?.length) : recent;
+  if (sessFilter) rows = rows.filter(r => r.session === sessFilter);
   const nTag = recent.filter(r => r.tag_issues?.length).length;
-  $('recentnote').textContent = recent.length ? `${recent.length} von max. 300${nTag ? ` · ${nTag} mit Tag-Fehlern` : ''}` : '';
-  $('recent').innerHTML = rows.length ? rows.map(r => {
+  const perSess = {}; for (const r of recent) if (r.session) perSess[r.session] = (perSess[r.session] || 0) + 1;
+  const nSess = Object.keys(perSess).length;
+  $('recentnote').textContent = recent.length ? `${recent.length} von max. 300${nSess ? ` · ${nSess} Sessions` : ''}${nTag ? ` · ${nTag} mit Tag-Fehlern` : ''}` : '';
+  setHTML($('recent'), rows.length ? rows.map(r => {
     const tps = tpsFmt(r.gen_tps);
     const tagCell = r.tag_issues?.length ? `<td class="tagerr" title="${esc(r.tag_issues.join('\n'))}">⚠ ${esc(r.tag_issues[0])}${r.tag_issues.length > 1 ? ` (+${r.tag_issues.length - 1})` : ''}</td>` : '<td class="muted">–</td>';
     return `<tr>
-      <td>${hms(r.ended_at)}</td><td>${r.id}</td><td>${esc(r.model || r.path)}${r.effective_model ? ` <span class="muted">→ ${esc(r.effective_model)}</span>` : ''}</td><td>${esc(r.group || '–')}</td>
+      <td data-v="${Date.parse(r.ended_at) || ''}">${hms(r.ended_at)}</td><td class="n">${r.id}</td>
+      <td data-v="${esc(r.session || '')}">${r.session ? sessChip(r.session, r.session_src, perSess[r.session]) : '<span class="muted">–</span>'}</td><td>${esc(r.model || r.path)}${r.effective_model ? ` <span class="muted">→ ${esc(r.effective_model)}</span>` : ''}</td><td>${esc(r.group || '–')}</td>
       <td>${r.token ? esc(r.token) : '<span class="muted">' + esc(r.client) + '</span>'}</td>
       <td>${esc(r.backend || '–')}${r.trail ? ` <span class="retry" title="${esc(r.trail)}">↻ ${r.attempts}×</span>` : r.attempts > 1 ? ' <span class="muted">(' + r.attempts + '×)</span>' : ''}</td>
       <td class="${r.status >= 200 && r.status < 400 ? 'ok' : 'bad'}" title="${esc(r.error)}">${r.status}${r.error ? ' · ' + esc(r.error.slice(0, 40)) : ''}</td>
       <td class="n">${dur(r.queue_ms)}</td><td class="n">${dur(r.ttfb_ms)}</td><td class="n">${dur(r.duration_ms)}</td>
       <td class="n">${r.tokens_in || r.tokens_out ? num(r.tokens_in) + ' / ' + num(r.tokens_out) : '–'}</td><td class="n">${tps}</td>
       <td class="n">${r.cost ? money(r.cost) : '–'}</td><td class="n">${r.backend_cost ? money(r.backend_cost) : '–'}</td>${tagCell}</tr>`; }).join('')
-    : `<tr><td colspan="15" class="empty">${onlyTag ? 'Keine Antworten mit Tag-Fehlern.' : 'Noch keine Anfragen.'}</td></tr>`;
+    : `<tr><td colspan="16" class="empty">${sessFilter ? 'Keine Anfragen dieser Session in der Liste.' : onlyTag ? 'Keine Antworten mit Tag-Fehlern.' : 'Noch keine Anfragen.'}</td></tr>`);
 }
 
 // ---------------- API access tokens ----------------
@@ -932,26 +1052,45 @@ async function loadTokens(interactive) {
   let resp;
   try { resp = await fetch(base + '/api/tokens', {headers, cache:'no-store'}); } catch { return; }
   if (resp.status === 401) {
-    $('tokens').innerHTML = `<tr><td colspan="11" class="empty">Zum Anzeigen wird der Admin-Token benötigt. <button onclick="askAdmin()">Admin-Token eingeben</button></td></tr>`;
+    $('tokens').innerHTML = `<tr><td colspan="12" class="empty">Zum Anzeigen wird der Admin-Token benötigt. <button onclick="askAdmin()">Admin-Token eingeben</button></td></tr>`;
     return;
   }
   if (!resp.ok) return;
   tokenList = await resp.json();
-  const list = tokenList;
-  $('tokens').innerHTML = list.length ? list.map(t => `<tr>
+  if (tokRange) {
+    try { tokStats = await (await fetch(`${base}/api/stats?days=${tokRange}`, {cache: 'no-store'})).json(); } catch { return; }
+  }
+  renderTokens();
+}
+let tokRange = 0, tokStats = null;
+const TOK_RANGE = {1: 'heute', 7: '7 Tage', 30: '30 Tage', 90: '90 Tage', 365: '1 Jahr'};
+function renderTokens() {
+  // numbers: the token's totals ("gesamt") or the statistics of the chosen range
+  const use = t => !tokRange ? t : (tokStats?.token_totals?.[t.name] || {requests: 0, tokens_in: 0, tokens_out: 0, cost: 0});
+  const list = tokenList.map(t => ({...t, u: use(t)}));
+  if (tokRange && tokStats) for (const n of tokStats.tokens || []) if (!tokenList.some(t => t.name === n))
+    list.push({name: n, gone: true, u: tokStats.token_totals[n]}); // deleted since, but used in the range
+  $('tokrevhead').innerHTML = tokRange ? `Einnahmen<br><span class="muted" style="font-weight:400">${TOK_RANGE[tokRange]}</span>` : 'Einnahmen gesamt';
+  const sum = list.reduce((a, t) => ({requests: a.requests + (t.u.requests || 0), tokens_in: a.tokens_in + (t.u.tokens_in || 0), tokens_out: a.tokens_out + (t.u.tokens_out || 0), cost: a.cost + (t.u.cost || 0)}), {requests: 0, tokens_in: 0, tokens_out: 0, cost: 0});
+  setHTML($('tokens'), list.length ? list.map(t => t.gone ? `<tr class="muted">
+    <td>${esc(t.name)}</td><td><span class="tstate off">gelöscht</span></td><td>–</td><td>–</td><td>–</td>
+    <td class="n">${num(t.u.requests)}</td><td class="n">–</td><td class="n">${ktok(t.u.tokens_in)}</td><td class="n">${ktok(t.u.tokens_out)}</td><td class="n">${money(t.u.cost)}</td><td class="n">–</td><td></td></tr>` : `<tr>
     <td>${esc(t.name)}</td>
     <td>${t.disabled ? '<span class="tstate off">gesperrt</span>' : t.capped ? '<span class="tstate capped" title="Kostendeckel erreicht">Deckel erreicht</span>' : '<span class="tstate">aktiv</span>'}</td>
     <td style="font-family:var(--mono)">…${esc(t.hint)}</td>
     <td>${t.source === 'env' ? 'API_KEYS' : 'Web-UI'}</td>
-    <td>${dateFmt(t.last_used)}</td><td class="n">${num(t.requests)}</td>
-    <td class="n">${t.price_in || t.price_out ? money(t.price_in) + ' / ' + money(t.price_out) : '<span class="muted">kein Preis</span>'}</td>
-    <td class="n">${ktok(t.tokens_in)} / ${ktok(t.tokens_out)}</td><td class="n"><b>${money(t.cost)}</b></td>
-    <td class="n capcell">${t.cost_cap ? `${money(t.cap_spent)} / ${money(t.cost_cap)}<br><span class="muted">${t.cap_period === 'total' ? 'gesamt' : 'pro ' + PERIOD[t.cap_period || 'month']}</span>${capBar(t)}` : '<span class="muted">–</span>'}</td>
+    <td data-v="${Date.parse(t.last_used) || ''}">${dateFmt(t.last_used)}</td><td class="n">${num(t.u.requests)}</td>
+    <td class="n" data-v="${(t.price_in || 0) + (t.price_out || 0)}">${t.price_in || t.price_out ? money(t.price_in) + ' / ' + money(t.price_out) : '<span class="muted">kein Preis</span>'}</td>
+    <td class="n">${ktok(t.u.tokens_in)}</td><td class="n">${ktok(t.u.tokens_out)}</td><td class="n"><b>${money(t.u.cost)}</b></td>
+    <td class="n capcell" data-v="${t.cost_cap ? (t.cap_spent || 0) / t.cost_cap : ''}">${t.cost_cap ? `${money(t.cap_spent)} / ${money(t.cost_cap)}<br><span class="muted">${t.cap_period === 'total' ? 'gesamt' : 'pro ' + PERIOD[t.cap_period || 'month']}</span>${capBar(t)}` : '<span class="muted">–</span>'}</td>
     <td style="text-align:right;white-space:nowrap"><button onclick='openPrice(${attr(t.name)})' title="Preis und Kostendeckel">Bearbeiten</button>
       <button onclick='toggleToken(${attr(t.name)}, ${!t.disabled})'>${t.disabled ? 'Freigeben' : 'Sperren'}</button>
       ${t.source === 'env' ? '' : `<button class="danger" onclick='deleteToken(${attr(t.name)})'>Löschen</button>`}</td></tr>`).join('')
-    : '<tr><td colspan="11" class="empty">Keine Tokens – die LLM-API ist offen.</td></tr>';
+    + (list.length > 1 ? `<tr class="sum"><td>Summe</td><td></td><td></td><td></td><td></td><td class="n">${num(sum.requests)}</td><td></td>
+      <td class="n">${ktok(sum.tokens_in)}</td><td class="n">${ktok(sum.tokens_out)}</td><td class="n">${money(sum.cost)}</td><td></td><td></td></tr>` : '')
+    : '<tr><td colspan="12" class="empty">Keine Tokens – die LLM-API ist offen.</td></tr>');
 }
+segment('tokRangeSeg', v => { tokRange = +v; loadTokens(); });
 let tokenList = [], pricing = null;
 async function toggleToken(name, disable) {
   if (disable && !confirm(`API-Token „${name}“ sperren? Anfragen damit werden mit HTTP 403 abgelehnt.`)) return;
@@ -1006,15 +1145,26 @@ function renderAccessNote(st) {
 // ---------------- report: events & e-mail ----------------
 const EVENT_ORDER = ['server_down', 'server_error', 'server_up', 'server_capped', 'server_uncapped', 'token_capped', 'token_uncapped'];
 let notifyCfg = null;
+let events = [];
 async function loadEvents() {
-  let list;
-  try { list = await (await fetch(base + '/api/events', {cache: 'no-store'})).json(); } catch { return; }
-  $('evnote').textContent = list.length ? `${list.length} Ereignisse` : '';
+  try { events = await (await fetch(base + '/api/events', {cache: 'no-store'})).json(); } catch { return; }
+  const kinds = {}; for (const e of events) kinds[e.kind] = e.title;
+  const sel = $('evkind'), cur = sel.value;
+  const opts = '<option value="">alle Ereignisse</option>' + Object.entries(kinds).sort((a, b) => a[1].localeCompare(b[1])).map(([k, t]) => `<option value="${esc(k)}">${esc(t)}</option>`).join('');
+  if (sel.__opts !== opts) { sel.__opts = opts; sel.innerHTML = opts; sel.value = cur; }
+  renderEvents();
+}
+$('evq').addEventListener('input', () => renderEvents());
+$('evkind').addEventListener('change', () => renderEvents());
+function renderEvents() {
+  const q = $('evq').value.trim().toLowerCase(), kind = $('evkind').value;
+  const list = events.filter(e => (!kind || e.kind === kind) && (!q || [e.title, e.object, e.text, e.mail].some(x => (x || '').toLowerCase().includes(q))));
+  $('evnote').textContent = events.length ? (list.length < events.length ? `${list.length} von ${events.length} Ereignissen` : `${events.length} Ereignisse`) : '';
   setHTML($('events'), list.length ? list.map(e => `<tr>
-    <td>${dateFmt(e.time)}</td><td><span class="evk ${esc(e.kind)}">${esc(e.title)}</span></td><td>${esc(e.object || '–')}</td>
+    <td data-v="${Date.parse(e.time) || ''}">${dateFmt(e.time)}</td><td><span class="evk ${esc(e.kind)}">${esc(e.title)}</span></td><td>${esc(e.object || '–')}</td>
     <td class="evtext">${esc(e.text).replace(/\n/g, '<br>')}</td>
     <td class="${e.mail.startsWith('Fehler') ? 'bad' : e.mail === 'gesendet' ? 'ok' : 'muted'}" title="${esc(e.mail)}">${esc(e.mail ? shortText(e.mail, 40) : 'keine')}</td></tr>`).join('')
-    : '<tr><td colspan="5" class="empty">Noch keine Ereignisse.</td></tr>');
+    : `<tr><td colspan="5" class="empty">${events.length ? 'Keine Ereignisse für diesen Filter.' : 'Noch keine Ereignisse.'}</td></tr>`);
 }
 const shortText = (s, n) => s.length > n ? s.slice(0, n) + '…' : s;
 async function loadNotify() {
@@ -1215,20 +1365,155 @@ function renderStatTables() {
   $('stbyhead').textContent = label; $('stbyhead2').textContent = label; $('stdaysum').textContent = 'Pro Tag und ' + label;
   const all = names.reduce((a, n) => a + V.totals[n].requests, 0);
   const sw = n => `<td class="sw"><i style="background:${V.color(n)}"></i>${esc(n)}</td>`;
-  $('sttotals').innerHTML = names.length ? names.map(n => { const t = V.totals[n];
+  setHTML($('sttotals'), names.length ? names.map(n => { const t = V.totals[n];
     return `<tr>${sw(n)}<td class="n">${t.requests}</td><td class="n">${all ? Math.round(t.requests * 100 / all) : 0} %</td>${statRow(t)}</tr>`; }).join('')
-    : '<tr><td colspan="18" class="empty">Keine Anfragen in diesem Zeitraum.</td></tr>';
-  const toks = d.tokens || [];
-  const tsum = toks.reduce((a, n) => a + d.token_totals[n].cost, 0);
-  $('sttokens').innerHTML = toks.length ? toks.map(n => { const t = d.token_totals[n];
-    return `<tr><td>${esc(n)}</td><td class="n">${num(t.requests)}</td><td class="n">${ktok(t.tokens_in)}</td><td class="n">${ktok(t.tokens_out)}</td><td class="n">${money(t.cost)}</td></tr>`; }).join('')
-    + (toks.length > 1 ? `<tr><td><b>Summe</b></td><td></td><td></td><td></td><td class="n"><b>${money(tsum)}</b></td></tr>` : '')
-    : '<tr><td colspan="5" class="empty">Keine Anfragen mit API-Token in diesem Zeitraum.</td></tr>';
+    : '<tr><td colspan="18" class="empty">Keine Anfragen in diesem Zeitraum.</td></tr>');
   const rows = [];
   for (const day of [...d.days].reverse()) for (const n of names) {
-    const st = V.raw(day)[n]; if (st) rows.push(`<tr><td>${dayLong(day)}</td>${sw(n)}<td class="n">${st.requests}</td>${statRow(st)}</tr>`);
+    const st = V.raw(day)[n]; if (st) rows.push(`<tr><td data-v="${day}">${dayLong(day)}</td>${sw(n)}<td class="n">${st.requests}</td>${statRow(st)}</tr>`);
   }
-  $('stdays').innerHTML = rows.join('') || '<tr><td colspan="18" class="empty">Keine Daten.</td></tr>';
+  setHTML($('stdays'), rows.join('') || '<tr><td colspan="18" class="empty">Keine Daten.</td></tr>');
+  // queue
+  const qrow = q => `<td class="n">${num(q.requests)}</td><td class="n">${num(q.waited)}</td><td class="n">${q.requests ? Math.round(q.waited * 100 / q.requests) : 0} %</td>
+    <td class="n">${dur(avg(q.wait_ms, q.requests))}</td><td class="n">${dur(avg(q.wait_ms, q.waited))}</td><td class="n">${dur(q.max_wait_ms)}</td>
+    <td class="n">${num(q.max_len)}</td><td class="n">${q.rejected ? `<span class="bad">${num(q.rejected)}</span>` : 0}</td>`;
+  const qd = d.queue_data || {}, qdays = [...d.days].reverse().filter(day => qd[day]);
+  $('qsub').textContent = '(seit v1.2.0 gezählt)';
+  setHTML($('stqueue'), qdays.length ? qdays.map(day => `<tr><td data-v="${day}">${dayLong(day)}</td>${qrow(qd[day])}</tr>`).join('')
+    + (qdays.length > 1 && d.queue_total ? `<tr class="sum"><td>Zeitraum</td>${qrow(d.queue_total)}</tr>` : '')
+    : '<tr><td colspan="9" class="empty">Keine Daten in diesem Zeitraum.</td></tr>');
+}
+
+// ---------------- day view: utilization per hour, today vs. average of the last days ----------------
+let dayData = null, dayMetric = 'util', dayServer = '';
+async function loadDay() {
+  try { dayData = await (await fetch(`${base}/api/stats/day?days=7`, {cache: 'no-store'})).json(); } catch { return; }
+  renderDay();
+}
+const pct = v => v == null || !isFinite(v) ? '–' : (v * 100).toLocaleString('de-DE', {maximumFractionDigits: v < 0.1 ? 1 : 0}) + ' %';
+const ubar = v => `<span class="ubar"><i style="width:${Math.min(100, Math.round((v || 0) * 100))}%"></i></span>`;
+// per selection (all servers or one): slots, busy ms per hour today/avg, requests per hour
+function daySel(names) {
+  const d = dayData, z = () => Array(24).fill(0);
+  const o = {slots: 0, busy: z(), avgBusy: z(), req: z(), avgReq: z(), active: 0, max: 0};
+  for (const n of names) {
+    o.slots += d.slots[n] || 0;
+    (d.today[n] || []).forEach((h, i) => { o.busy[i] += h.busy_ms; o.req[i] += h.requests; });
+    (d.avg[n] || []).forEach((h, i) => { o.avgBusy[i] += h.busy_ms; o.avgReq[i] += h.requests; });
+  }
+  const now = new Date(), msToday = (now - new Date(now.getFullYear(), now.getMonth(), now.getDate())) || 1;
+  const hf = now.getMinutes() / 60 + now.getSeconds() / 3600, H = now.getHours();
+  for (const n of names) {
+    const b = current?.backends.find(x => x.name === n);
+    if (!b) continue;
+    o.active += b.active; o.max += b.max;
+    // running requests are booked when they end – count their time so far into the current hour
+    for (const r of b.running || []) o.busy[H] += Math.min(r.duration_ms || 0, hf * 3600000);
+  }
+  const upto = arr => arr.slice(0, H).reduce((a, v) => a + v, 0) + arr[H] * hf; // 00:00 → now, for averages
+  const sum = arr => arr.reduce((a, v) => a + v, 0);
+  o.now = o.max ? o.active / o.max : null;
+  o.today = o.slots ? sum(o.busy) / (o.slots * msToday) : null;
+  o.avgSame = o.slots && d.avg_days ? upto(o.avgBusy) / (o.slots * msToday) : null;
+  o.avgDay = o.slots && d.avg_days ? sum(o.avgBusy) / (o.slots * 86400000) : null;
+  o.reqToday = sum(o.req); o.reqAvgSame = d.avg_days ? upto(o.avgReq) : null;
+  o.H = H; o.hf = hf;
+  return o;
+}
+function renderDay(chart = true) {
+  const d = dayData; if (!d || stRange !== 1) return;
+  const opts = '<option value="">alle Server</option>' + d.backends.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  const sel = $('dayServer'); if (sel.__opts !== opts) { sel.__opts = opts; sel.innerHTML = opts; sel.value = d.backends.includes(dayServer) ? dayServer : ''; }
+  sel.hidden = dayMetric === 'queue';
+  const names = dayServer ? [dayServer] : d.backends.filter(n => d.slots[n]);
+  const o = daySel(names);
+  const qt = d.queue_today.reduce((a, q) => ({requests: a.requests + q.requests, waited: a.waited + q.waited, wait_ms: a.wait_ms + q.wait_ms, max_wait_ms: Math.max(a.max_wait_ms, q.max_wait_ms), max_len: Math.max(a.max_len, q.max_len)}), {requests: 0, waited: 0, wait_ms: 0, max_wait_ms: 0, max_len: 0});
+  const avgTxt = d.avg_days ? `Ø ${d.avg_days === 1 ? 'gestern' : `der letzten ${d.avg_days} Tage`}` : 'noch keine Vortage';
+  $('daytiles').innerHTML = `
+    <div class="tile"><b>${pct(o.now)}</b><span>Auslastung jetzt</span><small>${o.active}/${o.max} Slots belegt</small></div>
+    <div class="tile"><b>${pct(o.today)}</b><span>heute bis jetzt</span><small>${avgTxt}: ${pct(o.avgSame)}</small></div>
+    <div class="tile"><b>${pct(o.avgDay)}</b><span>Ø ganzer Tag</span><small>${avgTxt}</small></div>
+    <div class="tile"><b>${num(o.reqToday)}</b><span>Anfragen heute</span><small>Ø bis jetzt: ${o.reqAvgSame == null ? '–' : num(Math.round(o.reqAvgSame))}</small></div>
+    <div class="tile"><b>${num(qt.waited)}</b><span>mussten warten</span><small>Ø ${dur(avg(qt.wait_ms, qt.waited))} · max. ${dur(qt.max_wait_ms)} · Länge ${qt.max_len}</small></div>`;
+  $('dayavghead').textContent = d.avg_days ? `Ø ${d.avg_days === 1 ? 'gestern' : d.avg_days + ' Tage'} bis jetzt` : 'Ø letzte Tage';
+  setHTML($('dayservers'), d.backends.length ? d.backends.map(n => { const s = daySel([n]);
+    return `<tr><td class="sw"><i style="background:${seriesColor(n)}"></i>${esc(n)}</td><td class="n">${d.slots[n] || '–'}</td>
+      <td class="n">${s.max ? `${s.active}/${s.max}` : '–'}</td><td class="n" data-v="${s.today ?? ''}">${pct(s.today)}${ubar(s.today)}</td>
+      <td class="n" data-v="${s.avgSame ?? ''}">${pct(s.avgSame)}</td><td class="n" data-v="${s.avgDay ?? ''}">${pct(s.avgDay)}</td>
+      <td class="n">${num(s.reqToday)}</td><td class="n" data-v="${s.reqAvgSame ?? ''}">${s.reqAvgSame == null ? '–' : s.reqAvgSame.toLocaleString('de-DE', {maximumFractionDigits: 1})}</td></tr>`; }).join('')
+    : '<tr><td colspan="8" class="empty">Keine Server.</td></tr>');
+  if (chart) renderDayChart(o, avgTxt);
+}
+function renderDayChart(o, avgTxt) {
+  const d = dayData, box = $('daychart'), H = o.H;
+  let today, avgv, fmt, axis, title;
+  const q = d.queue_today, qa = d.queue_avg;
+  if (dayMetric === 'util') {
+    // the running hour is measured against the part of it that has passed
+    today = o.busy.map((v, i) => i > H || !o.slots ? null : v / (o.slots * 3600000 * (i === H ? Math.max(o.hf, 1 / 60) : 1)));
+    avgv = d.avg_days && o.slots ? o.avgBusy.map(v => v / (o.slots * 3600000)) : null;
+    fmt = pct; axis = v => Math.round(v * 100) + ' %';
+    title = `Auslastung pro Stunde${dayServer ? ' – ' + dayServer : ' – alle Server'} (Anteil der Slot-Zeit, in der gerechnet wurde)`;
+  } else if (dayMetric === 'requests') {
+    today = o.req.map((v, i) => i > H ? null : v); avgv = d.avg_days ? o.avgReq : null;
+    fmt = v => v == null ? '–' : v.toLocaleString('de-DE', {maximumFractionDigits: 1}); axis = v => String(Math.round(v));
+    title = `Anfragen pro Stunde${dayServer ? ' – ' + dayServer : ' – alle Server'}`;
+  } else {
+    today = q.map((x, i) => i > H ? null : x.waited); avgv = d.avg_days ? qa.map(x => x.waited) : null;
+    fmt = v => v == null ? '–' : v.toLocaleString('de-DE', {maximumFractionDigits: 1}); axis = v => String(Math.round(v));
+    title = 'Wartende Anfragen pro Stunde (mindestens 0,25 s gewartet)';
+  }
+  $('daytitle').textContent = title;
+  $('daylegend').innerHTML = `<span><i style="background:var(--busy)"></i>heute</span>` + (avgv ? `<span><i style="background:var(--warn);height:3px;border-radius:2px"></i>${avgTxt}</span>` : '');
+  let maxV = Math.max(...today.map(v => v || 0), ...(avgv || [0]));
+  const top = dayMetric === 'util' ? Math.min(1, Math.max(0.1, niceMax(maxV * 100) / 100)) : niceMax(maxV);
+  const W = Math.max(320, box.clientWidth), Ht = 220, L = 46, R = 6, T = 8, B = 24, pw = W - L - R, ph = Ht - T - B, slot = pw / 24;
+  const y = v => T + ph - Math.min(1, v / top) * ph;
+  let svg = `<svg viewBox="0 0 ${W} ${Ht}" role="img" aria-label="${esc(title)}"><defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="var(--busy)" opacity=".45"/><rect width="3" height="6" fill="var(--busy)"/></pattern></defs><g class="grid">`;
+  for (let i = 0; i <= 4; i++) { const v = top * i / 4, yy = y(v); svg += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}"/><text x="${L - 6}" y="${yy + 4}" text-anchor="end">${esc(axis(v))}</text>`; }
+  svg += '</g>';
+  const bw = Math.max(3, Math.min(26, slot * 0.66));
+  today.forEach((v, i) => {
+    const x0 = L + i * slot + (slot - bw) / 2;
+    if (v) { const y1 = y(v), h = Math.max(1, T + ph - y1), r = Math.min(3, bw / 2, h);
+      svg += `<path fill="${i === H ? 'url(#hatch)' : 'var(--busy)'}" d="M${x0},${y1 + h} V${y1 + r} Q${x0},${y1} ${x0 + r},${y1} H${x0 + bw - r} Q${x0 + bw},${y1} ${x0 + bw},${y1 + r} V${y1 + h} Z"/>`; }
+    if (i % (slot < 26 ? 3 : 2) === 0) svg += `<text x="${L + i * slot + slot / 2}" y="${Ht - 7}" text-anchor="middle">${String(i).padStart(2, '0')}</text>`;
+  });
+  if (avgv) {
+    const pts = avgv.map((v, i) => `${L + i * slot + slot / 2},${y(v)}`);
+    svg += `<polyline fill="none" stroke="var(--warn)" stroke-width="2" stroke-linejoin="round" points="${pts.join(' ')}"/>`;
+    avgv.forEach((v, i) => svg += `<circle cx="${L + i * slot + slot / 2}" cy="${y(v)}" r="2.5" fill="var(--warn)"/>`);
+  }
+  const xn = L + (H + o.hf) * slot;
+  svg += `<line x1="${xn}" x2="${xn}" y1="${T}" y2="${T + ph}" stroke="var(--muted)" stroke-dasharray="3 3"/><text x="${xn + 4}" y="${T + 10}">jetzt</text>`;
+  for (let i = 0; i < 24; i++) svg += `<rect class="hit" data-h="${i}" x="${L + i * slot}" y="${T}" width="${slot}" height="${ph}"/>`;
+  svg += `<line x1="${L}" x2="${W - R}" y1="${T + ph}" y2="${T + ph}" stroke="var(--muted)" stroke-opacity=".5"/></svg>`;
+  box.innerHTML = svg;
+  const tip = $('daytip'), cb = box.parentElement;
+  box.querySelectorAll('.hit').forEach(el => {
+    el.addEventListener('mousemove', ev => {
+      const h = +el.dataset.h, hh = String(h).padStart(2, '0');
+      let extra = '';
+      if (dayMetric === 'queue') extra = q[h].requests ? `<div class="r muted"><span>Anfragen</span><b>${q[h].requests}</b></div><div class="r muted"><span>Ø / max. Wartezeit</span><b>${dur(avg(q[h].wait_ms, q[h].waited))} / ${dur(q[h].max_wait_ms)}</b></div><div class="r muted"><span>max. Länge</span><b>${q[h].max_len}</b></div>` : '';
+      else extra = `<div class="r muted"><span>Anfragen</span><b>${o.req[h]}</b></div>`;
+      tip.innerHTML = `<div style="font-weight:600;margin-bottom:4px">${hh}:00 – ${hh}:59${h === H ? ' (läuft)' : ''}</div>
+        <div class="r"><span><i style="background:var(--busy)"></i>heute</span><b>${h > H ? '–' : fmt(today[h] || 0)}</b></div>
+        ${avgv ? `<div class="r"><span><i style="background:var(--warn)"></i>${esc(avgTxt)}</span><b>${fmt(avgv[h])}</b></div>` : ''}${extra}`;
+      tip.style.display = 'block';
+      const r = cb.getBoundingClientRect();
+      let left = ev.clientX - r.left + 14; if (left + tip.offsetWidth > r.width) left = ev.clientX - r.left - tip.offsetWidth - 14;
+      tip.style.left = Math.max(4, left) + 'px'; tip.style.top = Math.max(4, ev.clientY - r.top - 20) + 'px';
+    });
+    el.addEventListener('mouseleave', () => tip.style.display = 'none');
+  });
+}
+segment('daySeg', v => { dayMetric = v; renderDay(); });
+$('dayServer').addEventListener('change', ev => { dayServer = ev.target.value; renderDay(); });
+function setDayMode() {
+  const day = stRange === 1;
+  $('daypanel').hidden = !day; $('daySeg').hidden = !day; $('dayServer').hidden = !day || dayMetric === 'queue';
+  $('mainchart').hidden = day; $('metricSeg').hidden = day;
+  if (day) loadDay();
 }
 
 async function loadStats() {
@@ -1246,13 +1531,13 @@ function segment(id, set) {
     set(btn.dataset.v);
   });
 }
-segment('rangeSeg', v => { stRange = +v; loadStats(); });
+segment('rangeSeg', v => { stRange = +v; setDayMode(); loadStats(); });
 segment('metricSeg', v => { stMetric = v; renderChart(); });
 segment('bySeg', v => { stBy = v; renderChart(); renderStatTables(); $('csvlink').href = `${base}/api/stats?days=${stRange}&format=csv&by=${stBy}`; });
 async function resetStats() {
   if (confirm('Gesamte Statistik unwiderruflich löschen?')) { await call('POST', '/stats/reset'); loadStats(); }
 }
-let rsz; window.addEventListener('resize', () => { clearTimeout(rsz); rsz = setTimeout(renderChart, 150); });
+let rsz; window.addEventListener('resize', () => { clearTimeout(rsz); rsz = setTimeout(() => { renderChart(); renderDay(); }, 150); });
 
 const PAGES = {'': 'main', '#gruppen': 'groups', '#statistik': 'stats', '#anfragen': 'recent', '#zugriff': 'tokens', '#report': 'report'};
 function showPage() {
@@ -1261,7 +1546,7 @@ function showPage() {
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.page === page));
   if (page === 'tokens') loadTokens();
   if (page === 'report') { loadEvents(); loadNotify(); }
-  if (page === 'stats') { renderChart(); renderStatTables(); }
+  if (page === 'stats') { renderChart(); renderStatTables(); if (stRange === 1) loadDay(); }
 }
 window.addEventListener('hashchange', showPage);
 showPage();
@@ -1276,6 +1561,7 @@ setInterval(loadRecent, 2000);
 setInterval(() => { if (location.hash === '#report') loadEvents(); }, 5000);
 setInterval(() => { if (location.hash === '#zugriff') loadTokens(); }, 10000);
 setInterval(loadStats, 30000);
+setInterval(() => { if (location.hash === '#statistik' && stRange === 1) loadDay(); }, 15000);
 </script>
 </body>
 </html>

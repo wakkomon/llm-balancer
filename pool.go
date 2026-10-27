@@ -31,6 +31,7 @@ type Backend struct {
 	costCap   float64 // outgoing cost cap (0 = none) …
 	capPeriod string  // … per day / month / total
 	capped    bool    // cap reached: out of rotation until the next period
+	groupOff  bool    // its group is disabled (kept in sync by syncGroupsLocked)
 	capSpent  float64
 	priceIn   float64
 	priceOut  float64
@@ -64,7 +65,7 @@ type Backend struct {
 }
 
 func (b *Backend) usable(now time.Time) bool {
-	return b.enabled && !b.capped && (b.healthy || (!b.unhealthyTil.IsZero() && now.After(b.unhealthyTil)))
+	return b.enabled && !b.groupOff && !b.capped && (b.healthy || (!b.unhealthyTil.IsZero() && now.After(b.unhealthyTil)))
 }
 
 // ReqInfo tracks one client request for the status UI.
@@ -77,6 +78,8 @@ type ReqInfo struct {
 	Client      string   `json:"client"`
 	Token       string   `json:"token,omitempty"` // name of the client access token
 	Group       string   `json:"group,omitempty"`
+	Session     string   `json:"session,omitempty"`     // short hash, see session.go
+	SessionSrc  string   `json:"session_src,omitempty"` // where it came from
 	TokensIn    int64    `json:"tokens_in,omitempty"`
 	TokensOut   int64    `json:"tokens_out,omitempty"`
 	Cost        float64  `json:"cost,omitempty"`         // incoming: API token prices
@@ -356,6 +359,9 @@ func (p *Pool) Acquire(ctx context.Context, r *ReqInfo, exclude map[*Backend]boo
 	if len(p.queue) > p.maxQueueSeen {
 		p.maxQueueSeen = len(p.queue)
 	}
+	if p.stats != nil {
+		p.stats.NoteQueueLen(len(p.queue))
+	}
 	p.dispatchLocked()
 	p.mu.Unlock()
 
@@ -416,6 +422,7 @@ func (p *Pool) someWaiterWants(b *Backend) bool {
 // dispatchLocked hands free slots to waiting requests in FIFO order. A waiter that cannot be
 // served (its group is busy) does not block waiters for other groups. Caller holds p.mu.
 func (p *Pool) dispatchLocked() {
+	p.syncGroupsLocked()
 	for i := 0; i < len(p.queue); {
 		w := p.queue[i]
 		rt := p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), w.level)
@@ -581,6 +588,7 @@ type BackendStatus struct {
 	Name        string     `json:"name"`
 	URL         string     `json:"url"`
 	Enabled     bool       `json:"enabled"`
+	GroupOff    bool       `json:"group_disabled,omitempty"`
 	Healthy     bool       `json:"healthy"`
 	HealthMsg   string     `json:"health_msg,omitempty"`
 	HealthAt    string     `json:"health_at,omitempty"`
@@ -636,7 +644,7 @@ type Status struct {
 func snapshot(r *ReqInfo, now time.Time) *ReqInfo {
 	c := &ReqInfo{
 		ID: r.ID, Method: r.Method, Path: r.Path, Model: r.Model, Stream: r.Stream, Client: r.Client, Token: r.Token,
-		Group: r.Group, TokensIn: r.TokensIn, TokensOut: r.TokensOut, Cost: r.Cost, BackendCost: r.BackendCost, Seq: r.Seq,
+		Group: r.Group, Session: r.Session, SessionSrc: r.SessionSrc, TokensIn: r.TokensIn, TokensOut: r.TokensOut, Cost: r.Cost, BackendCost: r.BackendCost, Seq: r.Seq,
 		Trail: r.Trail, TagIssues: r.TagIssues, GenTPS: r.GenTPS, PromptTPS: r.PromptTPS, Effective: r.Effective,
 		State: r.State, Backend: r.Backend, Attempts: r.Attempts, QueuedAt: r.QueuedAt,
 		StartedAt: r.StartedAt, EndedAt: r.EndedAt, Status: r.Status, Error: r.Error,
@@ -676,6 +684,7 @@ func fmtTime(t time.Time) string {
 func (p *Pool) Status() Status {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.syncGroupsLocked()
 	now := time.Now()
 	st := Status{Now: now, UptimeSec: int64(now.Sub(p.started).Seconds()), TotalReqs: p.totalReqs,
 		Rejected: p.totalRejected, MaxQueue: p.maxQueueSeen, Source: p.source, AdminToken: p.cfg.AdminToken != ""}
@@ -691,7 +700,7 @@ func (p *Pool) Status() Status {
 	st.Groups = []GroupStatus{}
 	for _, g := range p.groups {
 		gs := GroupStatus{Name: g.Name, Models: append([]string{}, g.Models...), Auto: g.auto(), Members: []string{}, Available: []string{},
-			Fallback: g.Fallback, FallbackAfterSec: g.FallbackAfterSec, FallbackModel: g.FallbackModel, ForceModel: g.ForceModel}
+			Fallback: g.Fallback, FallbackAfterSec: g.FallbackAfterSec, FallbackModel: g.FallbackModel, ForceModel: g.ForceModel, Disabled: g.Disabled}
 		seen := map[string]bool{}
 		for _, m := range g.Models {
 			if !strings.Contains(m, "*") && !seen[strings.ToLower(m)] {
@@ -725,7 +734,7 @@ func (p *Pool) Status() Status {
 		}
 	}
 	for _, b := range p.backends {
-		bs := BackendStatus{Name: b.Name, URL: b.URL, Enabled: b.enabled, Healthy: b.healthy || (!b.unhealthyTil.IsZero() && now.After(b.unhealthyTil)),
+		bs := BackendStatus{Name: b.Name, URL: b.URL, Enabled: b.enabled, GroupOff: b.groupOff, Healthy: b.healthy || (!b.unhealthyTil.IsZero() && now.After(b.unhealthyTil)),
 			HealthMsg: b.healthMsg, HealthAt: fmtTime(b.healthAt), Active: b.active, Max: b.Max, Priority: b.Priority,
 			Total: b.total, Errors: b.errors,
 			Running: running[b.Name]}
@@ -779,7 +788,7 @@ const errorWindow = 15 * time.Minute
 // backendState classifies a backend for the UI. Caller holds p.mu.
 func backendState(b *Backend, now time.Time) string {
 	switch {
-	case !b.enabled:
+	case !b.enabled || b.groupOff:
 		return "disabled"
 	case b.capped:
 		return "capped"
@@ -819,6 +828,7 @@ func (p *Pool) anyUsable(rt Route) bool {
 
 type GroupStatus struct {
 	ForceModel       string   `json:"force_model,omitempty"`
+	Disabled         bool     `json:"disabled,omitempty"`
 	Fallback         string   `json:"fallback,omitempty"`
 	FallbackAfterSec int      `json:"fallback_after_sec"`
 	FallbackModel    string   `json:"fallback_model,omitempty"`

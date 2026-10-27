@@ -150,6 +150,7 @@ func newMux(cfg Config, pool *Pool, px *Proxy) http.Handler {
 	})
 	registerAdmin(ui, pre, pool, cfg.AdminToken)
 	registerStats(ui, pre, pool.stats, cfg.AdminToken, pool.ResetCounters)
+	registerDayView(ui, pre, pool)
 	registerGroups(ui, pre, pool, cfg.AdminToken)
 	if pool.notifier != nil {
 		registerNotify(ui, pre, pool.notifier, cfg.AdminToken)

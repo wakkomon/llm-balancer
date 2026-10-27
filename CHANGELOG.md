@@ -3,6 +3,24 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.2.0 – 2026-10-27
+
+- **Tagesansicht** unter Statistik → „Tag“: Auslastung pro Stunde (Anteil der Slot-Zeit, in der gerechnet wurde) heute
+  gegen den Ø der letzten 7 Tage, umschaltbar auf Anfragen und wartende Anfragen pro Stunde, für alle Server oder einen;
+  Kacheln für Auslastung jetzt, heute bis jetzt, Ø ganzer Tag, Anfragen und Wartende; Tabelle pro Server.
+  Stundenwerte werden ab dieser Version erfasst (62 Tage). API: `GET /balancer/api/stats/day`
+- **Statistik der Warteschlange** pro Tag: Anfragen, gewartet (≥ 0,25 s), Ø/max. Wartezeit, max. Länge, abgelehnt
+- **Sessions** in „Letzte Anfragen“: Kennung aus Session-Header/-Feld des Clients oder Fingerabdruck aus System-Prompt +
+  erster Nachricht; trennt verschiedene Unterhaltungen desselben API-Tokens; Klick filtert auf die Session
+- **Gruppen deaktivierbar** (Seite Gruppen): ihre Server bekommen keine Anfragen, die Fallback-Gruppe übernimmt sofort –
+  auch schon wartende Anfragen. API: `POST /balancer/api/groups/{name}/disable|enable`
+- Alle Tabellen sortierbar (Klick auf die Spaltenüberschrift; Reihenfolge bleibt beim Aktualisieren erhalten)
+- Report: Ereignisse nach Text und Ereignisart filterbar
+- API-Zugriff: Anfragen, Tokens und Einnahmen pro Token wahlweise für heute / 7 / 30 / 90 Tage / 1 Jahr / gesamt, mit
+  Summenzeile (ersetzt die Tabelle „Einnahmen pro API-Token“ in der Statistik)
+- Übersicht: Kacheln „beschäftigt“ und „down“ nicht mehr hervorgehoben; beschäftigte Server zeigen statt des Punkts einen
+  pulsierenden blauen Play-Button (Karte, Liste, Gruppen)
+
 ## 1.1.2 – 2026-10-26
 
 - Übersicht umgebaut: die Zähler beschäftigt / idle / fehlerhaft / down / Kostendeckel / deaktiviert stehen als Kacheln in

@@ -27,6 +27,37 @@ type GroupConfig struct {
 	// ForceModel: requests handled by a server of this group are sent with this model name
 	// (the routing still uses the requested name).
 	ForceModel string `json:"force_model,omitempty"`
+	// Disabled: the servers of the group take no requests; requests for its models go straight to
+	// the fallback group (or other servers that have the model).
+	Disabled     bool `json:"disabled,omitempty"`
+	keepDisabled bool // update without "disabled": keep the current value
+}
+
+// syncGroupsLocked updates Backend.groupOff from the group settings. Caller holds p.mu.
+func (p *Pool) syncGroupsLocked() {
+	off := map[string]bool{}
+	for _, g := range p.groups {
+		if g.Disabled {
+			off[g.Name] = true
+		}
+	}
+	for _, b := range p.backends {
+		b.groupOff = b.group != "" && off[b.group]
+	}
+}
+
+// SetGroupDisabled switches a group off or on.
+func (p *Pool) SetGroupDisabled(name string, disabled bool) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	g := p.groupLocked(name)
+	if g == nil {
+		return httpErr{404, errors.New("unbekannte Gruppe")}
+	}
+	g.Disabled = disabled
+	log.Printf("group %s %s via UI", name, map[bool]string{true: "disabled", false: "enabled"}[disabled])
+	p.dispatchLocked()
+	return p.persistLocked()
 }
 
 func (g GroupConfig) auto() bool { return g.AutoModels == nil || *g.AutoModels }
@@ -432,6 +463,10 @@ func (p *Pool) UpdateGroup(name string, g GroupConfig, members []string) error {
 			}
 		}
 	}
+	if g.keepDisabled {
+		g.Disabled = cur.Disabled
+	}
+	g.keepDisabled = false
 	*cur = g
 	for _, b := range p.backends {
 		if b.group == name {
@@ -484,6 +519,7 @@ type groupInput struct {
 	FallbackAfterSec int       `json:"fallback_after_sec"`
 	FallbackModel    string    `json:"fallback_model"`
 	ForceModel       string    `json:"force_model"`
+	Disabled         *bool     `json:"disabled"`
 }
 
 func registerGroups(mux *http.ServeMux, pre string, pool *Pool, token string) {
@@ -500,7 +536,7 @@ func registerGroups(mux *http.ServeMux, pre string, pool *Pool, token string) {
 		}
 		return GroupConfig{Name: in.Name, Models: in.Models, AutoModels: in.AutoModels,
 			Fallback: in.Fallback, FallbackAfterSec: in.FallbackAfterSec, FallbackModel: in.FallbackModel,
-			ForceModel: in.ForceModel}, members, nil
+			ForceModel: in.ForceModel, Disabled: in.Disabled != nil && *in.Disabled, keepDisabled: in.Disabled == nil}, members, nil
 	}
 	mux.HandleFunc("POST "+pre+"/api/groups", adminAuth(token, func(w http.ResponseWriter, r *http.Request) {
 		g, members, err := decode(r)
@@ -516,6 +552,11 @@ func registerGroups(mux *http.ServeMux, pre string, pool *Pool, token string) {
 		}
 		writeResult(w, err)
 	}))
+	for _, act := range []string{"enable", "disable"} {
+		mux.HandleFunc("POST "+pre+"/api/groups/{name}/"+act, adminAuth(token, func(w http.ResponseWriter, r *http.Request) {
+			writeResult(w, pool.SetGroupDisabled(r.PathValue("name"), act == "disable"))
+		}))
+	}
 	mux.HandleFunc("DELETE "+pre+"/api/groups/{name}", adminAuth(token, func(w http.ResponseWriter, r *http.Request) {
 		writeResult(w, pool.DeleteGroup(r.PathValue("name")))
 	}))
