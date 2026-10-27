@@ -27,6 +27,7 @@ type Proxy struct {
 	cfg       Config
 	pool      *Pool
 	access    *Access
+	users     *Users
 	transport *http.Transport
 	insecure  *http.Transport // for servers with "tls_skip_verify" (self-signed certificates)
 }

@@ -3,6 +3,17 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.3.0 – 2026-10-27
+
+- **Benutzerverwaltung** (Einstellungen): Anmeldung mit Benutzername + Passwort, Rollen Administrator / Operator
+  (Server und Gruppen an/aus, Stop) / Betrachter (nur lesen). Sobald es einen Benutzer gibt, braucht die ganze Web-UI und
+  `/balancer/api/` eine Anmeldung; die LLM-API, `/healthz` und `/metrics` nicht. Erster Admin über die UI oder
+  `ADMIN_USER` / `ADMIN_PASSWORD`. Passwort-Hashes (PBKDF2-SHA256), Sitzungen 30 Tage, Sperre nach 5 Fehlversuchen,
+  Schutz des letzten Admins; `ADMIN_TOKEN` bleibt als Admin-Zugang für Skripte
+- **Konfiguration exportieren/importieren** (Einstellungen): Server und Gruppen, API-Tokens, E-Mail-Einstellungen,
+  Benutzer – wählbar, Passwörter/Tokens optional; Import mit Vorschau, fehlende Geheimnisse bleiben erhalten
+- Ohne Rechte zum Ändern werden die entsprechenden Knöpfe ausgeblendet
+
 ## 1.2.0 – 2026-10-27
 
 - **Tagesansicht** unter Statistik → „Tag“: Auslastung pro Stunde (Anteil der Slot-Zeit, in der gerechnet wurde) heute

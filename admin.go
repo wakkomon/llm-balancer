@@ -265,14 +265,27 @@ func (p *Pool) SetEnabled(name string, en bool) error {
 func (p *Pool) ResetBackends() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.replaceLocked(p.initial, p.initialGroups)
+	p.source = "env"
+	log.Printf("backends reset to initial configuration via UI")
+	if p.store != nil {
+		if err := p.store.Delete(); err != nil {
+			return fmt.Errorf("zurückgesetzt, aber %s konnte nicht gelöscht werden: %v", p.store.path, err)
+		}
+	}
+	return nil
+}
+
+// replaceLocked swaps in a complete server list and groups; servers with the same name and URL keep
+// their runtime state (running requests, counters, models). Caller holds p.mu.
+func (p *Pool) replaceLocked(bcs []BackendConfig, groups []GroupConfig) {
 	old := map[string]*Backend{}
 	for _, b := range p.backends {
 		old[b.Name] = b
 	}
 	var next []*Backend
-	for _, bc := range p.initial {
+	for _, bc := range bcs {
 		if b, ok := old[bc.Name]; ok && b.URL == bc.URL {
-			// keep runtime state (active slots, stats) of unchanged servers
 			b.Max, b.Priority, b.enabled, b.apiKey, b.group, b.insecure = bc.MaxConcurrent, bc.Priority, bc.Enabled == nil || *bc.Enabled, bc.APIKey, bc.Group, bc.TLSSkipVerify
 			b.priceIn, b.priceOut = bc.PriceIn, bc.PriceOut
 			b.costCap, b.capPeriod = bc.CostCap, bc.CapPeriod
@@ -282,23 +295,20 @@ func (p *Pool) ResetBackends() error {
 		}
 	}
 	p.backends = next
-	p.groups = append([]GroupConfig{}, p.initialGroups...)
-	p.source = "env"
-	log.Printf("backends reset to initial configuration via UI")
+	p.groups = append([]GroupConfig{}, groups...)
 	defer p.kickHealth()
+	defer p.kickCaps()
 	p.dispatchLocked()
-	if p.store != nil {
-		if err := p.store.Delete(); err != nil {
-			return fmt.Errorf("zurückgesetzt, aber %s konnte nicht gelöscht werden: %v", p.store.path, err)
-		}
-	}
-	return nil
 }
 
 // ---- HTTP API ----
 
 func adminAuth(token string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if identityFrom(r) != nil { // logged in (users exist): the role was checked by the middleware
+			next(w, r)
+			return
+		}
 		if token != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Admin-Token")), []byte(token)) != 1 {
 			writeAPIError(w, http.StatusUnauthorized, errors.New("Admin-Token fehlt oder ist falsch"))
 			return

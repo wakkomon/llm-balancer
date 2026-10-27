@@ -22,6 +22,9 @@ services:
       # API_KEYS: "litellm=ein-langes-zufaelliges-token"
       # Optional: Token, ohne den keine Änderungen in der UI möglich sind
       # ADMIN_TOKEN: "ein-langes-geheimes-passwort"
+      # erster Administrator der Web-UI (nur wenn es noch keinen Benutzer gibt; danach in der UI verwalten):
+      # ADMIN_USER: "admin"
+      # ADMIN_PASSWORD: "mindestens-8-zeichen"
       # DNS-Server für die Namen der LLM-Server (IPs, kommagetrennt). Wird zuerst gefragt,
       # danach der Docker-DNS – Namen anderer Container funktionieren weiter.
       # DNS_SERVERS: "192.168.1.1"

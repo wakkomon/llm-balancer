@@ -60,6 +60,10 @@ func main() {
 	px := NewProxy(cfg, pool)
 	px.access = access
 	pool.access = access
+	px.users = NewUsers(cfg.DataDir)
+	if err := px.users.Bootstrap(os.Getenv("ADMIN_USER"), os.Getenv("ADMIN_PASSWORD")); err != nil {
+		log.Fatalf("ADMIN_USER/ADMIN_PASSWORD: %v", err)
+	}
 	access.onChange = pool.kickCaps
 	pool.notifier = NewNotifier(cfg.DataDir)
 
@@ -158,6 +162,13 @@ func newMux(cfg Config, pool *Pool, px *Proxy) http.Handler {
 	if px.access != nil {
 		registerAccess(ui, pre, px.access, cfg.AdminToken)
 	}
+	users := px.users
+	if users == nil {
+		users = NewUsers("")
+		px.users = users
+	}
+	registerUsers(ui, pre, users, cfg.AdminToken)
+	registerConfigIO(ui, pre, pool, px.access, users, cfg.AdminToken)
 	ui.HandleFunc("GET "+pre+"/api/recent", func(w http.ResponseWriter, r *http.Request) {
 		after, _ := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
 		w.Header().Set("Content-Type", "application/json")
@@ -171,9 +182,10 @@ func newMux(cfg Config, pool *Pool, px *Proxy) http.Handler {
 		w.Write([]byte("ok\n"))
 	})
 
+	guarded := users.middleware(pre, cfg.AdminToken, ui)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == pre || strings.HasPrefix(r.URL.Path, pre+"/") {
-			ui.ServeHTTP(w, r)
+			guarded.ServeHTTP(w, r)
 			return
 		}
 		px.ServeHTTP(w, r)

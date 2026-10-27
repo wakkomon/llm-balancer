@@ -37,6 +37,8 @@ Hermes-Agent ─► LiteLLM ─► llm-balancer :8080 ─┬─► LLM-Server A 
 * **Tagesansicht der Auslastung**: pro Stunde, wie viel der Slot-Zeit gerechnet wurde – heute im Vergleich zum Ø der letzten 7 Tage, dazu die aktuelle Auslastung, pro Server und gesamt; ebenso Anfragen und wartende Anfragen pro Stunde
 * **Statistik der Warteschlange** pro Tag: wie viele Anfragen warten mussten, Ø/max. Wartezeit, max. Länge, abgelehnte
 * **Sessions** in „Letzte Anfragen“: zusammengehörende Anfragen (eine Unterhaltung / ein Agenten-Lauf) bekommen dieselbe Kennung, per Klick filterbar
+* **Benutzerverwaltung** mit Anmeldung und Rollen (Administrator, Operator, Betrachter)
+* **Konfiguration exportieren/importieren** (Server, Gruppen, API-Tokens, E-Mail, Benutzer – Geheimnisse optional)
 * Alle Tabellen per Klick auf die Spaltenüberschrift sortierbar, das Ereignisprotokoll zusätzlich filterbar
 * **Gruppen deaktivierbar**: ihre Server bekommen keine Anfragen mehr, die Fallback-Gruppe übernimmt sofort
 * Statistik pro Tag und Server (7/30/90/365 Tage): Anfragen, Fehler, Abbrüche, Rechenzeit, Ø/Max-Dauer, Ø Zeit bis zum ersten Byte, Ø Wartezeit in der Queue, Datenmenge – als gestapelte Balkengrafik und Tabelle, CSV-Export; gespeichert in `/data/stats.json`
@@ -94,8 +96,39 @@ Zurück zu `BACKENDS` geht es per `POST /balancer/api/reset` (löscht die Datei;
 * Geänderte URL → sofortiger Health-Check; laufende Anfragen auf der alten URL laufen zu Ende.
 * Entfernter Server → bekommt keine neuen Anfragen mehr, laufende werden normal beendet.
 
-Mit `ADMIN_TOKEN` lassen sich Änderungen absichern; die UI fragt dann einmal nach dem Token und merkt ihn sich im Browser.
-Ohne Token kann jeder, der die UI erreicht, die Server-Liste ändern.
+Zugang zur UI regelt die **Benutzerverwaltung** (siehe unten). Solange es keinen Benutzer gibt, ist die UI offen; mit
+`ADMIN_TOKEN` lassen sich dann zumindest Änderungen absichern (die UI fragt einmal nach dem Token).
+
+### Benutzer und Anmeldung
+
+Unter **Einstellungen** legst du den ersten Administrator an (oder per `ADMIN_USER` / `ADMIN_PASSWORD` beim ersten Start).
+Ab dann zeigt die Web-UI ohne Anmeldung nur noch das Login – auch die JSON-API unter `/balancer/api/` braucht eine
+Anmeldung. Rollen:
+
+| Rolle | darf |
+|---|---|
+| Administrator | alles, inkl. Benutzer, Konfiguration, Import/Export |
+| Operator | alles sehen; Server und Gruppen an-/ausschalten, laufende Anfragen stoppen |
+| Betrachter | alles sehen, nichts ändern |
+
+* Passwörter mindestens 8 Zeichen, gespeichert als PBKDF2-SHA256-Hash in `/data/users.json`; Sitzungen (Cookie, 30 Tage)
+  in `/data/sessions.json`, sie überstehen also ein Container-Update
+* jeder ändert sein Passwort unter Einstellungen → Mein Konto; neues Passwort / Sperren beendet die anderen Sitzungen
+* der letzte aktive Administrator kann nicht gelöscht, gesperrt oder herabgestuft werden
+* nach 5 Fehlversuchen von einer IP ist die Anmeldung dort 5 Minuten gesperrt
+* `ADMIN_TOKEN` (Header `X-Admin-Token`) funktioniert weiter als Administrator-Zugang für Skripte
+* ohne Anmeldung erreichbar bleiben: die LLM-API (`/v1/…`, mit API-Tokens), `/balancer/healthz` und `/balancer/metrics`
+* Passwort vergessen und kein zweiter Admin: Container stoppen, `/data/users.json` löschen – danach ist die UI wieder offen
+  bzw. `ADMIN_USER`/`ADMIN_PASSWORD` legt den Admin neu an
+
+### Konfiguration sichern und übertragen
+
+Einstellungen → **Konfiguration**: Export als JSON-Datei mit wählbaren Bereichen – Server und Gruppen, API-Tokens,
+E-Mail-Benachrichtigung, Benutzer. **Passwörter und Tokens** (Bearer-Tokens der Server, SMTP-Passwort, Hashes der
+API-Tokens und Benutzer-Passwörter) kommen nur mit, wenn angehakt – dann ist die Datei eine vollständige Sicherung und
+muss geschützt werden. Beim **Import** zeigt die UI, was in der Datei steht; die gewählten Bereiche werden ersetzt.
+Fehlt ein Geheimnis in der Datei, bleibt das bisherige des Eintrags mit gleichem Namen erhalten. Ein Import, nach dem es
+keinen aktiven Administrator mehr gäbe, wird abgelehnt. Statistik und Zähler bleiben unberührt.
 
 Für einen Bind-Mount statt eines Docker-Volumes muss der Ordner dem User 65534 gehören
 (`chown 65534:65534 ./data`), sonst kann der Container nicht speichern – die UI zeigt das dann als Warnung an.
@@ -319,7 +352,8 @@ Entweder per Umgebungsvariablen oder per `config.json` (Pfad über `CONFIG`, son
 | `RETRY_STATUS` / `retry_status` | `all` | `all`: jeder Fehler ab 400 wird auf anderen Servern wiederholt; Liste (z. B. `404,429`): nur 5xx und diese Codes |
 | `TAG_CHECK` / `tag_check` | `think,thinking,reasoning,tool_call,tool_calls,function_call,answer` | Geprüfte Tags im generierten Text; `*` = alle, `off` = aus |
 | `DNS_SERVERS` / `dns_servers` | – | DNS-Server (IPs, optional mit Port) für die Namen der LLM-Server; danach Fallback auf den Container-Resolver |
-| `ADMIN_TOKEN` / `admin_token` | – | Wenn gesetzt, sind Änderungen in UI/API nur mit diesem Token möglich (Header `X-Admin-Token`) |
+| `ADMIN_TOKEN` / `admin_token` | – | Ohne Benutzer: Änderungen in UI/API nur mit diesem Token. Mit Benutzern: Administrator-Zugang für Skripte (Header `X-Admin-Token`) |
+| `ADMIN_USER` / `ADMIN_PASSWORD` | – | legt beim Start einen Administrator an, falls es noch keinen Benutzer gibt |
 | `LISTEN` / `listen` | `:8080` | Listen-Adresse |
 | `QUEUE_TIMEOUT_SEC` / `queue_timeout_sec` | `900` | Max. Wartezeit in der Queue (0 = unbegrenzt), danach HTTP 504 |
 | `MAX_QUEUE` / `max_queue` | `0` | Max. Länge der Queue (0 = unbegrenzt), danach HTTP 503 |
@@ -366,7 +400,7 @@ Hinweise:
 Verteilung, laufende Anfragen laufen zu Ende, praktisch für Modellwechsel oder Wartung – und **Entfernen**.
 Oben rechts: **+ Server hinzufügen**.
 
-Die Status-Ansicht ist ohne Anmeldung sichtbar; für Änderungen `ADMIN_TOKEN` setzen.
+Mit Benutzern ist alles erst nach der Anmeldung sichtbar; Betrachter sehen keine Knöpfe zum Ändern.
 
 ### API
 
@@ -393,6 +427,12 @@ Die Status-Ansicht ist ohne Anmeldung sichtbar; für Änderungen `ADMIN_TOKEN` s
 | GET | `/balancer/api/events` | Ereignisprotokoll |
 | GET | `/balancer/api/recent?after=<seq>` | Letzte Anfragen (max. 300), nur neuere als `seq` |
 | GET | `/balancer/api/stats?days=30` | Tagesstatistik pro Server, Modell und API-Token (`&format=csv`, `&by=model` für CSV nach Modell) |
+| GET | `/balancer/api/auth/me` | angemeldeter Benutzer / ob Benutzer existieren |
+| POST | `/balancer/api/auth/login` · `/logout` · `/setup` · `/password` | Anmelden `{"name","password"}`, Abmelden, ersten Admin anlegen, eigenes Passwort `{"old","new"}` |
+| GET/POST | `/balancer/api/users` | Benutzer auflisten / anlegen `{"name","role","password"}` (Rollen `admin`, `operator`, `viewer`) |
+| PUT / DELETE | `/balancer/api/users/{name}` | ändern `{"name","role","password","disabled"}` (Felder optional) / löschen |
+| GET | `/balancer/api/config/export?sections=servers,tokens,notify,users&secrets=1` | Konfiguration als JSON |
+| POST | `/balancer/api/config/import?sections=…` | Konfiguration einspielen (Body = Exportdatei) |
 | GET | `/balancer/api/stats/day?days=7` | Tagesansicht: Stundenwerte heute und Ø der letzten Tage, Warteschlange pro Stunde |
 | POST | `/balancer/api/stats/reset` | Statistik löschen |
 

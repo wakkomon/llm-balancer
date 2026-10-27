@@ -226,6 +226,18 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
 .chk{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:var(--ink)}
 .chk input{width:auto}
 .formerr{color:var(--down);font-size:12.5px;min-height:1em;margin-top:10px}
+body[data-role=viewer] .need-op,body[data-role=viewer] .need-admin,body[data-role=operator] .need-admin,body[data-role=none] .need-op,body[data-role=none] .need-admin{display:none!important}
+body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[data-role=operator] #nform input,body[data-role=operator] #nform select{pointer-events:none;opacity:.7}
+#loginview{min-height:100vh;display:grid;place-items:center;padding:16px}
+.loginbox{width:min(360px,100%)} .loginbox h1{margin:0 0 4px} .loginbox button{width:100%;margin-top:16px;padding:8px}
+.who{display:inline-flex;align-items:center;gap:8px;margin-left:auto}
+.who button{padding:2px 8px}
+.rolebadge{font-size:11px;font-weight:650;padding:1px 7px;border-radius:99px;color:#fff;background:var(--off)}
+.rolebadge.admin{background:var(--accent)} .rolebadge.operator{background:var(--busy)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
+.panel h3{margin:0 0 6px;font-size:14px}
+.chklist label{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:13px;color:var(--ink)} .chklist input{width:auto}
+.impres{font-size:12.5px;margin-top:10px} .impres li{margin:2px 0}
 #toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100vw - 32px)}
 #toast.show{opacity:1}
 </style>
@@ -234,10 +246,11 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
 <main>
   <header>
     <h1>LLM Balancer</h1>
-    <nav class="nav"><a href="#" data-page="main">Übersicht</a><a href="#gruppen" data-page="groups">Gruppen</a><a href="#statistik" data-page="stats">Statistik</a><a href="#anfragen" data-page="recent">Letzte Anfragen</a><a href="#zugriff" data-page="tokens">API-Zugriff</a><a href="#report" data-page="report">Report</a></nav>
+    <nav class="nav"><a href="#" data-page="main">Übersicht</a><a href="#gruppen" data-page="groups">Gruppen</a><a href="#statistik" data-page="stats">Statistik</a><a href="#anfragen" data-page="recent">Letzte Anfragen</a><a href="#zugriff" data-page="tokens">API-Zugriff</a><a href="#report" data-page="report">Report</a><a href="#einstellungen" data-page="settings">Einstellungen</a></nav>
     <span class="sub live" id="live"><i></i><span id="livetxt">verbinde …</span></span>
     <span class="sub" id="uptime"></span>
     <span class="sub" id="version"></span>
+    <span class="sub who" id="whoami"></span>
   </header>
 
   <div id="page-main">
@@ -258,7 +271,7 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
     <h2>Server</h2>
     <div class="row">
       <div class="seg" id="viewSeg" title="Ansicht"><button data-v="cards">Kacheln</button><button data-v="list">Liste</button></div>
-      <button class="primary" onclick="openEdit(null)">+ Server hinzufügen</button>
+      <button class="primary need-admin" onclick="openEdit(null)">+ Server hinzufügen</button>
     </div>
   </div>
   <div class="filterbar">
@@ -280,7 +293,7 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
     <h2>Gruppen</h2>
     <div class="row">
       <span class="srcnote">Anfragen werden über den Modellnamen einer Gruppe zugeordnet</span>
-      <button class="primary" onclick="openGroup(null)">+ Gruppe anlegen</button>
+      <button class="primary need-admin" onclick="openGroup(null)">+ Gruppe anlegen</button>
     </div>
   </div>
   <div class="grid" id="groups"></div>
@@ -291,7 +304,7 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
     <h2>Statistik</h2>
     <div class="row">
       <a id="csvlink" href="#"><button>CSV-Export</button></a>
-      <button class="danger" onclick="resetStats()">Statistik löschen</button>
+      <button class="danger need-admin" onclick="resetStats()">Statistik löschen</button>
     </div>
   </div>
   <div class="stbar">
@@ -369,7 +382,7 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
   <div id="page-report" hidden>
   <div class="sechead">
     <h2>Ereignisse</h2>
-    <div class="row"><span class="srcnote" id="evnote"></span><button class="danger" onclick="clearEvents()">Protokoll leeren</button></div>
+    <div class="row"><span class="srcnote" id="evnote"></span><button class="danger need-admin" onclick="clearEvents()">Protokoll leeren</button></div>
   </div>
   <div class="filterbar">
     <input id="evq" placeholder="Filtern (Server, Token, Text …)" autocomplete="off">
@@ -405,7 +418,7 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
     </div>
     <div class="hint">Ein Server muss so lange nicht erreichbar sein oder Fehler liefern, bevor eine Mail rausgeht – kurze Aussetzer lösen keine Mail aus. Pro Störung gibt es eine Mail und eine, wenn sie vorbei ist.</div>
     <div class="formerr" id="n-err"></div>
-    <div class="btns" style="justify-content:flex-start">
+    <div class="btns need-admin" style="justify-content:flex-start">
       <button type="submit" class="primary">Speichern</button>
       <button type="button" onclick="testMail()">Testmail senden</button>
     </div>
@@ -415,7 +428,7 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
   <div class="sechead">
     <h2>API-Zugriff</h2>
     <div class="row">
-      <button class="primary" onclick="openToken()">+ Token erstellen</button>
+      <button class="primary need-admin" onclick="openToken()">+ Token erstellen</button>
     </div>
   </div>
   <div id="accessnote" class="srcnote" style="margin-bottom:8px"></div>
@@ -434,7 +447,67 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
 
   <p class="srcnote">Preise und Tokens hier aus Sicht der Anwendung: Aus = gesendeter Prompt, Ein = empfangene Antwort. Ausgehende Preise (was ein Server kostet) stellst du beim jeweiligen Server ein. Die Einnahmen pro Server und Modell stehen im Tab Statistik.</p>
   </div>
+  <div id="page-settings" hidden>
+  <div class="sechead"><h2>Mein Konto</h2></div>
+  <div class="panel" id="acct"></div>
+
+  <div class="need-admin">
+  <div class="sechead">
+    <h2>Benutzer</h2>
+    <div class="row" id="useradd"><button class="primary" onclick="openUser(null)">+ Benutzer anlegen</button></div>
+  </div>
+  <div id="usersetup"></div>
+  <div id="userlist">
+    <div class="tbl"><table data-sort>
+      <thead><tr><th>Name</th><th>Rolle</th><th>Status</th><th data-type="date">Angelegt</th><th data-type="date">Letzte Anmeldung</th><th data-nosort></th></tr></thead>
+      <tbody id="users"></tbody>
+    </table></div>
+  </div>
+  <p class="srcnote"><b>Administrator</b>: alles, inkl. Benutzer und Konfiguration · <b>Operator</b>: Server und Gruppen an-/ausschalten,
+    laufende Anfragen stoppen · <b>Betrachter</b>: sieht alles, ändert nichts. Die LLM-API (<code>/v1/…</code>) ist davon unabhängig und nutzt die API-Tokens.</p>
+
+  <div class="sechead"><h2>Konfiguration</h2></div>
+  <div class="grid2">
+    <div class="panel">
+      <h3>Exportieren</h3>
+      <div class="chklist" id="exsec"></div>
+      <label class="chk"><input type="checkbox" id="exsecrets"> Passwörter und Tokens einschließen</label>
+      <div class="hint">Bearer-Tokens der Server, SMTP-Passwort sowie die Hashes der API-Tokens und Benutzer-Passwörter. Ohne sie lässt sich die Datei
+        gefahrlos weitergeben; beim Import bleiben fehlende Geheimnisse dann wie sie sind. Mit ihnen ist die Datei eine vollständige Sicherung – sicher aufbewahren.</div>
+      <div class="btns" style="justify-content:flex-start"><button class="primary" onclick="exportConfig()">Exportieren</button></div>
+    </div>
+    <div class="panel">
+      <h3>Importieren</h3>
+      <input type="file" id="imfile" accept=".json,application/json">
+      <div id="impreview"></div>
+    </div>
+  </div>
+  </div>
+  </div>
 </main>
+<div id="loginview" hidden>
+  <form id="loginform" class="panel loginbox">
+    <h1>LLM Balancer</h1>
+    <div class="sub">Anmeldung</div>
+    <label for="l-name">Benutzername</label><input id="l-name" autocomplete="username" required>
+    <label for="l-pw">Passwort</label><input id="l-pw" type="password" autocomplete="current-password" required>
+    <div class="formerr" id="l-err"></div>
+    <button class="primary" type="submit">Anmelden</button>
+  </form>
+</div>
+<dialog id="udlg">
+  <form id="uform" method="dialog">
+    <h3 id="utitle">Benutzer</h3>
+    <label for="u-name">Benutzername</label><input id="u-name" required autocomplete="off">
+    <label for="u-role">Rolle</label>
+    <select id="u-role"><option value="viewer">Betrachter – sieht alles, ändert nichts</option><option value="operator">Operator – Server/Gruppen an/aus, Stop</option><option value="admin">Administrator – alles</option></select>
+    <label for="u-pw">Passwort</label><input id="u-pw" type="password" autocomplete="new-password">
+    <div class="hint" id="u-pwhint">mindestens 8 Zeichen</div>
+    <label class="chk" id="u-disrow"><input type="checkbox" id="u-dis"> gesperrt (kann sich nicht anmelden)</label>
+    <div class="formerr" id="u-err"></div>
+    <div class="btns"><button type="button" onclick="$('udlg').close()">Abbrechen</button><button class="primary" type="submit">Speichern</button></div>
+  </form>
+</dialog>
 <dialog id="dlg">
   <form id="form" method="dialog">
     <h3 id="dlgtitle">Server</h3>
@@ -594,6 +667,7 @@ async function call(method, path, body) {
     try {
       resp = await fetch(base + '/api' + path, {method, headers, body: body ? JSON.stringify(body) : undefined});
     } catch (e) { toast('Keine Verbindung zum Balancer'); return false; }
+    if (resp.status === 401 && auth.users) { showLogin(); return false; }
     if (resp.status === 401) {
       const t = prompt('Admin-Token für Änderungen:', '');
       if (t === null) return false;
@@ -745,10 +819,10 @@ function backendCard(b) {
       ${b.tag_errors ? `<span class="warnc" title="Antworten mit fehlerhaft geöffneten/geschlossenen Tags">⚠ ${b.tag_errors} Tag-Fehler</span>` : ''}
     </div>
     <div class="btns cardbtns">
-      <button class="stop" ${b.active ? '' : 'disabled'} title="Laufende Anfrage sofort abbrechen" onclick='stopBackend(${attr(b.name)})'>■ Stop</button>
-      <button onclick='openEdit(${attr(b.name)})'>Bearbeiten</button>
-      <button onclick='toggle(${attr(b.name)}, ${!b.enabled})'>${b.enabled ? 'Deaktivieren' : 'Aktivieren'}</button>
-      <button class="danger" onclick='removeBackend(${attr(b.name)})'>Entfernen</button>
+      <button class="stop need-op" ${b.active ? '' : 'disabled'} title="Laufende Anfrage sofort abbrechen" onclick='stopBackend(${attr(b.name)})'>■ Stop</button>
+      <button class="need-admin" onclick='openEdit(${attr(b.name)})'>Bearbeiten</button>
+      <button class="need-op" onclick='toggle(${attr(b.name)}, ${!b.enabled})'>${b.enabled ? 'Deaktivieren' : 'Aktivieren'}</button>
+      <button class="danger need-admin" onclick='removeBackend(${attr(b.name)})'>Entfernen</button>
     </div>
   </div>`;
 }
@@ -782,10 +856,10 @@ function listRow(b) {
     <span class="ln" title="Ø tok/s">${tpsFmt(b.avg_tps)} <span class="muted">tok/s</span></span>
     <span class="ln" title="Priorität">P${b.priority}</span>
     <span class="lbtn">
-      <button class="stop" ${b.active ? '' : 'disabled'} title="Laufende Anfrage sofort abbrechen" onclick='stopBackend(${attr(b.name)})'>■</button>
-      <button title="Bearbeiten" onclick='openEdit(${attr(b.name)})'>✎</button>
-      <button title="${b.enabled ? 'Deaktivieren (drain)' : 'Aktivieren'}" onclick='toggle(${attr(b.name)}, ${!b.enabled})'>${b.enabled ? 'aus' : 'an'}</button>
-      <button class="danger" title="Entfernen" onclick='removeBackend(${attr(b.name)})'>✕</button>
+      <button class="stop need-op" ${b.active ? '' : 'disabled'} title="Laufende Anfrage sofort abbrechen" onclick='stopBackend(${attr(b.name)})'>■</button>
+      <button class="need-admin" title="Bearbeiten" onclick='openEdit(${attr(b.name)})'>✎</button>
+      <button class="need-op" title="${b.enabled ? 'Deaktivieren (drain)' : 'Aktivieren'}" onclick='toggle(${attr(b.name)}, ${!b.enabled})'>${b.enabled ? 'aus' : 'an'}</button>
+      <button class="danger need-admin" title="Entfernen" onclick='removeBackend(${attr(b.name)})'>✕</button>
     </span></div>`;
 }
 function renderList(st) {
@@ -946,9 +1020,9 @@ function renderGroups(st) {
       ${g.fallback ? `<div class="fb">Fallback → <b>${esc(g.fallback)}</b> nach ${g.fallback_after_sec} s Wartezeit${g.fallback_model ? ` · Modell dort: <b>${esc(g.fallback_model)}</b>` : ''}</div>` : ''}
       ${g.disabled ? `<div class="fb">Server dieser Gruppe bekommen keine Anfragen – ${g.fallback ? `Anfragen gehen direkt an <b>${esc(g.fallback)}</b>` : 'Anfragen gehen an andere Server, die das Modell melden'}</div>` : ''}
       <div class="btns">
-        <button onclick='toggleGroupOff(${attr(g.name)}, ${!g.disabled})'>${g.disabled ? 'Aktivieren' : 'Deaktivieren'}</button>
-        <button onclick='openGroup(${attr(g.name)})'>Bearbeiten</button>
-        <button class="danger" onclick='deleteGroup(${attr(g.name)})'>Löschen</button>
+        <button class="need-op" onclick='toggleGroupOff(${attr(g.name)}, ${!g.disabled})'>${g.disabled ? 'Aktivieren' : 'Deaktivieren'}</button>
+        <button class="need-admin" onclick='openGroup(${attr(g.name)})'>Bearbeiten</button>
+        <button class="danger need-admin" onclick='deleteGroup(${attr(g.name)})'>Löschen</button>
       </div></div>`;
   }).join('') : '<div class="empty-card">Keine Gruppen – alle Server teilen sich alle Modelle. Mit Gruppen gehen Anfragen nur an die Server, die das Modell bedienen.</div>')
   + (st.groups.length && ungrouped.length ? `<div class="gcard"><div class="name">Ohne Gruppe</div>
@@ -1083,9 +1157,9 @@ function renderTokens() {
     <td class="n" data-v="${(t.price_in || 0) + (t.price_out || 0)}">${t.price_in || t.price_out ? money(t.price_in) + ' / ' + money(t.price_out) : '<span class="muted">kein Preis</span>'}</td>
     <td class="n">${ktok(t.u.tokens_in)}</td><td class="n">${ktok(t.u.tokens_out)}</td><td class="n"><b>${money(t.u.cost)}</b></td>
     <td class="n capcell" data-v="${t.cost_cap ? (t.cap_spent || 0) / t.cost_cap : ''}">${t.cost_cap ? `${money(t.cap_spent)} / ${money(t.cost_cap)}<br><span class="muted">${t.cap_period === 'total' ? 'gesamt' : 'pro ' + PERIOD[t.cap_period || 'month']}</span>${capBar(t)}` : '<span class="muted">–</span>'}</td>
-    <td style="text-align:right;white-space:nowrap"><button onclick='openPrice(${attr(t.name)})' title="Preis und Kostendeckel">Bearbeiten</button>
-      <button onclick='toggleToken(${attr(t.name)}, ${!t.disabled})'>${t.disabled ? 'Freigeben' : 'Sperren'}</button>
-      ${t.source === 'env' ? '' : `<button class="danger" onclick='deleteToken(${attr(t.name)})'>Löschen</button>`}</td></tr>`).join('')
+    <td style="text-align:right;white-space:nowrap"><button class="need-admin" onclick='openPrice(${attr(t.name)})' title="Preis und Kostendeckel">Bearbeiten</button>
+      <button class="need-admin" onclick='toggleToken(${attr(t.name)}, ${!t.disabled})'>${t.disabled ? 'Freigeben' : 'Sperren'}</button>
+      ${t.source === 'env' ? '' : `<button class="danger need-admin" onclick='deleteToken(${attr(t.name)})'>Löschen</button>`}</td></tr>`).join('')
     + (list.length > 1 ? `<tr class="sum"><td>Summe</td><td></td><td></td><td></td><td></td><td class="n">${num(sum.requests)}</td><td></td>
       <td class="n">${ktok(sum.tokens_in)}</td><td class="n">${ktok(sum.tokens_out)}</td><td class="n">${money(sum.cost)}</td><td></td><td></td></tr>` : '')
     : '<tr><td colspan="12" class="empty">Keine Tokens – die LLM-API ist offen.</td></tr>');
@@ -1539,25 +1613,194 @@ async function resetStats() {
 }
 let rsz; window.addEventListener('resize', () => { clearTimeout(rsz); rsz = setTimeout(() => { renderChart(); renderDay(); }, 150); });
 
-const PAGES = {'': 'main', '#gruppen': 'groups', '#statistik': 'stats', '#anfragen': 'recent', '#zugriff': 'tokens', '#report': 'report'};
+// ---------------- login, users, configuration ----------------
+let auth = {users: false, user: null};
+const ROLE = {admin: 'Administrator', operator: 'Operator', viewer: 'Betrachter'};
+const _fetch = window.fetch.bind(window);
+window.fetch = async (...a) => {  // any 401 while users exist → session expired: back to the login
+  const r = await _fetch(...a);
+  if (r.status === 401 && auth.users && !String(a[0]).includes('/api/auth/')) showLogin();
+  return r;
+};
+async function loadAuth() {
+  try { auth = await (await _fetch(base + '/api/auth/me', {cache: 'no-store'})).json(); } catch {}
+  document.body.dataset.role = auth.user ? auth.user.role : auth.users ? 'none' : 'admin';
+  $('whoami').innerHTML = auth.user && auth.user.name !== 'ADMIN_TOKEN'
+    ? `👤 ${esc(auth.user.name)} <span class="rolebadge ${esc(auth.user.role)}">${esc(ROLE[auth.user.role])}</span><button onclick="logout()">Abmelden</button>` : '';
+  return auth;
+}
+function showLogin() {
+  if (!$('loginview').hidden) return;
+  document.querySelector('main').hidden = true;
+  for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  $('loginview').hidden = false; $('l-err').textContent = ''; $('l-name').focus();
+}
+$('loginform').addEventListener('submit', async ev => {
+  ev.preventDefault(); $('l-err').textContent = '';
+  const r = await _fetch(base + '/api/auth/login', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: $('l-name').value.trim(), password: $('l-pw').value})});
+  if (r.ok) { location.reload(); return; }
+  let e = {}; try { e = await r.json(); } catch {}
+  $('l-err').textContent = e.error || ('Fehler ' + r.status); $('l-pw').value = ''; $('l-pw').focus();
+});
+async function logout() { await _fetch(base + '/api/auth/logout', {method: 'POST'}); location.reload(); }
+
+function renderAccount() {
+  if (!auth.users) {
+    $('acct').innerHTML = `<div class="muted">Es gibt noch keine Benutzer – die Web-UI ist für jeden offen${auth.admin_token ? ', Änderungen brauchen den ADMIN_TOKEN' : ''}.
+      Lege unten den ersten Administrator an, danach ist eine Anmeldung nötig.</div>`;
+    return;
+  }
+  if (!auth.user || auth.user.name === 'ADMIN_TOKEN') { $('acct').innerHTML = '<div class="muted">Angemeldet über den ADMIN_TOKEN.</div>'; return; }
+  if ($('acct').__user === auth.user.name) return;
+  $('acct').__user = auth.user.name;
+  $('acct').innerHTML = `<div>Angemeldet als <b>${esc(auth.user.name)}</b> <span class="rolebadge ${esc(auth.user.role)}">${esc(ROLE[auth.user.role])}</span></div>
+    <form id="pwform"><div class="grid3">
+      <div><label for="pw-old">Bisheriges Passwort</label><input id="pw-old" type="password" autocomplete="current-password" required></div>
+      <div><label for="pw-new">Neues Passwort</label><input id="pw-new" type="password" autocomplete="new-password" minlength="8" required></div>
+      <div><label for="pw-new2">Neues Passwort wiederholen</label><input id="pw-new2" type="password" autocomplete="new-password" required></div>
+    </div><div class="formerr" id="pw-err"></div>
+    <div class="btns" style="justify-content:flex-start"><button class="primary" type="submit">Passwort ändern</button></div></form>`;
+  $('pwform').addEventListener('submit', async ev => {
+    ev.preventDefault(); $('pw-err').textContent = ''; $('formerr').textContent = '';
+    if ($('pw-new').value !== $('pw-new2').value) { $('pw-err').textContent = 'Die neuen Passwörter stimmen nicht überein'; return; }
+    if (await call('POST', '/auth/password', {old: $('pw-old').value, new: $('pw-new').value})) {
+      toast('Passwort geändert – andere Anmeldungen wurden beendet'); ev.target.reset();
+    } else $('pw-err').textContent = $('formerr').textContent;
+  });
+}
+
+let userList = [], editingUser = null;
+async function loadUsers() {
+  renderAccount();
+  if (!auth.users) {
+    $('userlist').hidden = true; $('useradd').hidden = true;
+    if (!$('usersetup').innerHTML) $('usersetup').innerHTML = `<form id="setupform" class="panel">
+      <div class="grid3">
+        <div><label for="s-name">Benutzername</label><input id="s-name" required autocomplete="username"></div>
+        <div><label for="s-pw">Passwort</label><input id="s-pw" type="password" minlength="8" required autocomplete="new-password"></div>
+        <div><label for="s-pw2">Passwort wiederholen</label><input id="s-pw2" type="password" required autocomplete="new-password"></div>
+      </div>
+      <div class="hint">Danach muss sich jeder anmelden, der die Web-UI öffnet. Weitere Benutzer legst du hier an.
+        Für Portainer geht das auch per <code>ADMIN_USER</code> / <code>ADMIN_PASSWORD</code>.</div>
+      <div class="formerr" id="s-err"></div>
+      <div class="btns" style="justify-content:flex-start"><button class="primary" type="submit">Ersten Administrator anlegen</button></div></form>`;
+    $('setupform').onsubmit = async ev => {
+      ev.preventDefault(); $('s-err').textContent = ''; $('formerr').textContent = '';
+      if ($('s-pw').value !== $('s-pw2').value) { $('s-err').textContent = 'Die Passwörter stimmen nicht überein'; return; }
+      if (await call('POST', '/auth/setup', {name: $('s-name').value.trim(), password: $('s-pw').value})) location.reload();
+      else $('s-err').textContent = $('formerr').textContent;
+    };
+    return;
+  }
+  $('usersetup').innerHTML = ''; $('userlist').hidden = false; $('useradd').hidden = false;
+  if (auth.user?.role !== 'admin') return;
+  try { const r = await fetch(base + '/api/users', {cache: 'no-store'}); if (!r.ok) return; userList = await r.json(); } catch { return; }
+  setHTML($('users'), userList.map(u => `<tr>
+    <td><b>${esc(u.name)}</b>${u.name === auth.user?.name ? ' <span class="muted">(du)</span>' : ''}</td>
+    <td data-v="${({viewer: 1, operator: 2, admin: 3})[u.role]}"><span class="rolebadge ${esc(u.role)}">${esc(ROLE[u.role])}</span></td>
+    <td>${u.disabled ? '<span class="tstate off">gesperrt</span>' : '<span class="tstate">aktiv</span>'}</td>
+    <td data-v="${Date.parse(u.created) || ''}">${dateFmt(u.created)}</td><td data-v="${Date.parse(u.last_login) || ''}">${u.last_login && !u.last_login.startsWith('0001') ? dateFmt(u.last_login) : '<span class="muted">nie</span>'}</td>
+    <td style="text-align:right;white-space:nowrap"><button onclick='openUser(${attr(u.name)})'>Bearbeiten</button>
+      <button class="danger" onclick='deleteUser(${attr(u.name)})'>Löschen</button></td></tr>`).join(''));
+}
+function openUser(name) {
+  editingUser = name;
+  const u = name ? userList.find(x => x.name === name) : null;
+  $('utitle').textContent = u ? `Benutzer „${u.name}“ bearbeiten` : 'Benutzer anlegen';
+  $('u-name').value = u ? u.name : ''; $('u-role').value = u ? u.role : 'viewer';
+  $('u-pw').value = ''; $('u-pw').required = !u;
+  $('u-pwhint').textContent = u ? 'leer lassen = unverändert; ein neues Passwort meldet den Benutzer überall ab' : 'mindestens 8 Zeichen';
+  $('u-dis').checked = !!u?.disabled; $('u-disrow').style.display = u ? '' : 'none';
+  $('u-err').textContent = '';
+  $('udlg').showModal(); $('u-name').focus();
+}
+$('uform').addEventListener('submit', async ev => {
+  ev.preventDefault(); $('formerr').textContent = '';
+  let ok;
+  if (editingUser === null) ok = await call('POST', '/users', {name: $('u-name').value.trim(), role: $('u-role').value, password: $('u-pw').value});
+  else {
+    const body = {name: $('u-name').value.trim(), role: $('u-role').value, disabled: $('u-dis').checked};
+    if ($('u-pw').value) body.password = $('u-pw').value;
+    ok = await call('PUT', `/users/${enc(editingUser)}`, body);
+  }
+  if (!ok) { $('u-err').textContent = $('formerr').textContent; return; }
+  $('udlg').close(); toast('Gespeichert');
+  if (editingUser === auth.user?.name) await loadAuth();
+  loadUsers();
+});
+async function deleteUser(name) {
+  if (confirm(`Benutzer „${name}“ löschen?`) && await call('DELETE', `/users/${enc(name)}`)) loadUsers();
+}
+
+const SECTIONS = {servers: 'Server und Gruppen', tokens: 'API-Tokens', notify: 'E-Mail-Benachrichtigung', users: 'Benutzer'};
+$('exsec').innerHTML = Object.entries(SECTIONS).map(([k, t]) => `<label><input type="checkbox" data-k="${k}" checked> ${t}</label>`).join('');
+async function exportConfig() {
+  const secs = [...$('exsec').querySelectorAll('input:checked')].map(i => i.dataset.k);
+  if (!secs.length) { toast('Mindestens einen Bereich wählen'); return; }
+  const headers = {}; const tok = getToken(); if (tok) headers['X-Admin-Token'] = tok;
+  const r = await fetch(`${base}/api/config/export?sections=${secs.join(',')}&secrets=${$('exsecrets').checked ? 1 : 0}`, {headers, cache: 'no-store'});
+  if (!r.ok) { let e = {}; try { e = await r.json(); } catch {} toast(e.error || ('Fehler ' + r.status)); return; }
+  const blob = await r.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (r.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'llm-balancer-config.json';
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast($('exsecrets').checked ? 'Exportiert – mit Passwörtern und Tokens, Datei sicher aufbewahren' : 'Exportiert');
+}
+let importFile = null;
+$('imfile').addEventListener('change', async ev => {
+  const f = ev.target.files[0]; importFile = null; $('impreview').innerHTML = '';
+  if (!f) return;
+  try { importFile = JSON.parse(await f.text()); } catch { $('impreview').innerHTML = '<div class="formerr">Keine gültige JSON-Datei.</div>'; return; }
+  if (importFile.format !== 'llm-balancer-config') { $('impreview').innerHTML = '<div class="formerr">Keine Konfigurationsdatei des LLM-Balancers.</div>'; importFile = null; return; }
+  const cnt = {servers: importFile.backends && `${importFile.backends.length} Server, ${(importFile.groups || []).length} Gruppen`,
+    tokens: importFile.tokens && `${importFile.tokens.length} Tokens`, notify: importFile.notify && (importFile.notify.smtp_host || 'leer'),
+    users: importFile.users && `${importFile.users.length} Benutzer`};
+  const avail = Object.keys(SECTIONS).filter(k => cnt[k]);
+  $('impreview').innerHTML = `<div class="hint" style="margin-top:8px">Export vom ${dateFmt(importFile.exported_at)}${importFile.balancer_version ? ' · v' + esc(importFile.balancer_version) : ''} ·
+      ${importFile.with_secrets ? 'mit Passwörtern und Tokens' : 'ohne Passwörter und Tokens – vorhandene bleiben erhalten'}</div>
+    <div class="chklist">${avail.map(k => `<label><input type="checkbox" data-k="${k}" checked> ${SECTIONS[k]} <span class="muted">(${esc(cnt[k])})</span></label>`).join('')}</div>
+    <div class="hint">Die gewählten Bereiche werden <b>ersetzt</b>: was nicht in der Datei steht, wird entfernt (Tokens aus API_KEYS bleiben).
+      Statistik und Zähler bleiben unverändert.</div>
+    <div class="btns" style="justify-content:flex-start"><button class="primary" onclick="importConfig()">Importieren</button></div><div id="imres"></div>`;
+});
+async function importConfig() {
+  const secs = [...$('impreview').querySelectorAll('input:checked')].map(i => i.dataset.k);
+  if (!importFile || !secs.length) { toast('Mindestens einen Bereich wählen'); return; }
+  if (!confirm(`${secs.map(k => SECTIONS[k]).join(', ')} durch den Inhalt der Datei ersetzen?`)) return;
+  $('formerr').textContent = '';
+  const res = await call('POST', `/config/import?sections=${secs.join(',')}`, importFile);
+  if (!res) { $('imres').innerHTML = `<div class="formerr">${esc($('formerr').textContent)}</div>`; return; }
+  $('imres').innerHTML = `<ul class="impres"><li class="ok">Übernommen: ${esc(res.applied.join(', '))}</li>${res.warnings.map(w => `<li class="warnc">${esc(w)}</li>`).join('')}</ul>`;
+  toast('Konfiguration importiert');
+  if (secs.includes('users')) setTimeout(() => location.reload(), 2500); // login may be required now
+  else { loadTokens(); loadNotify(); }
+}
+
+const PAGES = {'': 'main', '#gruppen': 'groups', '#statistik': 'stats', '#anfragen': 'recent', '#zugriff': 'tokens', '#report': 'report', '#einstellungen': 'settings'};
 function showPage() {
   const page = PAGES[location.hash] || 'main';
   for (const p of Object.values(PAGES)) $('page-' + p).hidden = p !== page;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.page === page));
   if (page === 'tokens') loadTokens();
   if (page === 'report') { loadEvents(); loadNotify(); }
+  if (page === 'settings') loadUsers();
   if (page === 'stats') { renderChart(); renderStatTables(); if (stRange === 1) loadDay(); }
 }
 window.addEventListener('hashchange', showPage);
-showPage();
 segment('viewSeg', v => setView(v));
 setView(view);
-refresh().then(loadStats);
-loadTokens();
-setInterval(loadTokens, 30000);
-setInterval(refresh, 1000);
-loadRecent();
-setInterval(loadRecent, 2000);
+loadAuth().then(a => {
+  if (a.users && !a.user) { showLogin(); return; } // nothing else loads before the login
+  showPage();
+  refresh().then(loadStats);
+  loadTokens();
+  setInterval(loadTokens, 30000);
+  setInterval(refresh, 1000);
+  loadRecent();
+  setInterval(loadRecent, 2000);
+});
 setInterval(() => { if (location.hash === '#report') loadEvents(); }, 5000);
 setInterval(() => { if (location.hash === '#zugriff') loadTokens(); }, 10000);
 setInterval(loadStats, 30000);
