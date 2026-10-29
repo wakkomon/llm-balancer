@@ -37,6 +37,7 @@ Hermes-Agent ─► LiteLLM ─► llm-balancer :8080 ─┬─► LLM-Server A 
 * **Tagesansicht der Auslastung**: pro Stunde, wie viel der Slot-Zeit gerechnet wurde – heute im Vergleich zum Ø der letzten 7 Tage, dazu die aktuelle Auslastung, pro Server und gesamt; ebenso Anfragen und wartende Anfragen pro Stunde
 * **Statistik der Warteschlange** pro Tag: wie viele Anfragen warten mussten, Ø/max. Wartezeit, max. Länge, abgelehnte
 * **Sessions** in „Letzte Anfragen“: zusammengehörende Anfragen (eine Unterhaltung / ein Agenten-Lauf) bekommen dieselbe Kennung, per Klick filterbar
+* **Ollama**: Erkennung, native Ollama-API (`/api/chat` …) mit Slot-Verwaltung, Modellverwaltung (herunterladen mit Fortschritt, löschen, entladen) wie in Open WebUI
 * **Benutzerverwaltung** mit Anmeldung und Rollen (Administrator, Operator, Betrachter)
 * **Konfiguration exportieren/importieren** (Server, Gruppen, API-Tokens, E-Mail, Benutzer – Geheimnisse optional)
 * Alle Tabellen per Klick auf die Spaltenüberschrift sortierbar, das Ereignisprotokoll zusätzlich filterbar
@@ -230,6 +231,28 @@ Die Queue wird jede Sekunde neu geprüft. In „Letzte Anfragen“ erscheint so 
 Eine Gruppe lässt sich auf der Seite Gruppen **deaktivieren**: ihre Server bekommen dann keine neuen Anfragen (laufende
 laufen zu Ende, die Server erscheinen als „Gruppe aus“), Anfragen für die Gruppe gehen sofort an die Fallback-Gruppe –
 auch die, die schon warten. Ohne Fallback gehen sie an andere Server, die das Modell selbst melden.
+
+### Ollama
+
+Server haben einen **Typ**: „automatisch erkennen“ (Standard – ein Server, der `GET /api/version` beantwortet, gilt als
+Ollama), „OpenAI-kompatibel“ oder „Ollama“. Ollama-Server zeigen auf der Karte ein Badge mit der Version, im Speicher
+geladene Modelle einen grünen Punkt; ihre Modellliste kommt aus `/api/tags`.
+
+* OpenAI-Anfragen (`/v1/chat/completions` …) gehen wie bisher an alle passenden Server – Ollama versteht sie selbst.
+* Die **native Ollama-API** am Balancer: `/api/chat`, `/api/generate`, `/api/embed`, `/api/embeddings` laufen durch die
+  Slot-Verwaltung, Gruppen und Fallbacks, aber nur zu Ollama-Servern. `GET /api/tags`, `/api/ps` und `/api/version`
+  beantwortet der Balancer mit den Modellen aller Ollama-Server – so lässt sich z. B. Open WebUI direkt auf den Balancer
+  als „Ollama“ zeigen. `/api/show` geht ohne Slot durch. Modellverwaltung über diese API (`/api/pull`, `/api/delete`,
+  `/api/create`, `/api/copy`, `/api/push`) lehnt der Balancer mit 403 ab – dafür gibt es die Seite Modelle.
+
+**Seite Modelle** (`#modelle`): alle Modelle aller Ollama-Server live mit Größe, Parametern, Quantisierung, Familie,
+Änderungsdatum und ob sie gerade im Speicher sind (VRAM, „teilw. CPU“, Ablaufzeit), filter- und sortierbar.
+
+* **Herunterladen**: Name wie auf ollama.com/library oder `hf.co/<nutzer>/<repo>:<quant>`, auf einen oder mehrere
+  Server gleichzeitig; Fortschritt mit Balken, abbrechbar. Der Download läuft im Balancer, nicht im Browser.
+* **Kopieren …**: dasselbe Modell auf Server laden, denen es noch fehlt
+* **Löschen** (Administrator) und **Entladen** aus dem Speicher (Operator)
+* Bearer-Tokens der Server werden auch hier verwendet
 
 ### Sessions
 
@@ -425,7 +448,7 @@ Mit Benutzern ist alles erst nach der Anmeldung sichtbar; Betrachter sehen keine
 |---|---|---|
 | GET | `/balancer/api/status` | kompletter Status |
 | GET | `/balancer/api/backends` | aktuelle Server-Liste |
-| POST | `/balancer/api/backends` | Server hinzufügen, Body `{"name","url","max_concurrent","priority","enabled","api_key","group","models":[…],"auto_models","force_model"}` |
+| POST | `/balancer/api/backends` | Server hinzufügen, Body `{"name","url","type","max_concurrent","priority","enabled","api_key","group","models":[…],"auto_models","force_model"}` (`type`: `auto`, `openai`, `ollama`) |
 | PUT | `/balancer/api/backends/{name}` | Server ändern (gleicher Body, Umbenennen erlaubt; `api_key` weglassen = behalten, `""` = entfernen) |
 | DELETE | `/balancer/api/backends/{name}` | Server entfernen |
 | POST | `/balancer/api/backends/{name}/enable` bzw. `/disable` | aktivieren / drain |
@@ -450,6 +473,10 @@ Mit Benutzern ist alles erst nach der Anmeldung sichtbar; Betrachter sehen keine
 | PUT / DELETE | `/balancer/api/users/{name}` | ändern `{"name","role","password","disabled"}` (Felder optional) / löschen |
 | GET | `/balancer/api/config/export?sections=servers,tokens,notify,users&secrets=1` | Konfiguration als JSON |
 | POST | `/balancer/api/config/import?sections=…` | Konfiguration einspielen (Body = Exportdatei) |
+| GET | `/balancer/api/ollama/models` | Modelle und geladene Modelle aller Ollama-Server (live) |
+| POST | `/balancer/api/ollama/pull` · `/delete` · `/unload` | `{"model":"qwen3:8b","servers":["gpu1",…]}` – herunterladen (Hintergrund) / löschen / entladen |
+| GET | `/balancer/api/ollama/jobs` | laufende und erledigte Downloads mit Fortschritt |
+| POST | `/balancer/api/ollama/jobs/{id}/cancel` · `/jobs/clear` | Download abbrechen / erledigte ausblenden |
 | GET | `/balancer/api/stats/day?days=7` | Tagesansicht: Stundenwerte heute und Ø der letzten Tage, Warteschlange pro Stunde |
 | POST | `/balancer/api/stats/reset` | Statistik löschen |
 

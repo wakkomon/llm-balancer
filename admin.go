@@ -88,6 +88,7 @@ func newBackend(bc BackendConfig) *Backend {
 		manual:     bc.Models,
 		autoModels: bc.AutoModels == nil || *bc.AutoModels,
 		forceModel: bc.ForceModel,
+		kind:       bc.Type,
 		healthy:    true, // optimistic until the first health check says otherwise
 	}
 }
@@ -95,7 +96,7 @@ func newBackend(bc BackendConfig) *Backend {
 func (b *Backend) config() BackendConfig {
 	en := b.enabled
 	c := BackendConfig{Name: b.Name, URL: b.URL, MaxConcurrent: b.Max, Priority: b.Priority, Enabled: &en, APIKey: b.apiKey, Group: b.group, TLSSkipVerify: b.insecure, PriceIn: b.priceIn, PriceOut: b.priceOut,
-		CostCap: b.costCap, CapPeriod: b.capPeriod, Models: append([]string(nil), b.manual...), ForceModel: b.forceModel}
+		CostCap: b.costCap, CapPeriod: b.capPeriod, Models: append([]string(nil), b.manual...), ForceModel: b.forceModel, Type: b.kind}
 	if !b.autoModels {
 		f := false
 		c.AutoModels = &f
@@ -223,6 +224,13 @@ func (p *Pool) UpdateBackend(name string, bc BackendConfig, key, group *string) 
 	if bc.keep&keepForce == 0 {
 		b.forceModel = bc.ForceModel
 	}
+	if bc.keep&keepType == 0 && bc.Type != b.kind {
+		b.kind = bc.Type
+		if b.kind == "openai" {
+			b.ollamaVer, b.ollamaTags, b.ollamaPS, b.loaded = "", nil, nil, nil
+		}
+		defer p.kickHealth()
+	}
 	if b.insecure != bc.TLSSkipVerify || (key != nil && strings.TrimSpace(*key) != b.apiKey) {
 		// connection settings changed: give the server a fresh chance and check it right away
 		b.healthy, b.healthMsg, b.unhealthyTil = true, "", time.Time{}
@@ -308,6 +316,7 @@ func (p *Pool) replaceLocked(bcs []BackendConfig, groups []GroupConfig) {
 			b.priceIn, b.priceOut = bc.PriceIn, bc.PriceOut
 			b.costCap, b.capPeriod = bc.CostCap, bc.CapPeriod
 			b.manual, b.autoModels, b.forceModel = bc.Models, bc.AutoModels == nil || *bc.AutoModels, bc.ForceModel
+			b.kind = bc.Type
 			next = append(next, b)
 		} else {
 			next = append(next, newBackend(bc))
@@ -373,6 +382,7 @@ type backendInput struct {
 	Models        *[]string `json:"models"`
 	AutoModels    *bool     `json:"auto_models"`
 	ForceModel    *string   `json:"force_model"`
+	Type          *string   `json:"type"`
 }
 
 func decodeBackend(r *http.Request) (BackendConfig, *string, *string, error) {
@@ -412,6 +422,11 @@ func decodeBackend(r *http.Request) (BackendConfig, *string, *string, error) {
 		bc.Models = *in.Models
 	} else {
 		bc.keep |= keepModels
+	}
+	if in.Type != nil {
+		bc.Type = *in.Type
+	} else {
+		bc.keep |= keepType
 	}
 	if in.ForceModel != nil {
 		bc.ForceModel = *in.ForceModel
@@ -519,4 +534,5 @@ const (
 	keepModels
 	keepAuto
 	keepForce
+	keepType
 )

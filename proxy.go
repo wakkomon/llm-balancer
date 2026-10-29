@@ -163,8 +163,27 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	ollamaAPI := isOllamaPath(r.URL.Path)
+	if ollamaAPI {
+		path := strings.TrimRight(r.URL.Path, "/")
+		if px.serveOllamaInfo(w, r, path) {
+			return
+		}
+		if ollamaManagePaths[path] || strings.HasPrefix(path, "/api/blobs") {
+			ollamaError(w, http.StatusForbidden, "Modelle werden in der Web-UI des Balancers verwaltet (Seite Modelle)")
+			return
+		}
+		if !px.pool.hasOllama() {
+			ollamaError(w, http.StatusNotFound, "kein Ollama-Server eingetragen – die Ollama-API (/api/…) geht nur an Server vom Typ Ollama")
+			return
+		}
+		if path == "/api/show" { // metadata: no slot needed
+			px.passthrough(w, r, body, true)
+			return
+		}
+	}
 	if !slices.Contains(px.cfg.SlotMethods, r.Method) {
-		px.passthrough(w, r, body)
+		px.passthrough(w, r, body, ollamaAPI)
 		return
 	}
 
@@ -179,6 +198,15 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		req.Model, req.Stream = meta.Model, meta.Stream
 	}
 	req.Session, req.SessionSrc = detectSession(r, body, tokenName)
+	if ollamaAPI {
+		req.ollamaAPI = true
+		var st struct {
+			Stream *bool `json:"stream"`
+		}
+		if json.Unmarshal(body, &st) == nil && st.Stream == nil && r.URL.Path != "/api/embed" && r.URL.Path != "/api/embeddings" {
+			req.Stream = true // Ollama streams unless "stream": false
+		}
+	}
 	// Ask OpenAI-compatible servers to report token usage at the end of a stream (needed for prices/stats).
 	if px.cfg.StreamUsage && meta.Stream && strings.HasSuffix(r.URL.Path, "/completions") {
 		if nb, ok := withStreamUsage(body); ok {
@@ -423,7 +451,7 @@ func (px *Proxy) stream(w http.ResponseWriter, resp *http.Response, req *ReqInfo
 }
 
 // passthrough forwards requests that don't need a slot (GET /v1/models, /health, ...).
-func (px *Proxy) passthrough(w http.ResponseWriter, r *http.Request, body []byte) {
+func (px *Proxy) passthrough(w http.ResponseWriter, r *http.Request, body []byte, ollamaOnly bool) {
 	path := strings.TrimRight(r.URL.Path, "/")
 	if r.Method == http.MethodGet && path == "/v1/models" && px.serveModelList(w) {
 		return // models of all servers, so clients see everything the balancer can route
@@ -433,6 +461,9 @@ func (px *Proxy) passthrough(w http.ResponseWriter, r *http.Request, body []byte
 	}
 	// Requests that don't need a slot (GET …) go to one server; on an error answer the next one is tried.
 	tried := map[*Backend]bool{}
+	if ollamaOnly {
+		tried = px.pool.nonOllama()
+	}
 	var last *upstreamFail
 	var connErrs []string
 	for {
@@ -510,6 +541,9 @@ func (px *Proxy) healthLoop(ctx context.Context) {
 					px.pool.SetHealth(ht.b, false, fmt.Sprintf("health %s → %d", px.cfg.HealthPath, resp.StatusCode), ht.url)
 				} else {
 					px.pool.SetHealth(ht.b, true, "", ht.url)
+					if px.probeOllama(client, ht) {
+						return // Ollama: models come from /api/tags
+					}
 					if px.cfg.HealthPath == "/v1/models" && resp.StatusCode == 200 {
 						px.discoverModels(client, ht, hbody)
 					} else {

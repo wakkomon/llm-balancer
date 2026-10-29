@@ -217,7 +217,23 @@ type Route struct {
 // waited long enough (or force, when every server of the group is down). Caller holds p.mu.
 // level 0: normal; 1: fallback group without waiting (group exhausted or down);
 // 2: additionally every other server that reports the model itself (last resort).
-func (p *Pool) routeWaitLocked(model string, waited time.Duration, level int) Route {
+func (p *Pool) routeWaitLocked(model string, waited time.Duration, level int, ollamaOnly bool) Route {
+	rt := p.routeWaitBase(model, waited, level)
+	if !ollamaOnly {
+		return rt
+	}
+	// native Ollama API (/api/chat …): only Ollama servers understand it
+	allow := map[*Backend]bool{}
+	for _, b := range p.backends {
+		if b.isOllama() && rt.allows(b) {
+			allow[b] = true
+		}
+	}
+	rt.allow = allow
+	return rt
+}
+
+func (p *Pool) routeWaitBase(model string, waited time.Duration, level int) Route {
 	force := level >= 1
 	rt := p.routeLocked(model)
 	if rt.Mode != "group" {

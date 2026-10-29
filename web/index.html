@@ -156,7 +156,7 @@ td.sw i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right
 td.tagerr{color:var(--warn);cursor:help}
 .retry{color:var(--warn);cursor:help;font-size:12px;white-space:nowrap}
 .fb{font-size:12.5px;margin-top:10px;color:var(--muted)} .fb b{color:var(--ink);font-weight:600}
-.chkf{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)} .chkf input{width:auto}
+.chkf{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);white-space:nowrap;margin:0} .chkf input{width:auto}
 .filterbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:-2px 0 12px}
 .filterbar input{width:min(340px,100%)}
 #routeinfo b{color:var(--ink)}
@@ -177,6 +177,17 @@ td.tagerr{color:var(--warn);cursor:help}
 @media (max-width:900px){.lrow{grid-template-columns:12px 1fr 80px 44px 132px}.lrow .lact,.lrow .ln{display:none}}
 .mchip{font:11.5px var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--ink)}
 .mchip.pat{border-style:dashed;color:var(--muted)}
+.mchip.loaded::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--free);margin-right:5px;vertical-align:1px}
+.gbadge.ollama{border-color:color-mix(in srgb, var(--ink) 30%, var(--line));color:var(--ink)}
+.pullrow{display:flex;gap:8px;flex-wrap:wrap} .pullrow input{flex:1;min-width:220px}
+.chklist.inline{display:flex;flex-wrap:wrap;gap:4px 16px}
+.job{display:grid;grid-template-columns:minmax(120px,1fr) minmax(160px,2fr) minmax(180px,3fr) auto;gap:10px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line);font-size:12.5px}
+.job:last-child{border-bottom:0}
+.pbar{height:8px;border-radius:4px;background:var(--line);overflow:hidden} .pbar i{display:block;height:100%;background:var(--busy);transition:width .4s}
+.job.done .pbar i{background:var(--free)} .job.failed .pbar i,.job.cancelled .pbar i{background:var(--down)}
+.job.running .pbar i{background:repeating-linear-gradient(-45deg, var(--busy) 0 7px, color-mix(in srgb, var(--busy) 72%, #fff) 7px 14px);background-size:28px 8px;animation:stripes .9s linear infinite}
+.jstat{color:var(--muted);font-size:11.5px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:700px){.job{grid-template-columns:1fr 1fr}}
 .mchip.man{background:color-mix(in srgb, var(--accent) 10%, var(--bg));border-color:color-mix(in srgb, var(--accent) 40%, var(--line))}
 .mchip.hit{border-color:var(--accent);color:var(--accent)}
 .gbadge{font-size:11px;border:1px solid var(--line);border-radius:99px;padding:1px 8px;color:var(--muted);white-space:nowrap}
@@ -247,7 +258,7 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
 <main>
   <header>
     <h1>LLM Balancer</h1>
-    <nav class="nav"><a href="#" data-page="main">Übersicht</a><a href="#gruppen" data-page="groups">Gruppen</a><a href="#statistik" data-page="stats">Statistik</a><a href="#anfragen" data-page="recent">Letzte Anfragen</a><a href="#zugriff" data-page="tokens">API-Zugriff</a><a href="#report" data-page="report">Report</a><a href="#einstellungen" data-page="settings">Einstellungen</a></nav>
+    <nav class="nav"><a href="#" data-page="main">Übersicht</a><a href="#gruppen" data-page="groups">Gruppen</a><a href="#modelle" data-page="models">Modelle</a><a href="#statistik" data-page="stats">Statistik</a><a href="#anfragen" data-page="recent">Letzte Anfragen</a><a href="#zugriff" data-page="tokens">API-Zugriff</a><a href="#report" data-page="report">Report</a><a href="#einstellungen" data-page="settings">Einstellungen</a></nav>
     <span class="sub live" id="live"><i></i><span id="livetxt">verbinde …</span></span>
     <span class="sub" id="uptime"></span>
     <span class="sub" id="version"></span>
@@ -448,6 +459,36 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
 
   <p class="srcnote">Preise und Tokens hier aus Sicht der Anwendung: Aus = gesendeter Prompt, Ein = empfangene Antwort. Ausgehende Preise (was ein Server kostet) stellst du beim jeweiligen Server ein. Die Einnahmen pro Server und Modell stehen im Tab Statistik.</p>
   </div>
+  <div id="page-models" hidden>
+  <div class="sechead">
+    <h2>Ollama-Modelle</h2>
+    <div class="row"><span class="srcnote" id="omnote"></span><button onclick="loadOllama(true)">Aktualisieren</button></div>
+  </div>
+  <div id="omempty"></div>
+  <div id="ombody">
+    <form id="pullform" class="panel need-admin">
+      <div class="pullrow">
+        <input id="pull-model" list="pull-list" placeholder="Modell herunterladen, z. B. qwen3:8b, llama3.2:3b, hf.co/bartowski/…:Q4_K_M" autocomplete="off">
+        <datalist id="pull-list"></datalist>
+        <button class="primary" type="submit">Herunterladen</button>
+      </div>
+      <div class="chklist inline" id="pull-servers" style="margin-top:8px"></div>
+      <div class="hint">Namen wie auf <a href="https://ollama.com/library" target="_blank" rel="noopener">ollama.com/library</a> oder <code>hf.co/&lt;nutzer&gt;/&lt;repo&gt;:&lt;quant&gt;</code> (GGUF von Hugging Face).
+        Der Download läuft im Balancer weiter, auch wenn die Seite geschlossen wird.</div>
+    </form>
+    <div id="pulljobs"></div>
+    <div class="filterbar" style="margin-top:16px">
+      <input id="omq" placeholder="Modelle filtern …" autocomplete="off">
+      <select id="omserver" style="width:auto"><option value="">alle Server</option></select>
+      <label class="chkf"><input type="checkbox" id="omloaded"> nur geladene</label>
+    </div>
+    <div class="tbl"><table data-sort>
+      <thead><tr><th>Modell</th><th>Server</th><th class="n">Größe</th><th>Parameter</th><th>Quantisierung</th><th>Familie</th><th data-type="date">Geändert</th><th>Im Speicher</th><th data-nosort></th></tr></thead>
+      <tbody id="omodels"></tbody>
+    </table></div>
+    <div class="srcnote" id="omsum" style="margin-top:8px"></div>
+  </div>
+  </div>
   <div id="page-settings" hidden>
   <div class="sechead"><h2>Mein Konto</h2></div>
   <div class="panel" id="acct"></div>
@@ -515,6 +556,9 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
     <label for="f-url">URL</label>
     <input id="f-url" required placeholder="http://192.168.1.50:8080" autocomplete="off">
     <div class="hint">Basis-URL des LLM-Servers ohne /v1 – der Pfad der Anfrage wird angehängt.</div>
+    <label for="f-type">Typ</label>
+    <select id="f-type"><option value="auto">automatisch erkennen</option><option value="openai">OpenAI-kompatibel (llama.cpp, vLLM, LM Studio …)</option><option value="ollama">Ollama</option></select>
+    <div class="hint">Ollama-Server bekommen zusätzlich Anfragen an die Ollama-API (/api/chat …) und lassen sich auf der Seite Modelle verwalten.</div>
     <label for="f-name">Name</label>
     <input id="f-name" placeholder="leer = Host:Port" autocomplete="off">
     <div class="two">
@@ -728,6 +772,7 @@ function openEdit(name) {
   $('f-models').value = b ? (b.manual_models || []).join('\n') : '';
   $('f-auto').checked = b ? b.auto_models !== false : true;
   $('f-force').value = b?.force_model || '';
+  $('f-type').value = b?.type || 'auto';
   $('f-forcelist').innerHTML = (b?.models || []).map(m => `<option value="${esc(m)}">`).join('');
   $('f-key').value = '';
   $('f-keydel').checked = false;
@@ -744,7 +789,7 @@ $('form').addEventListener('submit', async ev => {
     name: $('f-name').value.trim(), url: $('f-url').value.trim(),
     max_concurrent: parseInt($('f-max').value, 10) || 1, priority: parseInt($('f-prio').value, 10) || 0,
     enabled: $('f-en').checked, group: $('f-group').value, tls_skip_verify: $('f-tls').checked,
-    models: $('f-models').value.split('\n').map(x => x.trim()).filter(Boolean), auto_models: $('f-auto').checked, force_model: $('f-force').value.trim(),
+    models: $('f-models').value.split('\n').map(x => x.trim()).filter(Boolean), auto_models: $('f-auto').checked, force_model: $('f-force').value.trim(), type: $('f-type').value,
     price_in: parseFloat($('f-pin').value) || 0, price_out: parseFloat($('f-pout').value) || 0,
     cost_cap: parseFloat($('f-cap').value) || 0, cap_period: $('f-capp').value,
   };
@@ -812,7 +857,8 @@ function backendCard(b) {
   const fl = filterModel.toLowerCase();
   const man = b.manual_models || [], rep = b.auto_models === false ? [] : b.models.filter(m => !man.some(x => x.toLowerCase() === m.toLowerCase()));
   const chips = man.map(m => `<span class="mchip man${m.includes('*') ? ' pat' : ''}${fl && m.toLowerCase() === fl ? ' hit' : ''}" title="Filter${m.includes('*') ? ' (Muster)' : ''}">${esc(m)}</span>`)
-    .concat(rep.map(m => `<span class="mchip${fl && m.toLowerCase() === fl ? ' hit' : ''}" title="vom Server gemeldet">${esc(m)}</span>`)).join('');
+    .concat(rep.map(m => { const ld = (b.loaded || []).includes(m);
+      return `<span class="mchip${ld ? ' loaded' : ''}${fl && m.toLowerCase() === fl ? ' hit' : ''}" title="vom Server gemeldet${ld ? ' – im Speicher geladen' : ''}">${esc(m)}</span>`; })).join('');
   const chipTitle = (man.length ? 'Filter: ' + man.join(', ') + '\n' : '') + (b.auto_models === false ? 'gemeldete Modelle ausgeschaltet' : 'gemeldet: ' + (b.models.join(', ') || '–'));
   return `<div class="card ${state}${dim}">
     <div class="row"><div class="ell"><div class="name ell">${esc(b.name)}</div><div class="url ell" title="${esc(b.url)}">${esc(b.url)}</div></div>
@@ -822,6 +868,7 @@ function backendCard(b) {
       ${b.group ? `<span class="gbadge">Gruppe ${esc(b.group)}</span>` : ''}
       ${b.force_model ? `<span class="gbadge" title="Modelle, die der Server nicht exakt kennt, werden als ${esc(b.force_model)} gesendet">→ ${esc(b.force_model)}</span>` : ''}
       ${priceBadge(b)}
+      ${b.is_ollama ? `<span class="gbadge ollama" title="${b.type === 'ollama' ? 'als Ollama eingestellt' : 'automatisch erkannt'}">Ollama${b.ollama_version && b.ollama_version !== '?' ? ' ' + esc(b.ollama_version) : ''}</span>` : ''}
       ${b.has_api_key ? '<span class="gbadge" title="Bearer-Token hinterlegt">🔑 Token</span>' : ''}
       ${b.tls_skip_verify ? '<span class="gbadge" title="TLS-Zertifikat wird nicht geprüft">⚠ TLS</span>' : ''}
     </div>
@@ -1797,7 +1844,109 @@ async function importConfig() {
   else { loadTokens(); loadNotify(); }
 }
 
-const PAGES = {'': 'main', '#gruppen': 'groups', '#statistik': 'stats', '#anfragen': 'recent', '#zugriff': 'tokens', '#report': 'report', '#einstellungen': 'settings'};
+// ---------------- Ollama model management ----------------
+let olData = [], olJobs = [], olLoading = false;
+const gb = n => !n ? '–' : n >= 1e9 ? (n / 1e9).toLocaleString('de-DE', {maximumFractionDigits: 1}) + ' GB' : Math.round(n / 1e6) + ' MB';
+async function loadOllama(force) {
+  if (olLoading && !force) return;
+  olLoading = true;
+  try { const r = await fetch(base + '/api/ollama/models', {cache: 'no-store'}); if (r.ok) olData = await r.json(); } catch {}
+  olLoading = false;
+  renderOllama();
+}
+async function loadJobs() {
+  let list;
+  try { const r = await fetch(base + '/api/ollama/jobs', {cache: 'no-store'}); if (!r.ok) return; list = await r.json(); } catch { return; }
+  const prev = olJobs.filter(j => j.state === 'running').map(j => j.id);
+  olJobs = list;
+  if (olJobs.some(j => prev.includes(j.id) && j.state !== 'running')) loadOllama(true); // a download finished
+  renderJobs();
+}
+function renderOllama() {
+  const servers = olData.map(s => s.server);
+  $('omempty').innerHTML = servers.length ? '' : `<div class="empty-card">Kein Ollama-Server eingetragen. Server mit Typ „Ollama“ anlegen – oder „automatisch erkennen“
+    lassen, dann erscheint er hier, sobald er erreichbar ist.</div>`;
+  $('ombody').hidden = !servers.length;
+  if (!servers.length) return;
+  const ps = $('pull-servers'), checked = new Set([...ps.querySelectorAll('input:checked')].map(i => i.value));
+  const html = olData.map(s => `<label><input type="checkbox" value="${esc(s.server)}" ${checked.has(s.server) || (!ps.__init && servers.length === 1) ? 'checked' : ''} ${s.error ? 'disabled' : ''}> ${esc(s.server)}${s.error ? ' <span class="bad">(nicht erreichbar)</span>' : ''}</label>`).join('');
+  if (ps.__html !== html) { ps.__html = html; ps.innerHTML = html; ps.__init = true; }
+  const all = [...new Set(olData.flatMap(s => s.models.map(m => m.name)))].sort();
+  $('pull-list').innerHTML = all.map(m => `<option value="${esc(m)}">`).join('');
+  const sel = $('omserver'), cur = sel.value, opts = '<option value="">alle Server</option>' + servers.map(n => `<option>${esc(n)}</option>`).join('');
+  if (sel.__opts !== opts) { sel.__opts = opts; sel.innerHTML = opts; sel.value = servers.includes(cur) ? cur : ''; }
+  const q = $('omq').value.trim().toLowerCase(), only = $('omloaded').checked, srvF = sel.value;
+  const rows = [];
+  for (const s of olData) {
+    if (srvF && s.server !== srvF) continue;
+    for (const m of s.models) {
+      const ld = s.loaded.find(l => l.name === m.name);
+      if (only && !ld) continue;
+      if (q && ![m.name, m.details?.family, m.details?.parameter_size, s.server].some(x => (x || '').toLowerCase().includes(q))) continue;
+      const others = olData.filter(o => !o.error && o.server !== s.server && !o.models.some(x => x.name === m.name)).map(o => o.server);
+      let mem = '<span class="muted">–</span>';
+      if (ld) {
+        const exp = ld.expires_at && !/^(0001|2[1-9]|[3-9])/.test(ld.expires_at) ? ' · bis ' + hms(ld.expires_at).slice(0, 5) : ' · dauerhaft';
+        const cpu = ld.size_vram < ld.size ? ` <span class="warnc" title="${Math.round(100 * ld.size_vram / ld.size)} % im Grafikspeicher, der Rest im RAM (langsamer)">teilw. CPU</span>` : '';
+        mem = `<span class="ok">●</span> ${gb(ld.size_vram || ld.size)} VRAM${exp}${cpu}`;
+      }
+      rows.push(`<tr><td><b>${esc(m.name)}</b></td><td>${esc(s.server)}</td><td class="n" data-v="${m.size}">${gb(m.size)}</td>
+        <td data-v="${parseFloat(m.details?.parameter_size) || ''}">${esc(m.details?.parameter_size || '–')}</td><td>${esc(m.details?.quantization_level || '–')}</td>
+        <td>${esc(m.details?.family || '–')}</td><td data-v="${Date.parse(m.modified_at) || ''}">${dateFmt(m.modified_at)}</td><td data-v="${ld ? ld.size_vram : ''}">${mem}</td>
+        <td style="text-align:right;white-space:nowrap">
+          ${ld ? `<button class="need-op" title="Aus dem Speicher entfernen" onclick='unloadModel(${attr(s.server)}, ${attr(m.name)})'>Entladen</button>` : ''}
+          ${others.length ? `<button class="need-admin" title="Auf weitere Server herunterladen" onclick='pullElsewhere(${attr(m.name)}, ${attr(others)})'>Kopieren …</button>` : ''}
+          <button class="danger need-admin" onclick='deleteModel(${attr(s.server)}, ${attr(m.name)})'>Löschen</button></td></tr>`);
+    }
+  }
+  setHTML($('omodels'), rows.join('') || `<tr><td colspan="9" class="empty">${olData.some(s => s.models.length) ? 'Keine Modelle für diesen Filter.' : 'Noch keine Modelle – oben eins herunterladen.'}</td></tr>`);
+  $('omsum').innerHTML = olData.map(s => s.error ? `<b>${esc(s.server)}</b>: <span class="bad">${esc(s.error)}</span>`
+    : `<b>${esc(s.server)}</b>${s.version && s.version !== '?' ? ' (Ollama ' + esc(s.version) + ')' : ''}: ${s.models.length} Modelle, ${gb(s.models.reduce((a, m) => a + m.size, 0))}` +
+      (s.loaded.length ? ` · geladen: ${s.loaded.map(l => esc(l.name) + ' ' + gb(l.size_vram || l.size)).join(', ')}` : '')).join('<br>');
+  $('omnote').textContent = `${olData.length} Ollama-Server`;
+}
+function renderJobs() {
+  const box = $('pulljobs');
+  if (!olJobs.length) { setHTML(box, ''); return; }
+  const fin = olJobs.some(j => j.state !== 'running');
+  setHTML(box, `<div class="sechead" style="margin-top:16px"><h2>Downloads</h2>${fin ? '<button class="need-admin" onclick="clearJobs()">Erledigte ausblenden</button>' : ''}</div>
+    <div class="tbl">${olJobs.map(j => {
+      const pct = j.total ? Math.min(100, Math.round(100 * j.completed / j.total)) : (j.state === 'done' ? 100 : 0);
+      const txt = j.state === 'running' ? `${esc(j.status || '')}${j.total ? ` · ${gb(j.completed)} / ${gb(j.total)} · ${pct} %` : ''}`
+        : j.state === 'done' ? `<span class="ok">fertig</span>${j.total ? ' · ' + gb(j.total) : ''} · ${dur(Date.parse(j.ended) - Date.parse(j.started))}`
+        : j.state === 'cancelled' ? 'abgebrochen' : `<span class="bad">${esc(j.error || 'Fehler')}</span>`;
+      return `<div class="job ${j.state}"><div><b>${esc(j.model)}</b><div class="jstat">${esc(j.server)}${j.by ? ' · ' + esc(j.by) : ''}</div></div>
+        <div class="pbar"><i style="width:${j.state === 'running' && !j.total ? 4 : pct}%"></i></div>
+        <div class="jstat" title="${esc(j.error || j.status || '')}">${txt}</div>
+        <div>${j.state === 'running' ? `<button class="need-admin" onclick="cancelJob(${j.id})">Abbrechen</button>` : ''}</div></div>`; }).join('')}</div>`);
+}
+$('pullform').addEventListener('submit', async ev => {
+  ev.preventDefault(); $('formerr').textContent = '';
+  const model = $('pull-model').value.trim(), servers = [...$('pull-servers').querySelectorAll('input:checked')].map(i => i.value);
+  if (!model) { $('pull-model').focus(); return; }
+  if (!servers.length) { toast('Mindestens einen Server wählen'); return; }
+  const r = await call('POST', '/ollama/pull', {model, servers});
+  if (r) { toast(`Download gestartet (${r.started}×)${r.errors?.length ? ' – ' + r.errors.join('; ') : ''}`); $('pull-model').value = ''; loadJobs(); }
+});
+function pullElsewhere(model, servers) {
+  $('pull-model').value = model;
+  $('pull-servers').querySelectorAll('input').forEach(i => i.checked = servers.includes(i.value));
+  $('pullform').scrollIntoView({behavior: 'smooth', block: 'center'}); $('pull-model').focus();
+}
+async function cancelJob(id) { if (await call('POST', `/ollama/jobs/${id}/cancel`)) loadJobs(); }
+async function clearJobs() { if (await call('POST', '/ollama/jobs/clear')) loadJobs(); }
+async function deleteModel(server, model) {
+  if (!confirm(`Modell „${model}“ auf ${server} löschen?\nDie Dateien werden vom Server entfernt.`)) return;
+  if (await call('POST', '/ollama/delete', {model, servers: [server]})) { toast('Gelöscht'); loadOllama(true); }
+}
+async function unloadModel(server, model) {
+  if (await call('POST', '/ollama/unload', {model, servers: [server]})) { toast(`${model} entladen`); loadOllama(true); }
+}
+['omq', 'omserver', 'omloaded'].forEach(id => $(id).addEventListener(id === 'omq' ? 'input' : 'change', renderOllama));
+setInterval(() => { if (location.hash === '#modelle') loadJobs(); }, 1000);
+setInterval(() => { if (location.hash === '#modelle' && !pointerDown) loadOllama(); }, 10000);
+
+const PAGES = {'': 'main', '#gruppen': 'groups', '#modelle': 'models', '#statistik': 'stats', '#anfragen': 'recent', '#zugriff': 'tokens', '#report': 'report', '#einstellungen': 'settings'};
 function showPage() {
   const page = PAGES[location.hash] || 'main';
   for (const p of Object.values(PAGES)) $('page-' + p).hidden = p !== page;
@@ -1805,6 +1954,7 @@ function showPage() {
   if (page === 'tokens') loadTokens();
   if (page === 'report') { loadEvents(); loadNotify(); }
   if (page === 'settings') loadUsers();
+  if (page === 'models') { loadOllama(true); loadJobs(); }
   if (page === 'stats') { renderChart(); renderStatTables(); if (stRange === 1) loadDay(); }
 }
 window.addEventListener('hashchange', showPage);

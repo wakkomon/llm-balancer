@@ -3,6 +3,16 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.5.0 – 2026-10-29
+
+- **Ollama-Unterstützung**: Server-Typ automatisch / OpenAI-kompatibel / Ollama (Erkennung über `/api/version`),
+  Badge mit Version und geladene Modelle auf der Karte
+- **Native Ollama-API am Balancer**: `/api/chat`, `/api/generate`, `/api/embed(dings)` mit Slots, Gruppen und Fallback
+  nur zu Ollama-Servern; `/api/tags`, `/api/ps`, `/api/version` über alle Ollama-Server zusammengefasst
+- **Modellverwaltung** (neue Seite „Modelle“): Modelle aller Ollama-Server mit Größe, Parametern, Quantisierung und
+  Speicherbelegung; herunterladen auf einen oder mehrere Server mit Fortschritt und Abbrechen, auf weitere Server
+  kopieren, löschen, aus dem Speicher entladen
+
 ## 1.4.1 – 2026-10-27
 
 - **Modell erzwingen pro Server**: Ersatzmodell, das gesendet wird, wenn der Server das angefragte Modell nicht exakt

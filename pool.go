@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/url"
@@ -28,14 +29,19 @@ type Backend struct {
 	Max        int
 	Priority   int
 	apiKey     string
-	insecure   bool     // don't verify the TLS certificate (self-signed)
-	costCap    float64  // outgoing cost cap (0 = none) …
-	capPeriod  string   // … per day / month / total
-	capped     bool     // cap reached: out of rotation until the next period
-	groupOff   bool     // its group is disabled (kept in sync by syncGroupsLocked)
-	manual     []string // model filter set by the admin (names / patterns)
-	autoModels bool     // models reported by the server count as well
-	forceModel string   // replacement model when the requested one is not known by name
+	insecure   bool              // don't verify the TLS certificate (self-signed)
+	costCap    float64           // outgoing cost cap (0 = none) …
+	capPeriod  string            // … per day / month / total
+	capped     bool              // cap reached: out of rotation until the next period
+	groupOff   bool              // its group is disabled (kept in sync by syncGroupsLocked)
+	manual     []string          // model filter set by the admin (names / patterns)
+	autoModels bool              // models reported by the server count as well
+	forceModel string            // replacement model when the requested one is not known by name
+	kind       string            // auto | openai | ollama
+	ollamaVer  string            // detected Ollama version ("" = not Ollama / not detected)
+	ollamaTags []json.RawMessage // /api/tags entries (for the aggregated /api/tags of the balancer)
+	ollamaPS   []json.RawMessage // /api/ps entries: models loaded right now
+	loaded     []string
 	capSpent   float64
 	priceIn    float64
 	priceOut   float64
@@ -101,6 +107,7 @@ type ReqInfo struct {
 	softRetry *Backend     // server that answered 503/429 ("busy") – may be used again once idle
 	Trail     string       `json:"trail,omitempty"` // servers tried: "a: 500 → b: 503 → f (Fallback): 200"
 	cancel    context.CancelFunc
+	ollamaAPI bool // native Ollama endpoint: only Ollama servers
 	stopped   atomic.Bool
 	State     string    `json:"state"` // queued | running | done
 	Backend   string    `json:"backend,omitempty"`
@@ -313,13 +320,13 @@ func (p *Pool) assign(b *Backend, r *ReqInfo) {
 // waiting in the FIFO queue if necessary.
 func (p *Pool) Acquire(ctx context.Context, r *ReqInfo, exclude map[*Backend]bool) (*Backend, error) {
 	p.mu.Lock()
-	rt := p.routeWaitLocked(r.Model, 0, 0)
+	rt := p.routeWaitLocked(r.Model, 0, 0, r.ollamaAPI)
 	level := 0
 	if rt.Mode == "group" && !p.anyUsableEx(rt, exclude) {
 		// every server of the group is down, disabled or already failed for this request:
 		// 1. the fallback group right away, 2. any other server that reports the model
 		for lv := 1; lv <= 2; lv++ {
-			if rf := p.routeWaitLocked(r.Model, 0, lv); p.anyUsableEx(rf, exclude) {
+			if rf := p.routeWaitLocked(r.Model, 0, lv, r.ollamaAPI); p.anyUsableEx(rf, exclude) {
 				rt, level = rf, lv
 				break
 			}
@@ -420,7 +427,7 @@ func (p *Pool) anyCandidate(exclude map[*Backend]bool, rt Route) bool {
 // someWaiterWants: could a queued request use server b? Caller holds p.mu.
 func (p *Pool) someWaiterWants(b *Backend) bool {
 	for _, w := range p.queue {
-		if !w.exclude[b] && p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), w.level).allows(b) {
+		if !w.exclude[b] && p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), w.level, w.req.ollamaAPI).allows(b) {
 			return true
 		}
 	}
@@ -433,12 +440,12 @@ func (p *Pool) dispatchLocked() {
 	p.syncGroupsLocked()
 	for i := 0; i < len(p.queue); {
 		w := p.queue[i]
-		rt := p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), w.level)
+		rt := p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), w.level, w.req.ollamaAPI)
 		if rt.Mode == "group" && !p.anyUsableEx(rt, w.exclude) {
 			// While waiting, every server of the group became unusable (disabled, down, removed):
 			// escalate to the fallback group / other servers with the model instead of waiting.
 			for lv := w.level + 1; lv <= 2; lv++ {
-				if rf := p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), lv); p.anyUsableEx(rf, w.exclude) {
+				if rf := p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), lv, w.req.ollamaAPI); p.anyUsableEx(rf, w.exclude) {
 					w.level, rt = lv, rf
 					break
 				}
@@ -627,6 +634,10 @@ type BackendStatus struct {
 	Manual      []string   `json:"manual_models"` // admin's filter
 	AutoModels  bool       `json:"auto_models"`
 	ForceModel  string     `json:"force_model,omitempty"`
+	Type        string     `json:"type"`                     // auto | openai | ollama (setting)
+	Ollama      string     `json:"ollama_version,omitempty"` // detected / reported Ollama version
+	IsOllama    bool       `json:"is_ollama"`
+	Loaded      []string   `json:"loaded,omitempty"` // Ollama: models in memory
 	Running     []*ReqInfo `json:"running"`
 }
 
@@ -771,6 +782,7 @@ func (p *Pool) Status() Status {
 		bs.Group = b.group
 		bs.Models = append([]string{}, b.models...)
 		bs.Manual, bs.AutoModels, bs.ForceModel = append([]string{}, b.manual...), b.autoModels, b.forceModel
+		bs.Type, bs.Ollama, bs.IsOllama, bs.Loaded = cmp.Or(b.kind, "auto"), b.ollamaVer, b.isOllama(), b.loaded
 		st.States[bs.State]++
 		if bs.Running == nil {
 			bs.Running = []*ReqInfo{}

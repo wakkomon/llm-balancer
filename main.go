@@ -169,6 +169,7 @@ func newMux(cfg Config, pool *Pool, px *Proxy) http.Handler {
 	}
 	registerUsers(ui, pre, users, cfg.AdminToken)
 	registerConfigIO(ui, pre, pool, px.access, users, cfg.AdminToken)
+	registerOllama(ui, pre, px, cfg.AdminToken)
 	ui.HandleFunc("GET "+pre+"/api/recent", func(w http.ResponseWriter, r *http.Request) {
 		after, _ := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
 		w.Header().Set("Content-Type", "application/json")

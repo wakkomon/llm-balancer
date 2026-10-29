@@ -453,6 +453,7 @@ var operatorPaths = []*regexp.Regexp{
 	regexp.MustCompile(`^/api/backends/[^/]+/(enable|disable|stop)$`),
 	regexp.MustCompile(`^/api/requests/[0-9]+/stop$`),
 	regexp.MustCompile(`^/api/groups/[^/]+/(enable|disable)$`),
+	regexp.MustCompile(`^/api/ollama/unload$`),
 }
 
 // requiredRole: what a request needs once users exist (path relative to the UI prefix).
