@@ -246,6 +246,10 @@ passende Gruppe und den Server, der das Modell hat (Seite **Router**, `#router`)
   Warteschlange, „wenn Modell X belegt“ und Uhrzeit (z. B. `22-6`).
 * **Ziel** einer Regel ist ein Modell – oder „ein Modell mit Bilder / Tools / Denken / genug Kontext“; dann nimmt der
   Router das passende Modell, bevorzugt eins mit freiem Server.
+* **Mehrere gleichwertige Zielmodelle**: Regel-Ziel, Standardmodell, Stufen und Routen nehmen auch Listen
+  (`qwen3:30b-a3b, qwen3:32b`). Die Anfrage geht an den ersten freien Server, der eins davon hat (bei mehreren freien an
+  das weiter vorne genannte Modell); sind alle belegt, wartet sie auf den, der zuerst frei wird. Der Modellname in der
+  Anfrage wird passend zum Server gesetzt.
 * **Standardmodell**, wenn keine Regel passt (leer: übernommene echte Modelle bleiben unverändert).
 * **Fähigkeiten beachten** (Standard an): kann das gewählte Modell nachweislich etwas nicht, was die Anfrage braucht
   (Bilder, Tools, Kontext), weicht der Router auf ein fähiges Modell aus.

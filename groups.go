@@ -211,6 +211,77 @@ type Route struct {
 	Mode     string            // group | model | all | reject
 	groups   []string
 	fallback map[*Backend]string // servers added as fallback → model to send instead ("" = unchanged)
+	pref     map[*Backend]int    // several target models: index of the first one the server serves (lower = preferred)
+}
+
+// routeReqLocked: like routeWaitLocked, but a request with several alternative models (router target
+// "a, b") may take a server of any of them – it waits for whichever becomes free first.
+func (p *Pool) routeReqLocked(model string, alts []string, waited time.Duration, level int, ollamaOnly bool) Route {
+	if len(alts) <= 1 {
+		return p.routeWaitLocked(model, waited, level, ollamaOnly)
+	}
+	var out Route
+	allow, fallback, pref := map[*Backend]bool{}, map[*Backend]string{}, map[*Backend]int{}
+	all := false
+	seenG := map[string]bool{}
+	for i, m := range alts {
+		rt := p.routeWaitLocked(m, waited, level, ollamaOnly)
+		if rt.Mode == "reject" {
+			continue
+		}
+		if out.Mode == "" || rt.Mode == "group" {
+			out.Mode = rt.Mode
+		}
+		for _, g := range rt.groups {
+			if !seenG[g] {
+				seenG[g] = true
+				out.groups = append(out.groups, g)
+			}
+		}
+		if rt.allow == nil {
+			all = true
+		}
+		for _, b := range p.backends {
+			if !rt.allows(b) {
+				continue
+			}
+			fm, isFb := rt.fallback[b]
+			if _, ok := pref[b]; !ok {
+				pref[b] = i
+			}
+			if !allow[b] {
+				allow[b] = true
+				if isFb {
+					fallback[b] = fm
+				}
+			} else if !isFb {
+				delete(fallback, b) // allowed directly for another model: not a fallback
+			}
+		}
+	}
+	if out.Mode == "" {
+		return Route{allow: map[*Backend]bool{}, Mode: "reject"}
+	}
+	if !all {
+		out.allow = allow
+	}
+	out.Group = strings.Join(out.groups, ",")
+	if len(fallback) > 0 {
+		out.fallback = fallback
+	}
+	out.pref = pref
+	return out
+}
+
+// splitModels: "a, b" → [a b]
+func splitModels(s string) []string {
+	var out []string
+	for _, m := range strings.Split(s, ",") {
+		if m = strings.TrimSpace(m); m != "" {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // routeWaitLocked is routeLocked plus fallback groups: their servers are added once the request has

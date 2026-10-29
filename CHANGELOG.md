@@ -3,6 +3,12 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.7.1 – 2026-10-29
+
+- **Router: mehrere gleichwertige Zielmodelle** (mit Komma) für Regeln, Standardmodell, Stufen und Routen – die Anfrage
+  nimmt den ersten freien Server mit einem davon bzw. wartet auf den zuerst frei werdenden; der Modellname wird passend
+  zum Server gesetzt. „Fähigkeiten beachten“ sortiert ungeeignete Modelle aus der Liste aus
+
 ## 1.7.0 – 2026-10-29
 
 - **Klassifizierer für Router** (wenn keine Regel passt), angelehnt an LiteLLMs Auto Routing:

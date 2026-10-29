@@ -111,9 +111,10 @@ type ReqInfo struct {
 	softRetry *Backend     // server that answered 503/429 ("busy") – may be used again once idle
 	Trail     string       `json:"trail,omitempty"` // servers tried: "a: 500 → b: 503 → f (Fallback): 200"
 	cancel    context.CancelFunc
-	ollamaAPI bool   // native Ollama endpoint: only Ollama servers
-	Requested string `json:"requested,omitempty"` // model the client asked for, if a router replaced it
-	Router    string `json:"router,omitempty"`    // router decision, e.g. "auto: Regel Code"
+	ollamaAPI bool     // native Ollama endpoint: only Ollama servers
+	Requested string   `json:"requested,omitempty"` // model the client asked for, if a router replaced it
+	Router    string   `json:"router,omitempty"`    // router decision, e.g. "auto: Regel Code"
+	alts      []string // router chose several equivalent models: any of them may answer
 	stopped   atomic.Bool
 	State     string    `json:"state"` // queued | running | done
 	Backend   string    `json:"backend,omitempty"`
@@ -283,6 +284,12 @@ func (p *Pool) pickFree(exclude map[*Backend]bool, rt Route) *Backend {
 				}
 				continue
 			}
+			if pb, pbest := rt.pref[b], rt.pref[best]; pb != pbest { // several models: the earlier one in the list
+				if pb < pbest {
+					best = b
+				}
+				continue
+			}
 		}
 		if best == nil || better(b, best) {
 			best = b
@@ -320,11 +327,20 @@ func (p *Pool) assignRoute(b *Backend, r *ReqInfo, rt Route) {
 			model = m
 		}
 	}
+	base := r.Model
+	if len(r.alts) > 1 { // several equivalent models: the one this server has
+		best := -1
+		for _, m := range r.alts {
+			if lvl := b.serveLevel(m); lvl > best {
+				best, base = lvl, m
+			}
+		}
+	}
 	// the server's own override: when it does not know the model it would get by name
-	if final := cmp.Or(model, r.Model); b.forceModel != "" && final != "" && b.serveLevel(final) < matchExact {
+	if final := cmp.Or(model, base); b.forceModel != "" && final != "" && b.serveLevel(final) < matchExact {
 		model = b.forceModel
 	}
-	final := cmp.Or(model, r.Model)
+	final := cmp.Or(model, base)
 	if !strings.EqualFold(final, cmp.Or(r.Requested, r.Model)) { // differs from what the client sent
 		r.rewrite = final
 		if !strings.EqualFold(final, r.Model) || r.Requested != "" {
@@ -350,13 +366,13 @@ func (p *Pool) assign(b *Backend, r *ReqInfo) {
 // waiting in the FIFO queue if necessary.
 func (p *Pool) Acquire(ctx context.Context, r *ReqInfo, exclude map[*Backend]bool) (*Backend, error) {
 	p.mu.Lock()
-	rt := p.routeWaitLocked(r.Model, 0, 0, r.ollamaAPI)
+	rt := p.routeReqLocked(r.Model, r.alts, 0, 0, r.ollamaAPI)
 	level := 0
 	if rt.Mode == "group" && !p.anyUsableEx(rt, exclude) {
 		// every server of the group is down, disabled or already failed for this request:
 		// 1. the fallback group right away, 2. any other server that reports the model
 		for lv := 1; lv <= 2; lv++ {
-			if rf := p.routeWaitLocked(r.Model, 0, lv, r.ollamaAPI); p.anyUsableEx(rf, exclude) {
+			if rf := p.routeReqLocked(r.Model, r.alts, 0, lv, r.ollamaAPI); p.anyUsableEx(rf, exclude) {
 				rt, level = rf, lv
 				break
 			}
@@ -457,7 +473,7 @@ func (p *Pool) anyCandidate(exclude map[*Backend]bool, rt Route) bool {
 // someWaiterWants: could a queued request use server b? Caller holds p.mu.
 func (p *Pool) someWaiterWants(b *Backend) bool {
 	for _, w := range p.queue {
-		if !w.exclude[b] && p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), w.level, w.req.ollamaAPI).allows(b) {
+		if !w.exclude[b] && p.routeReqLocked(w.model, w.req.alts, time.Since(w.req.QueuedAt), w.level, w.req.ollamaAPI).allows(b) {
 			return true
 		}
 	}
@@ -470,12 +486,12 @@ func (p *Pool) dispatchLocked() {
 	p.syncGroupsLocked()
 	for i := 0; i < len(p.queue); {
 		w := p.queue[i]
-		rt := p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), w.level, w.req.ollamaAPI)
+		rt := p.routeReqLocked(w.model, w.req.alts, time.Since(w.req.QueuedAt), w.level, w.req.ollamaAPI)
 		if rt.Mode == "group" && !p.anyUsableEx(rt, w.exclude) {
 			// While waiting, every server of the group became unusable (disabled, down, removed):
 			// escalate to the fallback group / other servers with the model instead of waiting.
 			for lv := w.level + 1; lv <= 2; lv++ {
-				if rf := p.routeWaitLocked(w.model, time.Since(w.req.QueuedAt), lv, w.req.ollamaAPI); p.anyUsableEx(rf, w.exclude) {
+				if rf := p.routeReqLocked(w.model, w.req.alts, time.Since(w.req.QueuedAt), lv, w.req.ollamaAPI); p.anyUsableEx(rf, w.exclude) {
 					w.level, rt = lv, rf
 					break
 				}

@@ -427,28 +427,6 @@ func (p *Pool) classify(rc *RouterConfig, body []byte) classResult {
 	return classResult{}
 }
 
-// pickPoolLocked: from a list of models, the first one with a free server, else the first one that has
-// a usable server, else the first one.
-func (p *Pool) pickPoolLocked(models []string) string {
-	if len(models) == 0 {
-		return ""
-	}
-	firstUsable := ""
-	for _, m := range models {
-		rt := p.routeLocked(m)
-		if p.pickFree(nil, rt) != nil {
-			return m
-		}
-		if firstUsable == "" && p.anyUsable(rt) {
-			firstUsable = m
-		}
-	}
-	if firstUsable != "" {
-		return firstUsable
-	}
-	return models[0]
-}
-
 // tierModelLocked: models of a tier; an empty tier escalates to the next higher one with models.
 func (p *Pool) tierModelLocked(rc *RouterConfig, tier string) (string, string) {
 	start := 0
@@ -459,12 +437,12 @@ func (p *Pool) tierModelLocked(rc *RouterConfig, tier string) (string, string) {
 	}
 	for i := start; i < len(tierOrder); i++ {
 		if ms := rc.Tiers[tierOrder[i]]; len(ms) > 0 {
-			return p.pickPoolLocked(ms), tierOrder[i]
+			return strings.Join(ms, ", "), tierOrder[i]
 		}
 	}
 	for i := start - 1; i >= 0; i-- { // nothing higher: the next lower one
 		if ms := rc.Tiers[tierOrder[i]]; len(ms) > 0 {
-			return p.pickPoolLocked(ms), tierOrder[i]
+			return strings.Join(ms, ", "), tierOrder[i]
 		}
 	}
 	return "", ""

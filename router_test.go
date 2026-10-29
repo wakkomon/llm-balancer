@@ -182,3 +182,51 @@ func jsonReq(url, body string, hdr map[string]string) (*http.Request, error) {
 	}
 	return req, nil
 }
+
+// Several equivalent target models: whichever has a free server first gets the request.
+func TestRouterSeveralTargets(t *testing.T) {
+	a := newModelLLM(t, "a", 500*time.Millisecond, "qwen3:30b-a3b")
+	b := newModelLLM(t, "b", 300*time.Millisecond, "qwen3:32b")
+	c := newModelLLM(t, "c", 10*time.Millisecond, "qwen3:8b")
+	srv, pool := setup(t, func(cfg *Config) {
+		cfg.Groups = []GroupConfig{{Name: "gross"}}
+		cfg.Backends = []BackendConfig{{Name: "a", URL: a.srv.URL, Group: "gross"}, {Name: "b", URL: b.srv.URL, Group: "gross"}, {Name: "c", URL: c.srv.URL}}
+		cfg.Routers = []RouterConfig{{Name: "auto", Default: "qwen3:8b", Rules: []RouterRule{{Name: "Groß", Pattern: "groß", Model: "qwen3:30b-a3b,  qwen3:32b"}}}}
+	})
+	discover(t, pool)
+	big := `{"model":"auto","messages":[{"role":"user","content":"etwas Großes"}]}`
+	type res struct{ be, model string }
+	out := make(chan res, 3)
+	run := func() { be, m := chatBodyJSON(t, srv.URL, big, nil); out <- res{be, m} }
+	go run()
+	time.Sleep(60 * time.Millisecond)
+	go run()
+	time.Sleep(60 * time.Millisecond)
+	start := time.Now()
+	go run() // both busy: waits for whichever is free first (b after ~300 ms)
+	got := map[string]string{}
+	var third res
+	for i := 0; i < 3; i++ {
+		r := <-out
+		got[r.be] = r.model
+		if i == 1 {
+			third = r
+		}
+	}
+	_ = third
+	if got["a"] != "qwen3:30b-a3b" || got["b"] != "qwen3:32b" {
+		t.Errorf("models per server: %v", got)
+	}
+	if time.Since(start) > 900*time.Millisecond {
+		t.Errorf("third request waited too long: %v", time.Since(start))
+	}
+	if c.served.Load() != 0 {
+		t.Error("small model should not be used")
+	}
+	waitFor(t, func() bool { return len(status(t, srv.URL).Recent) == 3 })
+	for _, r := range status(t, srv.URL).Recent {
+		if r.Requested != "auto" || (r.Effective != "qwen3:30b-a3b" && r.Effective != "qwen3:32b") {
+			t.Errorf("recent: requested=%q effective=%q backend=%s", r.Requested, r.Effective, r.Backend)
+		}
+	}
+}

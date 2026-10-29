@@ -672,7 +672,7 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
     <div class="two">
       <div><label for="r-name">Name = virtuelles Modell</label><input id="r-name" required placeholder="z. B. auto" autocomplete="off">
         <div class="hint">Clients fragen dieses Modell an, z. B. <code>"model": "auto"</code>; es erscheint in /v1/models.</div></div>
-      <div><label for="r-default">Standardmodell</label><input id="r-default" list="r-models" placeholder="wenn keine Regel passt" autocomplete="off">
+      <div><label for="r-default">Standardmodell(e)</label><input id="r-default" list="r-models" placeholder="wenn keine Regel passt – mehrere mit Komma" autocomplete="off">
         <div class="hint">Leer: bei übernommenen echten Modellen bleibt das angefragte.</div></div>
     </div>
     <label for="r-take">Übernimmt außerdem diese angefragten Modelle (eins pro Zeile, * erlaubt)</label>
@@ -683,6 +683,8 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
       <label><input type="checkbox" id="r-caps" checked> Fähigkeiten beachten (Bilder/Tools/Kontext)</label>
       <label><input type="checkbox" id="r-off"> deaktiviert</label>
     </div>
+    <div class="hint"><b>Mehrere Modelle</b> (mit Komma) gelten als gleichwertig: die Anfrage geht an den ersten freien Server, der eins davon hat –
+      bei mehreren freien an das weiter vorne genannte; sind alle belegt, wartet sie auf den, der zuerst frei wird. Der Modellname wird passend zum Server gesetzt.</div>
     <div class="hint">„Fähigkeiten beachten“: kann das gewählte Modell nachweislich etwas nicht, was die Anfrage braucht (laut Server-Einstellungen
       oder Ollama), nimmt der Router ein Modell, das es kann.</div>
     <div class="sechead" style="margin:18px 0 0"><h2>Regeln <span style="text-transform:none;letter-spacing:0;font-weight:400">– von oben nach unten, die erste passende gewinnt; leere Felder = egal</span></h2>
@@ -696,7 +698,7 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
       <option value="arch">Arch-Router – ein Modell wählt eine beschriebene Route</option>
     </select>
     <div id="r-tiersbox" class="rule">
-      <div class="hint" style="margin-top:0">Modelle pro Stufe (mehrere mit Komma: das erste mit freiem Server). Leere Stufe = nächsthöhere.</div>
+      <div class="hint" style="margin-top:0">Modelle pro Stufe – mehrere mit Komma sind gleichwertig. Leere Stufe = nächsthöhere.</div>
       <div class="rgrid">
         <div class="wide2"><label>SIMPLE – Smalltalk, kurze Fakten</label><input data-tier="SIMPLE" list="r-models"></div>
         <div class="wide2"><label>MEDIUM – normale Fragen, Erklärungen</label><input data-tier="MEDIUM" list="r-models"></div>
@@ -2061,7 +2063,7 @@ function ruleBlock(r) {
       <button type="button" title="nach oben" onclick="moveRule(this,-1)">↑</button><button type="button" title="nach unten" onclick="moveRule(this,1)">↓</button>
       <button type="button" class="danger" title="entfernen" onclick="this.closest('.rule').remove()">✕</button></div>
     <div class="rgrid">
-      <div class="wide2"><label>Ziel: Modell</label><input data-f="model" list="r-models" value="${esc(r.model || '')}" placeholder="leer = nach Fähigkeit wählen"></div>
+      <div class="wide2"><label>Ziel: Modell(e) <span class="muted">– mehrere mit Komma = gleichwertig</span></label><input data-f="model" list="r-models" value="${esc(r.model || '')}" placeholder="z. B. qwen3:30b-a3b, qwen3:32b"></div>
       <div><label>… oder Stufe</label><select data-f="tier"><option value="">–</option>${['SIMPLE', 'MEDIUM', 'COMPLEX', 'REASONING'].map(t => `<option ${r.tier === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
       <div class="wide2"><label>… oder Modell mit</label><div class="chklist inline">${Object.entries(NEEDS).map(([k, l]) => `<label><input type="checkbox" data-need="${k}" ${needs.includes(k) ? 'checked' : ''}> ${l}</label>`).join('')}</div></div>
       <div><label>Tokens ab (≈)</label><input data-f="min_tokens" type="number" min="0" value="${r.min_tokens || ''}"></div>

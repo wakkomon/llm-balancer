@@ -78,7 +78,7 @@ func normalizeRouter(rc *RouterConfig) error {
 	if rc.Name == "" || strings.ContainsAny(rc.Name, " /?#,") {
 		return errors.New("Name fehlt oder enthält Leerzeichen / ? # ,")
 	}
-	rc.Default = strings.TrimSpace(rc.Default)
+	rc.Default = strings.Join(splitModels(rc.Default), ", ")
 	var ms []string
 	for _, m := range rc.Models {
 		if m = strings.TrimSpace(m); m != "" {
@@ -98,7 +98,7 @@ func normalizeRouter(rc *RouterConfig) error {
 		if r.Name == "" {
 			r.Name = "Regel " + strconv.Itoa(i+1)
 		}
-		r.Model = strings.TrimSpace(r.Model)
+		r.Model = strings.Join(splitModels(r.Model), ", ") // one or several equivalent models
 		for _, n := range r.Needs {
 			if capNames[n] == "" {
 				return fmt.Errorf("%s: unbekannte Fähigkeit %q", r.Name, n)
@@ -657,7 +657,7 @@ func (p *Pool) decide(c routeCtx) *RouteDecision {
 		case cr.Route != "":
 			for _, rt := range rc.Routes {
 				if rt.Name == cr.Route {
-					d.Model, d.Rule = p.pickPoolLocked(rt.Models), "route:"+rt.Name
+					d.Model, d.Rule = strings.Join(rt.Models, ", "), "route:"+rt.Name
 				}
 			}
 			if d.Model == "" && cr.Route != "other" {
@@ -702,13 +702,29 @@ func (p *Pool) decide(c routeCtx) *RouteDecision {
 		if f.Tools {
 			needs = append(needs, "tools")
 		}
-		if p.modelLacksLocked(d.Model, []string{"context"}, f.Tokens) {
-			needs = append(needs, "context")
+		cands := splitModels(d.Model)
+		for _, m := range cands {
+			if p.modelLacksLocked(m, []string{"context"}, f.Tokens) {
+				needs = append(needs, "context")
+				break
+			}
 		}
-		if len(needs) > 0 && p.modelLacksLocked(d.Model, needs, f.Tokens) {
-			if alt := p.pickCapableLocked(needs, f.Tokens, ""); alt != "" && !strings.EqualFold(alt, d.Model) {
-				d.Reason += fmt.Sprintf(" → %s fehlt %s → %s", d.Model, needsText(needs), alt)
-				d.Model = alt
+		if len(needs) > 0 {
+			var keep []string
+			for _, m := range cands {
+				if !p.modelLacksLocked(m, needs, f.Tokens) {
+					keep = append(keep, m)
+				}
+			}
+			switch {
+			case len(keep) == 0:
+				if alt := p.pickCapableLocked(needs, f.Tokens, ""); alt != "" {
+					d.Reason += fmt.Sprintf(" → %s fehlt %s → %s", d.Model, needsText(needs), alt)
+					d.Model = alt
+				}
+			case len(keep) < len(cands):
+				d.Reason += fmt.Sprintf(" → ohne Modelle ohne %s", needsText(needs))
+				d.Model = strings.Join(keep, ", ")
 			}
 		}
 	}
@@ -762,8 +778,12 @@ func (p *Pool) applyRouter(req *ReqInfo, r *http.Request, body []byte) {
 		return
 	}
 	req.Router = d.Router + ": " + d.Reason
-	if !strings.EqualFold(d.Model, req.Model) {
-		req.Requested, req.Model = req.Model, d.Model
+	models := splitModels(d.Model)
+	if len(models) > 1 {
+		req.alts = models // any of them – the first free server decides
+	}
+	if !strings.EqualFold(models[0], req.Model) || len(models) > 1 {
+		req.Requested, req.Model = req.Model, models[0]
 	}
 }
 
