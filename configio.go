@@ -38,6 +38,7 @@ type ConfigFile struct {
 	WithSecrets   bool             `json:"with_secrets"`
 	Backends      *[]BackendConfig `json:"backends,omitempty"`
 	Groups        *[]GroupConfig   `json:"groups,omitempty"`
+	Routers       *[]RouterConfig  `json:"routers,omitempty"`
 	Tokens        *[]tokenExport   `json:"tokens,omitempty"`
 	Notify        *NotifyConfig    `json:"notify,omitempty"`
 	Users         *[]User          `json:"users,omitempty"`
@@ -77,7 +78,8 @@ func exportConfig(pool *Pool, acc *Access, users *Users, sec map[string]bool, se
 				bs[i].APIKey = ""
 			}
 		}
-		f.Backends, f.Groups = &bs, &gs
+		rs := append([]RouterConfig{}, pool.Routers()...)
+		f.Backends, f.Groups, f.Routers = &bs, &gs, &rs
 	}
 	if sec["tokens"] && acc != nil {
 		acc.mu.Lock()
@@ -163,6 +165,13 @@ func importConfig(pool *Pool, acc *Access, users *Users, f ConfigFile, sec map[s
 		}
 	}
 
+	if sec["servers"] && f.Routers != nil {
+		for i := range *f.Routers {
+			if err := normalizeRouter(&(*f.Routers)[i]); err != nil {
+				return res, httpErr{400, fmt.Errorf("Router %q: %v", (*f.Routers)[i].Name, err)}
+			}
+		}
+	}
 	if bcs != nil {
 		pool.mu.Lock()
 		pool.replaceLocked(bcs, gs)
@@ -172,6 +181,13 @@ func importConfig(pool *Pool, acc *Access, users *Users, f ConfigFile, sec map[s
 			res.Warnings = append(res.Warnings, err.Error())
 		}
 		res.Applied = append(res.Applied, fmt.Sprintf("%d Server, %d Gruppen", len(bcs), len(gs)))
+		if f.Routers != nil {
+			if err := pool.SetRouters(*f.Routers); err != nil {
+				res.Warnings = append(res.Warnings, err.Error())
+			} else if len(*f.Routers) > 0 {
+				res.Applied = append(res.Applied, fmt.Sprintf("%d Router", len(*f.Routers)))
+			}
+		}
 	}
 	if sec["tokens"] && f.Tokens != nil && acc != nil {
 		n := acc.importTokens(*f.Tokens, &res)

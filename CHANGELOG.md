@@ -3,6 +3,17 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.6.0 – 2026-10-29
+
+- **Modell-Router** (neue Seite „Router“): virtuelle Modelle wie `auto`, die per Regeln das echte Modell wählen – nach
+  geschätzter Prompt-Größe, Bildern, Tools, JSON-Antwort, angefordertem Denken, Text-Muster, API-Token, Client,
+  Header, Warteschlange, belegtem Modell und Uhrzeit; Ziel ist ein Modell oder „ein Modell mit Fähigkeit X“.
+  Routers können auch echte Modellnamen übernehmen (Muster), haben ein Standardmodell, optional Session-Bindung und
+  „Fähigkeiten beachten“. Treffer pro Regel, Test-Werkzeug, Anzeige in „Letzte Anfragen“; Router erscheinen in
+  `/v1/models` und sind Teil des Konfigurations-Exports
+- **Modell-Fähigkeiten pro Server** (Bilder, Tools, Denken, Kontext), bei Ollama automatisch aus `/api/show`;
+  Anzeige auf der Seite Modelle
+
 ## 1.5.0 – 2026-10-29
 
 - **Ollama-Unterstützung**: Server-Typ automatisch / OpenAI-kompatibel / Ollama (Erkennung über `/api/version`),

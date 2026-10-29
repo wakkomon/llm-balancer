@@ -198,6 +198,7 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		req.Model, req.Stream = meta.Model, meta.Stream
 	}
 	req.Session, req.SessionSrc = detectSession(r, body, tokenName)
+	px.pool.applyRouter(req, r, body) // may replace the model before the server is chosen
 	if ollamaAPI {
 		req.ollamaAPI = true
 		var st struct {

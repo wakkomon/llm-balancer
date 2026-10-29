@@ -442,6 +442,11 @@ func (p *Pool) AllModels() []string {
 			}
 		}
 	}
+	for _, rc := range p.routers { // virtual models of the routers, e.g. "auto"
+		if !rc.Disabled {
+			add(rc.Name)
+		}
+	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i]) < strings.ToLower(out[j]) })
 	return out
 }

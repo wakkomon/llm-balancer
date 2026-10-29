@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/url"
 	"sort"
@@ -23,31 +24,33 @@ var (
 
 // Backend is the runtime state of one upstream server.
 type Backend struct {
-	Name       string
-	URL        string
-	target     *url.URL
-	Max        int
-	Priority   int
-	apiKey     string
-	insecure   bool              // don't verify the TLS certificate (self-signed)
-	costCap    float64           // outgoing cost cap (0 = none) …
-	capPeriod  string            // … per day / month / total
-	capped     bool              // cap reached: out of rotation until the next period
-	groupOff   bool              // its group is disabled (kept in sync by syncGroupsLocked)
-	manual     []string          // model filter set by the admin (names / patterns)
-	autoModels bool              // models reported by the server count as well
-	forceModel string            // replacement model when the requested one is not known by name
-	kind       string            // auto | openai | ollama
-	ollamaVer  string            // detected Ollama version ("" = not Ollama / not detected)
-	ollamaTags []json.RawMessage // /api/tags entries (for the aggregated /api/tags of the balancer)
-	ollamaPS   []json.RawMessage // /api/ps entries: models loaded right now
-	loaded     []string
-	capSpent   float64
-	priceIn    float64
-	priceOut   float64
-	group      string   // guarded by Pool.mu
-	models     []string // reported by the server via /v1/models
-	modelsAt   time.Time
+	Name         string
+	URL          string
+	target       *url.URL
+	Max          int
+	Priority     int
+	apiKey       string
+	insecure     bool              // don't verify the TLS certificate (self-signed)
+	costCap      float64           // outgoing cost cap (0 = none) …
+	capPeriod    string            // … per day / month / total
+	capped       bool              // cap reached: out of rotation until the next period
+	groupOff     bool              // its group is disabled (kept in sync by syncGroupsLocked)
+	manual       []string          // model filter set by the admin (names / patterns)
+	autoModels   bool              // models reported by the server count as well
+	forceModel   string            // replacement model when the requested one is not known by name
+	kind         string            // auto | openai | ollama
+	ollamaVer    string            // detected Ollama version ("" = not Ollama / not detected)
+	ollamaTags   []json.RawMessage // /api/tags entries (for the aggregated /api/tags of the balancer)
+	ollamaPS     []json.RawMessage // /api/ps entries: models loaded right now
+	loaded       []string
+	features     []ModelFeature          // admin: capabilities of the models (patterns)
+	detectedCaps map[string]ModelFeature // Ollama /api/show, by lower-case model name
+	capSpent     float64
+	priceIn      float64
+	priceOut     float64
+	group        string   // guarded by Pool.mu
+	models       []string // reported by the server via /v1/models
+	modelsAt     time.Time
 
 	// guarded by Pool.mu
 	enabled      bool
@@ -107,7 +110,9 @@ type ReqInfo struct {
 	softRetry *Backend     // server that answered 503/429 ("busy") – may be used again once idle
 	Trail     string       `json:"trail,omitempty"` // servers tried: "a: 500 → b: 503 → f (Fallback): 200"
 	cancel    context.CancelFunc
-	ollamaAPI bool // native Ollama endpoint: only Ollama servers
+	ollamaAPI bool   // native Ollama endpoint: only Ollama servers
+	Requested string `json:"requested,omitempty"` // model the client asked for, if a router replaced it
+	Router    string `json:"router,omitempty"`    // router decision, e.g. "auto: Regel Code"
 	stopped   atomic.Bool
 	State     string    `json:"state"` // queued | running | done
 	Backend   string    `json:"backend,omitempty"`
@@ -148,18 +153,22 @@ type Pool struct {
 	started  time.Time
 	rr       int
 
-	store         *Store
-	initial       []BackendConfig // from BACKENDS / config.json, used for "reset"
-	source        string          // "env" or "saved"
-	healthKick    chan struct{}
-	stats         *Stats
-	notifier      *Notifier
-	capKick       chan struct{}
-	countersPath  string
-	countersSaved []byte
-	groups        []GroupConfig
-	initialGroups []GroupConfig
-	access        *Access
+	store          *Store
+	initial        []BackendConfig // from BACKENDS / config.json, used for "reset"
+	source         string          // "env" or "saved"
+	healthKick     chan struct{}
+	stats          *Stats
+	notifier       *Notifier
+	capKick        chan struct{}
+	countersPath   string
+	countersSaved  []byte
+	groups         []GroupConfig
+	initialGroups  []GroupConfig
+	routers        []RouterConfig
+	initialRouters []RouterConfig
+	sticky         map[string]*stickyEntry
+	routerHits     map[string]*atomic.Int64
+	access         *Access
 
 	totalReqs     int64
 	totalRejected int64
@@ -171,7 +180,14 @@ type Pool struct {
 func NewPool(cfg Config, initial []BackendConfig, store *Store) (*Pool, error) {
 	p := &Pool{cfg: cfg, active: map[uint64]*ReqInfo{}, started: time.Now(), store: store,
 		initial: initial, source: "env", healthKick: make(chan struct{}, 1), capKick: make(chan struct{}, 1),
-		initialGroups: append([]GroupConfig{}, cfg.Groups...)}
+		initialGroups: append([]GroupConfig{}, cfg.Groups...), sticky: map[string]*stickyEntry{}}
+	for _, rc := range cfg.Routers {
+		if err := normalizeRouter(&rc); err != nil {
+			return nil, fmt.Errorf("router %q: %v", rc.Name, err)
+		}
+		p.initialRouters = append(p.initialRouters, rc)
+	}
+	p.routers = append([]RouterConfig{}, p.initialRouters...)
 	list := initial
 	p.groups = append([]GroupConfig{}, cfg.Groups...)
 	go p.tick()
@@ -183,6 +199,14 @@ func NewPool(cfg Config, initial []BackendConfig, store *Store) (*Pool, error) {
 		if ok {
 			list, p.source = saved.Backends, "saved"
 			p.groups = saved.Groups
+			p.routers = nil
+			for _, rc := range saved.Routers {
+				if err := normalizeRouter(&rc); err != nil {
+					log.Printf("saved router %q ignored: %v", rc.Name, err)
+					continue
+				}
+				p.routers = append(p.routers, rc)
+			}
 		}
 	}
 	for _, bc := range list {
@@ -298,8 +322,12 @@ func (p *Pool) assignRoute(b *Backend, r *ReqInfo, rt Route) {
 	if final := cmp.Or(model, r.Model); b.forceModel != "" && final != "" && b.serveLevel(final) < matchExact {
 		model = b.forceModel
 	}
-	if model != "" && !strings.EqualFold(model, r.Model) {
-		r.rewrite, r.Effective = model, model
+	final := cmp.Or(model, r.Model)
+	if !strings.EqualFold(final, cmp.Or(r.Requested, r.Model)) { // differs from what the client sent
+		r.rewrite = final
+		if !strings.EqualFold(final, r.Model) || r.Requested != "" {
+			r.Effective = final
+		}
 	}
 	p.assign(b, r)
 }
@@ -600,45 +628,47 @@ func (p *Pool) setFirstByte(r *ReqInfo) {
 // ---- status snapshot for the UI / API ----
 
 type BackendStatus struct {
-	Name        string     `json:"name"`
-	URL         string     `json:"url"`
-	Enabled     bool       `json:"enabled"`
-	GroupOff    bool       `json:"group_disabled,omitempty"`
-	Healthy     bool       `json:"healthy"`
-	HealthMsg   string     `json:"health_msg,omitempty"`
-	HealthAt    string     `json:"health_at,omitempty"`
-	Active      int        `json:"active"`
-	Max         int        `json:"max"`
-	Priority    int        `json:"priority"`
-	Total       int64      `json:"total"`
-	Errors      int64      `json:"errors"`
-	AvgDurMs    int64      `json:"avg_duration_ms"`
-	AvgTTFBMs   int64      `json:"avg_ttfb_ms"`
-	LastError   string     `json:"last_error,omitempty"`
-	LastErrorAt string     `json:"last_error_at,omitempty"`
-	State       string     `json:"state"`          // idle | busy | error | down | disabled
-	AvgTPS      float64    `json:"avg_tps"`        // output tokens/s over all requests with usage
-	LastTPS     float64    `json:"last_tps"`       // of the last request
-	PromptTPS   float64    `json:"avg_prompt_tps"` // prompt tokens/s (prompt processing until the first byte)
-	TagErrors   int64      `json:"tag_errors"`
-	HasAPIKey   bool       `json:"has_api_key"`
-	TLSSkip     bool       `json:"tls_skip_verify"`
-	CostCap     float64    `json:"cost_cap"`
-	CapPeriod   string     `json:"cap_period"`
-	CapSpent    float64    `json:"cap_spent"`
-	Capped      bool       `json:"capped"`
-	PriceIn     float64    `json:"price_in"`
-	PriceOut    float64    `json:"price_out"`
-	Group       string     `json:"group"`
-	Models      []string   `json:"models"`        // reported by the server
-	Manual      []string   `json:"manual_models"` // admin's filter
-	AutoModels  bool       `json:"auto_models"`
-	ForceModel  string     `json:"force_model,omitempty"`
-	Type        string     `json:"type"`                     // auto | openai | ollama (setting)
-	Ollama      string     `json:"ollama_version,omitempty"` // detected / reported Ollama version
-	IsOllama    bool       `json:"is_ollama"`
-	Loaded      []string   `json:"loaded,omitempty"` // Ollama: models in memory
-	Running     []*ReqInfo `json:"running"`
+	Name        string                  `json:"name"`
+	URL         string                  `json:"url"`
+	Enabled     bool                    `json:"enabled"`
+	GroupOff    bool                    `json:"group_disabled,omitempty"`
+	Healthy     bool                    `json:"healthy"`
+	HealthMsg   string                  `json:"health_msg,omitempty"`
+	HealthAt    string                  `json:"health_at,omitempty"`
+	Active      int                     `json:"active"`
+	Max         int                     `json:"max"`
+	Priority    int                     `json:"priority"`
+	Total       int64                   `json:"total"`
+	Errors      int64                   `json:"errors"`
+	AvgDurMs    int64                   `json:"avg_duration_ms"`
+	AvgTTFBMs   int64                   `json:"avg_ttfb_ms"`
+	LastError   string                  `json:"last_error,omitempty"`
+	LastErrorAt string                  `json:"last_error_at,omitempty"`
+	State       string                  `json:"state"`          // idle | busy | error | down | disabled
+	AvgTPS      float64                 `json:"avg_tps"`        // output tokens/s over all requests with usage
+	LastTPS     float64                 `json:"last_tps"`       // of the last request
+	PromptTPS   float64                 `json:"avg_prompt_tps"` // prompt tokens/s (prompt processing until the first byte)
+	TagErrors   int64                   `json:"tag_errors"`
+	HasAPIKey   bool                    `json:"has_api_key"`
+	TLSSkip     bool                    `json:"tls_skip_verify"`
+	CostCap     float64                 `json:"cost_cap"`
+	CapPeriod   string                  `json:"cap_period"`
+	CapSpent    float64                 `json:"cap_spent"`
+	Capped      bool                    `json:"capped"`
+	PriceIn     float64                 `json:"price_in"`
+	PriceOut    float64                 `json:"price_out"`
+	Group       string                  `json:"group"`
+	Models      []string                `json:"models"`        // reported by the server
+	Manual      []string                `json:"manual_models"` // admin's filter
+	AutoModels  bool                    `json:"auto_models"`
+	ForceModel  string                  `json:"force_model,omitempty"`
+	Type        string                  `json:"type"`                     // auto | openai | ollama (setting)
+	Ollama      string                  `json:"ollama_version,omitempty"` // detected / reported Ollama version
+	IsOllama    bool                    `json:"is_ollama"`
+	Loaded      []string                `json:"loaded,omitempty"` // Ollama: models in memory
+	Features    []ModelFeature          `json:"features"`         // admin's capability entries
+	Caps        map[string]ModelFeature `json:"caps"`             // effective capabilities per served model
+	Running     []*ReqInfo              `json:"running"`
 }
 
 type Status struct {
@@ -656,6 +686,7 @@ type Status struct {
 	AdminToken bool            `json:"admin_token_required"`
 	AccessAuth bool            `json:"access_auth"` // clients need an API token
 	Groups     []GroupStatus   `json:"groups"`
+	Routers    []RouterStatus  `json:"routers"`
 	Currency   string          `json:"currency"`
 	Version    string          `json:"version"`
 	Commit     string          `json:"commit,omitempty"`
@@ -666,7 +697,7 @@ type Status struct {
 func snapshot(r *ReqInfo, now time.Time) *ReqInfo {
 	c := &ReqInfo{
 		ID: r.ID, Method: r.Method, Path: r.Path, Model: r.Model, Stream: r.Stream, Client: r.Client, Token: r.Token,
-		Group: r.Group, Session: r.Session, SessionSrc: r.SessionSrc, TokensIn: r.TokensIn, TokensOut: r.TokensOut, Cost: r.Cost, BackendCost: r.BackendCost, Seq: r.Seq,
+		Group: r.Group, Requested: r.Requested, Router: r.Router, Session: r.Session, SessionSrc: r.SessionSrc, TokensIn: r.TokensIn, TokensOut: r.TokensOut, Cost: r.Cost, BackendCost: r.BackendCost, Seq: r.Seq,
 		Trail: r.Trail, TagIssues: r.TagIssues, GenTPS: r.GenTPS, PromptTPS: r.PromptTPS, Effective: r.Effective,
 		State: r.State, Backend: r.Backend, Attempts: r.Attempts, QueuedAt: r.QueuedAt,
 		StartedAt: r.StartedAt, EndedAt: r.EndedAt, Status: r.Status, Error: r.Error,
@@ -720,6 +751,7 @@ func (p *Pool) Status() Status {
 	st.Version = versionString()
 	st.Commit = shortCommit()
 	st.Groups = []GroupStatus{}
+	st.Routers = p.routerStatusLocked()
 	for _, g := range p.groups {
 		gs := GroupStatus{Name: g.Name, Models: append([]string{}, g.Models...), Auto: g.auto(), Members: []string{}, Available: []string{},
 			Fallback: g.Fallback, FallbackAfterSec: g.FallbackAfterSec, FallbackModel: g.FallbackModel, ForceModel: g.ForceModel, Disabled: g.Disabled}
@@ -783,6 +815,10 @@ func (p *Pool) Status() Status {
 		bs.Models = append([]string{}, b.models...)
 		bs.Manual, bs.AutoModels, bs.ForceModel = append([]string{}, b.manual...), b.autoModels, b.forceModel
 		bs.Type, bs.Ollama, bs.IsOllama, bs.Loaded = cmp.Or(b.kind, "auto"), b.ollamaVer, b.isOllama(), b.loaded
+		bs.Features, bs.Caps = append([]ModelFeature{}, b.features...), map[string]ModelFeature{}
+		for _, m := range b.servedModels() {
+			bs.Caps[m] = b.featuresOf(m)
+		}
 		st.States[bs.State]++
 		if bs.Running == nil {
 			bs.Running = []*ReqInfo{}
@@ -925,6 +961,7 @@ func (p *Pool) tick() {
 		if len(p.queue) > 0 {
 			p.dispatchLocked()
 		}
+		p.pruneStickyLocked(time.Now())
 		p.mu.Unlock()
 	}
 }

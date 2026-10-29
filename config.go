@@ -35,7 +35,9 @@ type BackendConfig struct {
 	ForceModel string `json:"force_model,omitempty"`
 	// Type: "auto" (default, Ollama is detected via /api/version), "openai" or "ollama"
 	Type string `json:"type,omitempty"`
-	keep int    // API update: fields not sent (keep current value)
+	// Features: what the models of this server can do (for the router); Ollama is detected
+	Features []ModelFeature `json:"features,omitempty"`
+	keep     int            // API update: fields not sent (keep current value)
 }
 
 // Config is the full balancer configuration.
@@ -44,6 +46,7 @@ type Config struct {
 	UIPrefix             string          `json:"ui_prefix"` // default "/balancer"
 	Backends             []BackendConfig `json:"backends"`
 	Groups               []GroupConfig   `json:"groups"`              // server groups, routed by model name
+	Routers              []RouterConfig  `json:"routers"`             // model routers (rules that choose the model)
 	UnknownModel         string          `json:"unknown_model"`       // "all" (default): models no group/server knows go to every server; "reject": 404
 	QueueTimeoutSec      int             `json:"queue_timeout_sec"`   // max wait in queue, 0 = unlimited (default 900)
 	MaxQueue             int             `json:"max_queue"`           // max queued requests, 0 = unlimited
@@ -285,6 +288,17 @@ func normalizeBackend(b *BackendConfig) error {
 	}
 	b.Models = ms
 	b.ForceModel = strings.TrimSpace(b.ForceModel)
+	var fs []ModelFeature
+	for _, f := range b.Features {
+		if f.Model = strings.TrimSpace(f.Model); f.Model == "" {
+			continue
+		}
+		if f.Context < 0 {
+			return fmt.Errorf("Kontext darf nicht negativ sein (%s)", f.Model)
+		}
+		fs = append(fs, f)
+	}
+	b.Features = fs
 	switch b.Type = strings.ToLower(strings.TrimSpace(b.Type)); b.Type {
 	case "", "auto":
 		b.Type = ""

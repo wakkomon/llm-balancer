@@ -68,6 +68,8 @@ func newFakeOllama(t *testing.T, models ...string) *fakeOllama {
 			fmt.Fprintln(w, `{"status":"success"}`)
 			f.mu.Lock()
 			f.models = append(f.models, model)
+		case "/api/show":
+			fmt.Fprint(w, `{"capabilities":["completion","vision","tools"],"model_info":{"qwen3.context_length":40960}}`)
 		case "/api/delete":
 			for i, m := range f.models {
 				if m == model {
@@ -113,6 +115,9 @@ func TestOllamaDetectionAndNativeAPI(t *testing.T) {
 	}
 	if st := status(t, srv.URL); !st.Backends[1].IsOllama || st.Backends[1].Ollama != "0.12.6" || len(st.Backends[1].Models) != 1 {
 		t.Fatalf("detection: %+v", st.Backends[1])
+	}
+	if c := status(t, srv.URL).Backends[1].Caps["qwen3:8b"]; c.Vision == nil || !*c.Vision || c.Reasoning == nil || *c.Reasoning || c.Context != 40960 {
+		t.Errorf("caps from /api/show: %+v", c)
 	}
 	if st := status(t, srv.URL); st.Backends[0].IsOllama {
 		t.Error("openai server detected as Ollama")

@@ -37,6 +37,7 @@ Hermes-Agent ─► LiteLLM ─► llm-balancer :8080 ─┬─► LLM-Server A 
 * **Tagesansicht der Auslastung**: pro Stunde, wie viel der Slot-Zeit gerechnet wurde – heute im Vergleich zum Ø der letzten 7 Tage, dazu die aktuelle Auslastung, pro Server und gesamt; ebenso Anfragen und wartende Anfragen pro Stunde
 * **Statistik der Warteschlange** pro Tag: wie viele Anfragen warten mussten, Ø/max. Wartezeit, max. Länge, abgelehnte
 * **Sessions** in „Letzte Anfragen“: zusammengehörende Anfragen (eine Unterhaltung / ein Agenten-Lauf) bekommen dieselbe Kennung, per Klick filterbar
+* **Modell-Router**: virtuelle Modelle wie `auto` wählen per Regeln (Größe, Bilder, Tools, Text-Muster, Token, Last, Uhrzeit, Fähigkeiten) das passende Modell, optional mit Session-Bindung
 * **Ollama**: Erkennung, native Ollama-API (`/api/chat` …) mit Slot-Verwaltung, Modellverwaltung (herunterladen mit Fortschritt, löschen, entladen) wie in Open WebUI
 * **Benutzerverwaltung** mit Anmeldung und Rollen (Administrator, Operator, Betrachter)
 * **Konfiguration exportieren/importieren** (Server, Gruppen, API-Tokens, E-Mail, Benutzer – Geheimnisse optional)
@@ -231,6 +232,32 @@ Die Queue wird jede Sekunde neu geprüft. In „Letzte Anfragen“ erscheint so 
 Eine Gruppe lässt sich auf der Seite Gruppen **deaktivieren**: ihre Server bekommen dann keine neuen Anfragen (laufende
 laufen zu Ende, die Server erscheinen als „Gruppe aus“), Anfragen für die Gruppe gehen sofort an die Fallback-Gruppe –
 auch die, die schon warten. Ohne Fallback gehen sie an andere Server, die das Modell selbst melden.
+
+### Modell-Router
+
+Ein Router sitzt zwischen Anfrage und Gruppe: er wählt anhand von Regeln das Modell, danach geht es wie gewohnt an die
+passende Gruppe und den Server, der das Modell hat (Seite **Router**, `#router`).
+
+* **Virtuelles Modell**: der Name des Routers, z. B. `auto` – Clients fragen `"model": "auto"` an, er steht in `/v1/models`.
+* **Übernommene Modelle**: optional Namen/Muster echter Modelle (z. B. `gpt-4*`), die der Router ebenfalls umleitet.
+* **Regeln** von oben nach unten, die erste passende gewinnt; alle gesetzten Bedingungen müssen zutreffen:
+  geschätzte Prompt-Tokens (ab/bis), Bilder, Tools, JSON-Antwort, Denken angefordert (`reasoning_effort`, `think` …),
+  Text-Muster (Regex) in letzter Nachricht / System-Prompt / allem, API-Token, Client-IP/CIDR, Header, Länge der
+  Warteschlange, „wenn Modell X belegt“ und Uhrzeit (z. B. `22-6`).
+* **Ziel** einer Regel ist ein Modell – oder „ein Modell mit Bilder / Tools / Denken / genug Kontext“; dann nimmt der
+  Router das passende Modell, bevorzugt eins mit freiem Server.
+* **Standardmodell**, wenn keine Regel passt (leer: übernommene echte Modelle bleiben unverändert).
+* **Fähigkeiten beachten** (Standard an): kann das gewählte Modell nachweislich etwas nicht, was die Anfrage braucht
+  (Bilder, Tools, Kontext), weicht der Router auf ein fähiges Modell aus.
+* **Session-Bindung** (optional): eine Unterhaltung bzw. ein Agenten-Lauf bleibt beim zuerst gewählten Modell (2 h ohne
+  Anfrage, dann neu) – wichtig für Agenten wie Hermes, damit das Modell nicht mitten im Lauf wechselt.
+* In „Letzte Anfragen“ erscheint z. B. `auto → qwen3-coder:30b ⑂` (Tooltip: Router und Regel); die Router-Seite zeigt die
+  Treffer pro Regel und hat einen **Test**: Anfrage einfügen, sehen, welche Regel welches Modell wählen würde und warum
+  die anderen nicht passen.
+
+**Modell-Fähigkeiten** pro Server (Dialog „Bearbeiten“): Bilder, Tools, Denken und Kontextlänge pro Modell oder Muster.
+Bei Ollama-Servern werden sie aus `/api/show` erkannt (Kontext = maximale Länge des Modells, nicht das eingestellte
+`num_ctx` – bei Bedarf hier überschreiben). Die Seite Modelle zeigt sie mit an.
 
 ### Ollama
 
@@ -448,7 +475,7 @@ Mit Benutzern ist alles erst nach der Anmeldung sichtbar; Betrachter sehen keine
 |---|---|---|
 | GET | `/balancer/api/status` | kompletter Status |
 | GET | `/balancer/api/backends` | aktuelle Server-Liste |
-| POST | `/balancer/api/backends` | Server hinzufügen, Body `{"name","url","type","max_concurrent","priority","enabled","api_key","group","models":[…],"auto_models","force_model"}` (`type`: `auto`, `openai`, `ollama`) |
+| POST | `/balancer/api/backends` | Server hinzufügen, Body `{"name","url","type","max_concurrent","priority","enabled","api_key","group","models":[…],"auto_models","force_model"}` (`type`: `auto`, `openai`, `ollama`), dazu `"features":[{"model":"gemma3*","vision":true,"tools":false,"reasoning":false,"context":131072}]` |
 | PUT | `/balancer/api/backends/{name}` | Server ändern (gleicher Body, Umbenennen erlaubt; `api_key` weglassen = behalten, `""` = entfernen) |
 | DELETE | `/balancer/api/backends/{name}` | Server entfernen |
 | POST | `/balancer/api/backends/{name}/enable` bzw. `/disable` | aktivieren / drain |
@@ -473,6 +500,9 @@ Mit Benutzern ist alles erst nach der Anmeldung sichtbar; Betrachter sehen keine
 | PUT / DELETE | `/balancer/api/users/{name}` | ändern `{"name","role","password","disabled"}` (Felder optional) / löschen |
 | GET | `/balancer/api/config/export?sections=servers,tokens,notify,users&secrets=1` | Konfiguration als JSON |
 | POST | `/balancer/api/config/import?sections=…` | Konfiguration einspielen (Body = Exportdatei) |
+| GET/POST | `/balancer/api/routers` | Router auflisten (mit Treffern) / anlegen `{"name","models":[…],"default","sticky","auto_caps","disabled","rules":[…]}` |
+| PUT / DELETE | `/balancer/api/routers/{name}` | Router ändern / löschen; `PUT /balancer/api/routers` ersetzt die ganze Liste |
+| POST | `/balancer/api/routers/test` | `{"request":{…},"token","client"}` – Entscheidung erklären, ohne etwas auszuführen |
 | GET | `/balancer/api/ollama/models` | Modelle und geladene Modelle aller Ollama-Server (live) |
 | POST | `/balancer/api/ollama/pull` · `/delete` · `/unload` | `{"model":"qwen3:8b","servers":["gpu1",…]}` – herunterladen (Hintergrund) / löschen / entladen |
 | GET | `/balancer/api/ollama/jobs` | laufende und erledigte Downloads mit Fortschritt |

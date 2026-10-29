@@ -26,6 +26,7 @@ type Store struct {
 type storedState struct {
 	Backends []BackendConfig `json:"backends"`
 	Groups   []GroupConfig   `json:"groups"`
+	Routers  []RouterConfig  `json:"routers,omitempty"`
 	SavedAt  time.Time       `json:"saved_at"`
 }
 
@@ -51,11 +52,11 @@ func (s *Store) Load() (st storedState, ok bool, err error) {
 	return st, true, nil
 }
 
-func (s *Store) Save(bs []BackendConfig, gs []GroupConfig) error {
+func (s *Store) Save(bs []BackendConfig, gs []GroupConfig, rs []RouterConfig) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
-	data, _ := json.MarshalIndent(storedState{Backends: bs, Groups: gs, SavedAt: time.Now()}, "", "  ")
+	data, _ := json.MarshalIndent(storedState{Backends: bs, Groups: gs, Routers: rs, SavedAt: time.Now()}, "", "  ")
 	tmp := s.path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil { // contains bearer tokens
 		return err
@@ -89,6 +90,7 @@ func newBackend(bc BackendConfig) *Backend {
 		autoModels: bc.AutoModels == nil || *bc.AutoModels,
 		forceModel: bc.ForceModel,
 		kind:       bc.Type,
+		features:   bc.Features,
 		healthy:    true, // optimistic until the first health check says otherwise
 	}
 }
@@ -96,7 +98,7 @@ func newBackend(bc BackendConfig) *Backend {
 func (b *Backend) config() BackendConfig {
 	en := b.enabled
 	c := BackendConfig{Name: b.Name, URL: b.URL, MaxConcurrent: b.Max, Priority: b.Priority, Enabled: &en, APIKey: b.apiKey, Group: b.group, TLSSkipVerify: b.insecure, PriceIn: b.priceIn, PriceOut: b.priceOut,
-		CostCap: b.costCap, CapPeriod: b.capPeriod, Models: append([]string(nil), b.manual...), ForceModel: b.forceModel, Type: b.kind}
+		CostCap: b.costCap, CapPeriod: b.capPeriod, Models: append([]string(nil), b.manual...), ForceModel: b.forceModel, Type: b.kind, Features: append([]ModelFeature(nil), b.features...)}
 	if !b.autoModels {
 		f := false
 		c.AutoModels = &f
@@ -118,7 +120,7 @@ func (p *Pool) persistLocked() error {
 	if p.store == nil {
 		return nil
 	}
-	if err := p.store.Save(p.configsLocked(), p.groups); err != nil {
+	if err := p.store.Save(p.configsLocked(), p.groups, p.routers); err != nil {
 		log.Printf("could not save backends: %v", err)
 		return fmt.Errorf("Änderung aktiv, aber nicht gespeichert (%v) – geht beim Neustart verloren", err)
 	}
@@ -224,6 +226,9 @@ func (p *Pool) UpdateBackend(name string, bc BackendConfig, key, group *string) 
 	if bc.keep&keepForce == 0 {
 		b.forceModel = bc.ForceModel
 	}
+	if bc.keep&keepFeatures == 0 {
+		b.features = bc.Features
+	}
 	if bc.keep&keepType == 0 && bc.Type != b.kind {
 		b.kind = bc.Type
 		if b.kind == "openai" {
@@ -292,6 +297,7 @@ func (p *Pool) ResetBackends() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.replaceLocked(p.initial, p.initialGroups)
+	p.routers = append([]RouterConfig{}, p.initialRouters...)
 	p.source = "env"
 	log.Printf("backends reset to initial configuration via UI")
 	if p.store != nil {
@@ -316,7 +322,7 @@ func (p *Pool) replaceLocked(bcs []BackendConfig, groups []GroupConfig) {
 			b.priceIn, b.priceOut = bc.PriceIn, bc.PriceOut
 			b.costCap, b.capPeriod = bc.CostCap, bc.CapPeriod
 			b.manual, b.autoModels, b.forceModel = bc.Models, bc.AutoModels == nil || *bc.AutoModels, bc.ForceModel
-			b.kind = bc.Type
+			b.kind, b.features = bc.Type, bc.Features
 			next = append(next, b)
 		} else {
 			next = append(next, newBackend(bc))
@@ -367,22 +373,23 @@ func writeResult(w http.ResponseWriter, err error) {
 
 // backendInput is the API body; api_key absent = keep the stored token, "" = remove it.
 type backendInput struct {
-	Name          string    `json:"name"`
-	URL           string    `json:"url"`
-	MaxConcurrent int       `json:"max_concurrent"`
-	Priority      int       `json:"priority"`
-	Enabled       *bool     `json:"enabled"`
-	APIKey        *string   `json:"api_key"`
-	Group         *string   `json:"group"`
-	TLSSkipVerify *bool     `json:"tls_skip_verify"`
-	PriceIn       *float64  `json:"price_in"`
-	PriceOut      *float64  `json:"price_out"`
-	CostCap       *float64  `json:"cost_cap"`
-	CapPeriod     *string   `json:"cap_period"`
-	Models        *[]string `json:"models"`
-	AutoModels    *bool     `json:"auto_models"`
-	ForceModel    *string   `json:"force_model"`
-	Type          *string   `json:"type"`
+	Name          string          `json:"name"`
+	URL           string          `json:"url"`
+	MaxConcurrent int             `json:"max_concurrent"`
+	Priority      int             `json:"priority"`
+	Enabled       *bool           `json:"enabled"`
+	APIKey        *string         `json:"api_key"`
+	Group         *string         `json:"group"`
+	TLSSkipVerify *bool           `json:"tls_skip_verify"`
+	PriceIn       *float64        `json:"price_in"`
+	PriceOut      *float64        `json:"price_out"`
+	CostCap       *float64        `json:"cost_cap"`
+	CapPeriod     *string         `json:"cap_period"`
+	Models        *[]string       `json:"models"`
+	AutoModels    *bool           `json:"auto_models"`
+	ForceModel    *string         `json:"force_model"`
+	Type          *string         `json:"type"`
+	Features      *[]ModelFeature `json:"features"`
 }
 
 func decodeBackend(r *http.Request) (BackendConfig, *string, *string, error) {
@@ -422,6 +429,11 @@ func decodeBackend(r *http.Request) (BackendConfig, *string, *string, error) {
 		bc.Models = *in.Models
 	} else {
 		bc.keep |= keepModels
+	}
+	if in.Features != nil {
+		bc.Features = *in.Features
+	} else {
+		bc.keep |= keepFeatures
 	}
 	if in.Type != nil {
 		bc.Type = *in.Type
@@ -535,4 +547,5 @@ const (
 	keepAuto
 	keepForce
 	keepType
+	keepFeatures
 )

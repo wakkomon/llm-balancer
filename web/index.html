@@ -228,6 +228,21 @@ button.primary:hover{opacity:.9;color:var(--on-accent)}
 .srcnote{font-size:12px;color:var(--muted)}
 .empty-card{background:var(--panel);border:1px dashed var(--line);border-radius:12px;padding:22px;color:var(--muted);text-align:center}
 dialog{border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);padding:20px;width:min(440px,calc(100vw - 32px))}
+dialog.wide{width:min(900px,calc(100vw - 32px));max-height:calc(100vh - 40px)}
+.rule{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:10px;background:var(--bg)}
+.rule.off{opacity:.55}
+.rule .rhead{display:flex;gap:8px;align-items:center} .rule .rhead input[data-f=name]{font-weight:600}
+.rule .rhead button{padding:3px 8px}
+.rgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:2px 10px}
+.rgrid label{margin:8px 0 3px} .rgrid input,.rgrid select{font-size:13px;padding:5px 7px}
+.rgrid .wide2{grid-column:span 2}
+.caps{display:inline-flex;gap:4px;flex-wrap:wrap}
+.cap{font-size:10.5px;font-weight:600;padding:0 6px;border-radius:99px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.cap.on{color:var(--accent);border-color:color-mix(in srgb, var(--accent) 50%, var(--line))}
+.frow{display:grid;grid-template-columns:2fr repeat(3,1fr) 1fr auto;gap:6px;align-items:center;margin-top:6px}
+.frow input,.frow select{font-size:12.5px;padding:4px 6px}
+.rtbl td{white-space:normal} .rtbl td.cond{color:var(--muted);font-size:12px}
+.testres{margin-top:10px;font-size:13px} .testres .big{font:600 15px var(--mono)}
 dialog::backdrop{background:rgba(0,0,0,.35)}
 dialog h3{margin:0 0 14px;font-size:16px}
 label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
@@ -258,7 +273,7 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
 <main>
   <header>
     <h1>LLM Balancer</h1>
-    <nav class="nav"><a href="#" data-page="main">Übersicht</a><a href="#gruppen" data-page="groups">Gruppen</a><a href="#modelle" data-page="models">Modelle</a><a href="#statistik" data-page="stats">Statistik</a><a href="#anfragen" data-page="recent">Letzte Anfragen</a><a href="#zugriff" data-page="tokens">API-Zugriff</a><a href="#report" data-page="report">Report</a><a href="#einstellungen" data-page="settings">Einstellungen</a></nav>
+    <nav class="nav"><a href="#" data-page="main">Übersicht</a><a href="#gruppen" data-page="groups">Gruppen</a><a href="#router" data-page="routers">Router</a><a href="#modelle" data-page="models">Modelle</a><a href="#statistik" data-page="stats">Statistik</a><a href="#anfragen" data-page="recent">Letzte Anfragen</a><a href="#zugriff" data-page="tokens">API-Zugriff</a><a href="#report" data-page="report">Report</a><a href="#einstellungen" data-page="settings">Einstellungen</a></nav>
     <span class="sub live" id="live"><i></i><span id="livetxt">verbinde …</span></span>
     <span class="sub" id="uptime"></span>
     <span class="sub" id="version"></span>
@@ -459,6 +474,29 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
 
   <p class="srcnote">Preise und Tokens hier aus Sicht der Anwendung: Aus = gesendeter Prompt, Ein = empfangene Antwort. Ausgehende Preise (was ein Server kostet) stellst du beim jeweiligen Server ein. Die Einnahmen pro Server und Modell stehen im Tab Statistik.</p>
   </div>
+  <div id="page-routers" hidden>
+  <div class="sechead">
+    <h2>Modell-Router</h2>
+    <div class="row"><span class="srcnote">Wählen das Modell anhand der Anfrage – danach geht es wie gewohnt an Gruppe und Server</span>
+      <button class="primary need-admin" onclick="openRouter(null)">+ Router anlegen</button></div>
+  </div>
+  <div id="routers"></div>
+  <div class="sechead"><h2>Router testen</h2></div>
+  <div class="panel">
+    <label for="rt-body">Anfrage (JSON, wie sie der Client schickt)</label>
+    <textarea id="rt-body" rows="7">{
+  "model": "auto",
+  "messages": [
+    {"role": "system", "content": "Du bist ein hilfreicher Assistent."},
+    {"role": "user", "content": "Schreib mir eine Python-Funktion, die Primzahlen findet."}
+  ]
+}</textarea>
+    <div class="two"><div><label for="rt-token">API-Token (Name, optional)</label><input id="rt-token" autocomplete="off"></div>
+      <div><label for="rt-client">Client-IP (optional)</label><input id="rt-client" autocomplete="off"></div></div>
+    <div class="btns" style="justify-content:flex-start"><button class="primary" onclick="testRouter()">Testen</button></div>
+    <div id="rt-res" class="testres"></div>
+  </div>
+  </div>
   <div id="page-models" hidden>
   <div class="sechead">
     <h2>Ollama-Modelle</h2>
@@ -483,7 +521,7 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
       <label class="chkf"><input type="checkbox" id="omloaded"> nur geladene</label>
     </div>
     <div class="tbl"><table data-sort>
-      <thead><tr><th>Modell</th><th>Server</th><th class="n">Größe</th><th>Parameter</th><th>Quantisierung</th><th>Familie</th><th data-type="date">Geändert</th><th>Im Speicher</th><th data-nosort></th></tr></thead>
+      <thead><tr><th>Modell</th><th>Server</th><th class="n">Größe</th><th>Parameter</th><th>Quantisierung</th><th>Familie</th><th>Fähigkeiten</th><th data-type="date">Geändert</th><th>Im Speicher</th><th data-nosort></th></tr></thead>
       <tbody id="omodels"></tbody>
     </table></div>
     <div class="srcnote" id="omsum" style="margin-top:8px"></div>
@@ -571,6 +609,10 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
     <label for="f-models">Modelle (Filter, eins pro Zeile)</label>
     <textarea id="f-models" rows="3" placeholder="z. B.&#10;qwen3-32b&#10;llama3*"></textarea>
     <label class="chk" style="margin-top:6px"><input id="f-auto" type="checkbox" checked> zusätzlich die vom Server gemeldeten Modelle</label>
+    <label>Modell-Fähigkeiten (für die Router)</label>
+    <div id="f-feats"></div>
+    <button type="button" style="margin-top:6px" onclick="addFeat()">+ Zeile</button>
+    <div class="hint" id="f-featshint">Modellname oder Muster mit *; „–“ = unbekannt. Ollama-Modelle werden automatisch erkannt, Einträge hier haben Vorrang.</div>
     <label for="f-force">Modell erzwingen (optional)</label>
     <input id="f-force" placeholder="z. B. qwen3:8b" autocomplete="off" list="f-forcelist"><datalist id="f-forcelist"></datalist>
     <div class="hint">Wird statt des angefragten Modells gesendet, wenn der Server dieses nicht exakt kennt – also bei Treffern über * im Filter
@@ -623,6 +665,33 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
     <button onclick="navigator.clipboard?.writeText($('t-plain').value).then(() => toast('Kopiert'), () => { $('t-plain').select(); toast('Bitte manuell kopieren'); })">Kopieren</button>
     <button class="primary" onclick="$('tshow').close()">Fertig</button>
   </div>
+</dialog>
+<dialog id="rdlg" class="wide">
+  <form id="rform" method="dialog">
+    <h3 id="rtitle">Router</h3>
+    <div class="two">
+      <div><label for="r-name">Name = virtuelles Modell</label><input id="r-name" required placeholder="z. B. auto" autocomplete="off">
+        <div class="hint">Clients fragen dieses Modell an, z. B. <code>"model": "auto"</code>; es erscheint in /v1/models.</div></div>
+      <div><label for="r-default">Standardmodell</label><input id="r-default" list="r-models" placeholder="wenn keine Regel passt" autocomplete="off">
+        <div class="hint">Leer: bei übernommenen echten Modellen bleibt das angefragte.</div></div>
+    </div>
+    <label for="r-take">Übernimmt außerdem diese angefragten Modelle (eins pro Zeile, * erlaubt)</label>
+    <textarea id="r-take" rows="2" placeholder="z. B.&#10;gpt-4*&#10;qwen3:32b"></textarea>
+    <div class="hint">Damit werden auch Anfragen mit echtem Modellnamen umgeleitet. Leer = nur das virtuelle Modell.</div>
+    <div class="chklist inline" style="margin-top:8px">
+      <label><input type="checkbox" id="r-sticky"> Session-Bindung (eine Unterhaltung bleibt beim einmal gewählten Modell)</label>
+      <label><input type="checkbox" id="r-caps" checked> Fähigkeiten beachten (Bilder/Tools/Kontext)</label>
+      <label><input type="checkbox" id="r-off"> deaktiviert</label>
+    </div>
+    <div class="hint">„Fähigkeiten beachten“: kann das gewählte Modell nachweislich etwas nicht, was die Anfrage braucht (laut Server-Einstellungen
+      oder Ollama), nimmt der Router ein Modell, das es kann.</div>
+    <div class="sechead" style="margin:18px 0 0"><h2>Regeln <span style="text-transform:none;letter-spacing:0;font-weight:400">– von oben nach unten, die erste passende gewinnt; leere Felder = egal</span></h2>
+      <button type="button" onclick="addRule()">+ Regel</button></div>
+    <div id="r-rules"></div>
+    <datalist id="r-models"></datalist>
+    <div class="formerr" id="r-err"></div>
+    <div class="btns"><button type="button" onclick="$('rdlg').close()">Abbrechen</button><button class="primary" type="submit">Speichern</button></div>
+  </form>
 </dialog>
 <dialog id="gdlg">
   <form id="gform" method="dialog">
@@ -773,6 +842,10 @@ function openEdit(name) {
   $('f-auto').checked = b ? b.auto_models !== false : true;
   $('f-force').value = b?.force_model || '';
   $('f-type').value = b?.type || 'auto';
+  renderFeats(b?.features || []);
+  const det = b ? Object.entries(b.caps || {}).filter(([, c]) => c.vision != null || c.tools != null || c.reasoning != null || c.context) : [];
+  $('f-featshint').innerHTML = 'Modellname oder Muster mit *; „–“ = unbekannt. Ollama-Modelle werden automatisch erkannt, Einträge hier haben Vorrang.' +
+    (det.length ? '<br>Aktuell: ' + det.map(([m, c]) => `<b>${esc(m)}</b> ${capBadges(c)}`).join(' · ') : '');
   $('f-forcelist').innerHTML = (b?.models || []).map(m => `<option value="${esc(m)}">`).join('');
   $('f-key').value = '';
   $('f-keydel').checked = false;
@@ -789,7 +862,7 @@ $('form').addEventListener('submit', async ev => {
     name: $('f-name').value.trim(), url: $('f-url').value.trim(),
     max_concurrent: parseInt($('f-max').value, 10) || 1, priority: parseInt($('f-prio').value, 10) || 0,
     enabled: $('f-en').checked, group: $('f-group').value, tls_skip_verify: $('f-tls').checked,
-    models: $('f-models').value.split('\n').map(x => x.trim()).filter(Boolean), auto_models: $('f-auto').checked, force_model: $('f-force').value.trim(), type: $('f-type').value,
+    models: $('f-models').value.split('\n').map(x => x.trim()).filter(Boolean), auto_models: $('f-auto').checked, force_model: $('f-force').value.trim(), type: $('f-type').value, features: readFeats(),
     price_in: parseFloat($('f-pin').value) || 0, price_out: parseFloat($('f-pout').value) || 0,
     cost_cap: parseFloat($('f-cap').value) || 0, cap_period: $('f-capp').value,
   };
@@ -1030,6 +1103,7 @@ async function refresh() {
       `<div class="qi"><b>${i + 1}.</b> #${r.id} · ${esc(r.model || r.path)}${r.group ? ' · ' + esc(r.group) : ''} · <span title="API-Token">${r.token ? '🔑 ' + esc(r.token) : esc(r.client)}</span> · wartet ${dur(r.queue_ms)}${r.attempts ? ' · Wiederholung' : ''}</div>`).join('')
       : '<div class="empty">Leer – alle Anfragen werden sofort bedient.</div>';
     renderGroups(st);
+    renderRouters(st);
     renderModelList(st);
     if (location.hash === '#statistik' && stRange === 1) renderDay(false);
   } catch (e) { /* shown via live indicator */ }
@@ -1175,7 +1249,7 @@ function renderRecent() {
     const tagCell = r.tag_issues?.length ? `<td class="tagerr" title="${esc(r.tag_issues.join('\n'))}">⚠ ${esc(r.tag_issues[0])}${r.tag_issues.length > 1 ? ` (+${r.tag_issues.length - 1})` : ''}</td>` : '<td class="muted">–</td>';
     return `<tr>
       <td data-v="${Date.parse(r.ended_at) || ''}">${hms(r.ended_at)}</td><td class="n">${r.id}</td>
-      <td data-v="${esc(r.session || '')}">${r.session ? sessChip(r.session, r.session_src, perSess[r.session]) : '<span class="muted">–</span>'}</td><td>${esc(r.model || r.path)}${r.effective_model ? ` <span class="muted">→ ${esc(r.effective_model)}</span>` : ''}</td><td>${esc(r.group || '–')}</td>
+      <td data-v="${esc(r.session || '')}">${r.session ? sessChip(r.session, r.session_src, perSess[r.session]) : '<span class="muted">–</span>'}</td><td>${esc(r.requested || r.model || r.path)}${r.effective_model ? ` <span class="muted">→ ${esc(r.effective_model)}</span>` : ''}${r.router ? ` <span class="retry" title="Router ${esc(r.router)}">⑂</span>` : ''}</td><td>${esc(r.group || '–')}</td>
       <td>${r.token ? esc(r.token) : '<span class="muted">' + esc(r.client) + '</span>'}</td>
       <td>${esc(r.backend || '–')}${r.trail ? ` <span class="retry" title="${esc(r.trail)}">↻ ${r.attempts}×</span>` : r.attempts > 1 ? ' <span class="muted">(' + r.attempts + '×)</span>' : ''}</td>
       <td class="${r.status >= 200 && r.status < 400 ? 'ok' : 'bad'}" title="${esc(r.error)}">${r.status}${r.error ? ' · ' + esc(r.error.slice(0, 40)) : ''}</td>
@@ -1844,6 +1918,166 @@ async function importConfig() {
   else { loadTokens(); loadNotify(); }
 }
 
+// ---------------- model capabilities (server dialog) ----------------
+const tri = v => v === true ? 'ja' : v === false ? 'nein' : '';
+const untri = v => v === 'ja' ? true : v === 'nein' ? false : undefined;
+const triSel = (f, v) => `<select data-f="${f}"><option value="">–</option><option ${v === true ? 'selected' : ''}>ja</option><option ${v === false ? 'selected' : ''}>nein</option></select>`;
+function featRow(f) {
+  return `<div class="frow"><input data-f="model" value="${esc(f.model || '')}" placeholder="Modell oder Muster">${triSel('vision', f.vision)}${triSel('tools', f.tools)}${triSel('reasoning', f.reasoning)}
+    <input data-f="context" type="number" min="0" step="1024" value="${f.context || ''}" placeholder="Kontext"><button type="button" onclick="this.parentElement.remove()">✕</button></div>`;
+}
+function renderFeats(list) {
+  $('f-feats').innerHTML = `<div class="frow muted" style="font-size:11px"><span>Modell</span><span>Bilder</span><span>Tools</span><span>Denken</span><span>Kontext (Tokens)</span><span></span></div>` + list.map(featRow).join('');
+}
+function addFeat() { $('f-feats').insertAdjacentHTML('beforeend', featRow({})); }
+function readFeats() {
+  return [...$('f-feats').querySelectorAll('.frow')].map(r => {
+    const g = f => r.querySelector(`[data-f="${f}"]`);
+    if (!g('model')) return null;
+    const o = {model: g('model').value.trim()};
+    for (const k of ['vision', 'tools', 'reasoning']) { const v = untri(g(k).value); if (v !== undefined) o[k] = v; }
+    const c = parseInt(g('context').value, 10); if (c > 0) o.context = c;
+    return o;
+  }).filter(o => o && o.model);
+}
+const kfmt = n => n >= 1024 ? Math.round(n / 1024) + 'k' : String(n);
+function capBadges(c) {
+  if (!c) return '<span class="muted">–</span>';
+  const b = [];
+  for (const [k, l] of [['vision', 'Bilder'], ['tools', 'Tools'], ['reasoning', 'Denken']]) if (c[k] != null) b.push(`<span class="cap ${c[k] ? 'on' : ''}" title="${l}: ${c[k] ? 'ja' : 'nein'}">${c[k] ? '' : '✕ '}${l}</span>`);
+  if (c.context) b.push(`<span class="cap on" title="Kontext ${num(c.context)} Tokens">${kfmt(c.context)}</span>`);
+  return b.length ? `<span class="caps">${b.join('')}</span>` : '<span class="muted">–</span>';
+}
+
+// ---------------- model routers ----------------
+const NEEDS = {vision: 'Bilder', tools: 'Tools', reasoning: 'Denken', context: 'genug Kontext'};
+function ruleSummary(r) {
+  const c = [];
+  if (r.min_tokens) c.push(`≥ ${num(r.min_tokens)} Tokens`);
+  if (r.max_tokens) c.push(`≤ ${num(r.max_tokens)} Tokens`);
+  for (const [k, l] of [['images', 'Bilder'], ['tools', 'Tools'], ['json', 'JSON-Antwort'], ['reasoning', 'Denken angefordert']]) if (r[k] != null) c.push((r[k] ? '' : 'keine ') + l);
+  if (r.pattern) c.push(`Text ${({system: 'im System-Prompt', all: 'irgendwo'})[r.pattern_in] || ''} ~ /${r.pattern}/`);
+  if (r.tokens?.length) c.push('API-Token ' + r.tokens.join(', '));
+  if (r.clients?.length) c.push('Client ' + r.clients.join(', '));
+  if (r.header) c.push('Header ' + r.header);
+  if (r.queue_min) c.push(`Warteschlange ≥ ${r.queue_min}`);
+  if (r.when_busy) c.push(`${r.when_busy} belegt`);
+  if (r.hours) c.push(`${r.hours} Uhr`);
+  return c.join(' · ') || 'immer';
+}
+const ruleTarget = r => r.model ? `<b>${esc(r.model)}</b>` : `<span title="das passende Modell mit diesen Fähigkeiten">Modell mit ${esc((r.needs || []).map(n => NEEDS[n]).join(' + '))}</span>`;
+function renderRouters(st) {
+  const list = st.routers || [];
+  setHTML($('routers'), list.length ? list.map(rc => {
+    const hits = rc.hits || {}, tot = Object.values(hits).reduce((a, b) => a + b, 0);
+    return `<div class="gcard${rc.disabled ? ' off' : ''}" style="margin-bottom:12px">
+      <div class="row"><div class="name">${esc(rc.name)} ${rc.disabled ? '<span class="tstate goff">deaktiviert</span>' : ''}</div>
+        <span class="gbadge">${num(tot)} Anfragen seit Start${rc.sticky ? ` · ${rc.sessions} Sessions gebunden` : ''}</span></div>
+      <div class="mchips">${rc.models?.length ? 'übernimmt: ' + rc.models.map(m => `<span class="mchip pat">${esc(m)}</span>`).join('') : '<span class="muted" style="font-size:12.5px">nur das virtuelle Modell</span>'}
+        ${rc.sticky ? '<span class="gbadge">Session-Bindung</span>' : ''}${rc.auto_caps !== false ? '<span class="gbadge">Fähigkeiten beachten</span>' : ''}</div>
+      <div class="tbl rtbl" style="margin-top:10px"><table><thead><tr><th>#</th><th>Regel</th><th>Bedingungen</th><th>Ziel</th><th class="n">Treffer</th></tr></thead><tbody>
+        ${rc.rules.map((r, i) => `<tr class="${r.disabled ? 'muted' : ''}"><td>${i + 1}</td><td>${esc(r.name)}${r.disabled ? ' (aus)' : ''}</td><td class="cond">${esc(ruleSummary(r))}</td><td>${ruleTarget(r)}</td><td class="n">${num(hits[r.name] || 0)}</td></tr>`).join('')}
+        <tr class="sum"><td></td><td>Standard</td><td class="cond">keine Regel passt</td><td>${rc.default ? `<b>${esc(rc.default)}</b>` : '<span class="muted">angefragtes Modell</span>'}</td><td class="n">${num(hits[''] || 0)}</td></tr>
+      </tbody></table></div>
+      <div class="btns">
+        <button class="need-admin" onclick='toggleRouter(${attr(rc.name)})'>${rc.disabled ? 'Aktivieren' : 'Deaktivieren'}</button>
+        <button class="need-admin" onclick='openRouter(${attr(rc.name)})'>Bearbeiten</button>
+        <button class="danger need-admin" onclick='deleteRouter(${attr(rc.name)})'>Löschen</button></div></div>`;
+  }).join('') : `<div class="empty-card">Noch kein Router. Ein Router ist ein virtuelles Modell (z. B. <code>auto</code>): anhand von Regeln – Größe der Anfrage,
+    Bilder, Tools, Stichwörter, API-Token, Last, Uhrzeit – wählt er das echte Modell. Er kann auch Anfragen für echte Modellnamen übernehmen.</div>`);
+}
+let editingRouter = null;
+const boolSel = (f, v, yes = 'ja', no = 'nein') => `<select data-f="${f}"><option value="">egal</option><option value="1" ${v === true ? 'selected' : ''}>${yes}</option><option value="0" ${v === false ? 'selected' : ''}>${no}</option></select>`;
+function ruleBlock(r) {
+  const needs = r.needs || [];
+  return `<div class="rule${r.disabled ? ' off' : ''}">
+    <div class="rhead"><input data-f="name" value="${esc(r.name || '')}" placeholder="Name der Regel">
+      <label class="chkf"><input type="checkbox" data-f="enabled" ${r.disabled ? '' : 'checked'}> aktiv</label>
+      <button type="button" title="nach oben" onclick="moveRule(this,-1)">↑</button><button type="button" title="nach unten" onclick="moveRule(this,1)">↓</button>
+      <button type="button" class="danger" title="entfernen" onclick="this.closest('.rule').remove()">✕</button></div>
+    <div class="rgrid">
+      <div class="wide2"><label>Ziel: Modell</label><input data-f="model" list="r-models" value="${esc(r.model || '')}" placeholder="leer = nach Fähigkeit wählen"></div>
+      <div class="wide2"><label>… oder Modell mit</label><div class="chklist inline">${Object.entries(NEEDS).map(([k, l]) => `<label><input type="checkbox" data-need="${k}" ${needs.includes(k) ? 'checked' : ''}> ${l}</label>`).join('')}</div></div>
+      <div><label>Tokens ab (≈)</label><input data-f="min_tokens" type="number" min="0" value="${r.min_tokens || ''}"></div>
+      <div><label>Tokens bis (≈)</label><input data-f="max_tokens" type="number" min="0" value="${r.max_tokens || ''}"></div>
+      <div><label>Bilder</label>${boolSel('images', r.images)}</div>
+      <div><label>Tools</label>${boolSel('tools', r.tools)}</div>
+      <div><label>JSON-Antwort</label>${boolSel('json', r.json)}</div>
+      <div><label>Denken angefordert</label>${boolSel('reasoning', r.reasoning)}</div>
+      <div class="wide2"><label>Text-Muster (Regex, ohne Groß/klein)</label><input data-f="pattern" value="${esc(r.pattern || '')}" placeholder="z. B. \x60\x60\x60|programmier|python"></div>
+      <div><label>… gesucht in</label><select data-f="pattern_in"><option value="last">letzter Nachricht</option><option value="system" ${r.pattern_in === 'system' ? 'selected' : ''}>System-Prompt</option><option value="all" ${r.pattern_in === 'all' ? 'selected' : ''}>allem</option></select></div>
+      <div><label>API-Tokens (Komma)</label><input data-f="tokens" value="${esc((r.tokens || []).join(', '))}"></div>
+      <div><label>Clients (IP/CIDR)</label><input data-f="clients" value="${esc((r.clients || []).join(', '))}" placeholder="192.168.1.0/24"></div>
+      <div><label>Header</label><input data-f="header" value="${esc(r.header || '')}" placeholder="X-Task: code"></div>
+      <div><label>Warteschlange ab</label><input data-f="queue_min" type="number" min="0" value="${r.queue_min || ''}"></div>
+      <div><label>wenn belegt: Modell</label><input data-f="when_busy" list="r-models" value="${esc(r.when_busy || '')}"></div>
+      <div><label>Uhrzeit (von-bis)</label><input data-f="hours" value="${esc(r.hours || '')}" placeholder="22-6"></div>
+    </div></div>`;
+}
+function readRules() {
+  return [...$('r-rules').querySelectorAll('.rule')].map(el => {
+    const g = f => el.querySelector(`[data-f="${f}"]`).value.trim();
+    const r = {name: g('name'), disabled: !el.querySelector('[data-f="enabled"]').checked};
+    if (g('model')) r.model = g('model');
+    const needs = [...el.querySelectorAll('[data-need]:checked')].map(i => i.dataset.need); if (needs.length) r.needs = needs;
+    for (const k of ['min_tokens', 'max_tokens', 'queue_min']) { const v = parseInt(g(k), 10); if (v > 0) r[k] = v; }
+    for (const k of ['images', 'tools', 'json', 'reasoning']) { const v = g(k); if (v) r[k] = v === '1'; }
+    for (const k of ['pattern', 'header', 'when_busy', 'hours']) if (g(k)) r[k] = g(k);
+    if (r.pattern && g('pattern_in') !== 'last') r.pattern_in = g('pattern_in');
+    for (const k of ['tokens', 'clients']) { const v = g(k).split(',').map(x => x.trim()).filter(Boolean); if (v.length) r[k] = v; }
+    return r;
+  });
+}
+function renderRules(list) { $('r-rules').innerHTML = list.map(ruleBlock).join('') || '<div class="muted" style="margin-top:8px">Keine Regeln – dann gilt immer das Standardmodell.</div>'; }
+function addRule() { const l = readRules(); l.push({name: 'Regel ' + (l.length + 1)}); renderRules(l); $('r-rules').lastElementChild.scrollIntoView({block: 'nearest'}); }
+function moveRule(btn, d) {
+  const els = [...$('r-rules').querySelectorAll('.rule')], i = els.indexOf(btn.closest('.rule')), l = readRules(), j = i + d;
+  if (j < 0 || j >= l.length) return;
+  [l[i], l[j]] = [l[j], l[i]]; renderRules(l);
+}
+function openRouter(name) {
+  editingRouter = name;
+  const rc = name ? current.routers.find(x => x.name === name) : null;
+  $('rtitle').textContent = rc ? `Router „${rc.name}“ bearbeiten` : 'Router anlegen';
+  $('r-name').value = rc ? rc.name : (current.routers.length ? '' : 'auto');
+  $('r-default').value = rc?.default || ''; $('r-take').value = (rc?.models || []).join('\n');
+  $('r-sticky').checked = !!rc?.sticky; $('r-caps').checked = rc ? rc.auto_caps !== false : true; $('r-off').checked = !!rc?.disabled;
+  const all = new Set(); current.backends.forEach(b => (b.models || []).concat((b.manual_models || []).filter(m => !m.includes('*'))).forEach(m => all.add(m)));
+  $('r-models').innerHTML = [...all].sort().map(m => `<option value="${esc(m)}">`).join('');
+  renderRules(rc ? rc.rules : [
+    {name: 'Bilder', images: true, needs: ['vision']},
+    {name: 'Code', pattern: '```|programmier|funktion|python|javascript|code', model: ''},
+    {name: 'Langer Kontext', min_tokens: 16000, needs: ['context']},
+  ].filter(r => r.model !== '' || r.needs));
+  $('r-err').textContent = '';
+  $('rdlg').showModal(); $('r-name').focus();
+}
+$('rform').addEventListener('submit', async ev => {
+  ev.preventDefault(); $('formerr').textContent = '';
+  const body = {name: $('r-name').value.trim(), default: $('r-default').value.trim(), models: $('r-take').value.split('\n').map(x => x.trim()).filter(Boolean),
+    sticky: $('r-sticky').checked, auto_caps: $('r-caps').checked, disabled: $('r-off').checked, rules: readRules()};
+  const ok = editingRouter === null ? await call('POST', '/routers', body) : await call('PUT', `/routers/${enc(editingRouter)}`, body);
+  if (!ok) { $('r-err').textContent = $('formerr').textContent; return; }
+  $('rdlg').close(); toast('Gespeichert');
+});
+async function toggleRouter(name) {
+  const rc = current.routers.find(x => x.name === name); if (!rc) return;
+  const {hits, sessions, ...cfg} = rc;
+  await call('PUT', `/routers/${enc(name)}`, {...cfg, disabled: !rc.disabled});
+}
+function deleteRouter(name) { if (confirm(`Router „${name}“ löschen? Anfragen für „${name}“ gehen danach als unbekanntes Modell durch.`)) call('DELETE', `/routers/${enc(name)}`); }
+async function testRouter() {
+  let req;
+  try { req = JSON.parse($('rt-body').value); } catch { $('rt-res').innerHTML = '<div class="formerr">Kein gültiges JSON.</div>'; return; }
+  let d;
+  try { const r = await fetch(base + '/api/routers/test', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({request: req, token: $('rt-token').value.trim(), client: $('rt-client').value.trim()})}); d = await r.json(); if (!r.ok) throw new Error(d.error); }
+  catch (e) { $('rt-res').innerHTML = `<div class="formerr">${esc(e.message || e)}</div>`; return; }
+  const f = d.request || {};
+  $('rt-res').innerHTML = `<div>→ <span class="big">${esc(d.model || '–')}</span> ${d.router ? `<span class="muted">Router ${esc(d.router)} · ${esc(d.reason)}</span>` : `<span class="muted">${esc(d.reason)}</span>`}</div>
+    <div class="muted" style="margin-top:6px">Erkannt: ≈ ${num(f.tokens)} Tokens · Bilder ${f.images ? 'ja' : 'nein'} · Tools ${f.tools ? 'ja' : 'nein'} · JSON ${f.json ? 'ja' : 'nein'} · Denken ${f.reasoning ? 'ja' : 'nein'}</div>
+    ${d.checks?.length ? `<ul class="impres">${d.checks.map(c => `<li class="muted">${esc(c)}</li>`).join('')}</ul>` : ''}`;
+}
+
 // ---------------- Ollama model management ----------------
 let olData = [], olJobs = [], olLoading = false;
 const gb = n => !n ? '–' : n >= 1e9 ? (n / 1e9).toLocaleString('de-DE', {maximumFractionDigits: 1}) + ' GB' : Math.round(n / 1e6) + ' MB';
@@ -1892,14 +2126,14 @@ function renderOllama() {
       }
       rows.push(`<tr><td><b>${esc(m.name)}</b></td><td>${esc(s.server)}</td><td class="n" data-v="${m.size}">${gb(m.size)}</td>
         <td data-v="${parseFloat(m.details?.parameter_size) || ''}">${esc(m.details?.parameter_size || '–')}</td><td>${esc(m.details?.quantization_level || '–')}</td>
-        <td>${esc(m.details?.family || '–')}</td><td data-v="${Date.parse(m.modified_at) || ''}">${dateFmt(m.modified_at)}</td><td data-v="${ld ? ld.size_vram : ''}">${mem}</td>
+        <td>${esc(m.details?.family || '–')}</td><td>${capBadges(current?.backends.find(b => b.name === s.server)?.caps?.[m.name])}</td><td data-v="${Date.parse(m.modified_at) || ''}">${dateFmt(m.modified_at)}</td><td data-v="${ld ? ld.size_vram : ''}">${mem}</td>
         <td style="text-align:right;white-space:nowrap">
           ${ld ? `<button class="need-op" title="Aus dem Speicher entfernen" onclick='unloadModel(${attr(s.server)}, ${attr(m.name)})'>Entladen</button>` : ''}
           ${others.length ? `<button class="need-admin" title="Auf weitere Server herunterladen" onclick='pullElsewhere(${attr(m.name)}, ${attr(others)})'>Kopieren …</button>` : ''}
           <button class="danger need-admin" onclick='deleteModel(${attr(s.server)}, ${attr(m.name)})'>Löschen</button></td></tr>`);
     }
   }
-  setHTML($('omodels'), rows.join('') || `<tr><td colspan="9" class="empty">${olData.some(s => s.models.length) ? 'Keine Modelle für diesen Filter.' : 'Noch keine Modelle – oben eins herunterladen.'}</td></tr>`);
+  setHTML($('omodels'), rows.join('') || `<tr><td colspan="10" class="empty">${olData.some(s => s.models.length) ? 'Keine Modelle für diesen Filter.' : 'Noch keine Modelle – oben eins herunterladen.'}</td></tr>`);
   $('omsum').innerHTML = olData.map(s => s.error ? `<b>${esc(s.server)}</b>: <span class="bad">${esc(s.error)}</span>`
     : `<b>${esc(s.server)}</b>${s.version && s.version !== '?' ? ' (Ollama ' + esc(s.version) + ')' : ''}: ${s.models.length} Modelle, ${gb(s.models.reduce((a, m) => a + m.size, 0))}` +
       (s.loaded.length ? ` · geladen: ${s.loaded.map(l => esc(l.name) + ' ' + gb(l.size_vram || l.size)).join(', ')}` : '')).join('<br>');
@@ -1946,7 +2180,7 @@ async function unloadModel(server, model) {
 setInterval(() => { if (location.hash === '#modelle') loadJobs(); }, 1000);
 setInterval(() => { if (location.hash === '#modelle' && !pointerDown) loadOllama(); }, 10000);
 
-const PAGES = {'': 'main', '#gruppen': 'groups', '#modelle': 'models', '#statistik': 'stats', '#anfragen': 'recent', '#zugriff': 'tokens', '#report': 'report', '#einstellungen': 'settings'};
+const PAGES = {'': 'main', '#gruppen': 'groups', '#router': 'routers', '#modelle': 'models', '#statistik': 'stats', '#anfragen': 'recent', '#zugriff': 'tokens', '#report': 'report', '#einstellungen': 'settings'};
 function showPage() {
   const page = PAGES[location.hash] || 'main';
   for (const p of Object.values(PAGES)) $('page-' + p).hidden = p !== page;

@@ -106,6 +106,14 @@ func (px *Proxy) probeOllama(client *http.Client, ht healthTarget) bool {
 	}
 	_ = ollamaGet(ctx, client, ht.url, ht.key, "/api/ps", &ps)
 	px.pool.setOllama(ht.b, ht.url, cmp.Or(ver.Version, "?"), tags.Models, ps.Models)
+	var names []string
+	for _, raw := range tags.Models {
+		var t ollamaTag
+		if json.Unmarshal(raw, &t) == nil && t.Name != "" {
+			names = append(names, t.Name)
+		}
+	}
+	px.detectOllamaCaps(client, ht, names)
 	return true
 }
 

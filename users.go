@@ -467,6 +467,9 @@ func requiredRole(method, rel string) string {
 		}
 		return RoleViewer
 	}
+	if method == http.MethodPost && rel == "/api/routers/test" { // no side effects
+		return RoleViewer
+	}
 	if method == http.MethodPost {
 		for _, re := range operatorPaths {
 			if re.MatchString(rel) {
