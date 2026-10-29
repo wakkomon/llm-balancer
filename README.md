@@ -255,6 +255,24 @@ passende Gruppe und den Server, der das Modell hat (Seite **Router**, `#router`)
   Treffer pro Regel und hat einen **Test**: Anfrage einfügen, sehen, welche Regel welches Modell wählen würde und warum
   die anderen nicht passen.
 
+**Wenn keine Regel passt** entscheidet wahlweise ein Klassifizierer (angelehnt an LiteLLMs Auto Routing):
+
+| Klassifizierer | wie | Ergebnis |
+|---|---|---|
+| Heuristik | Score aus Länge, Code, Reasoning-Markern, Fachbegriffen, einfachen Fragen, mehrstufigen Aufträgen, Fragezeichen (Gewichte wie LiteLLM, deutsch + englisch); 2+ Reasoning-Marker → REASONING; kein Modellaufruf | Stufe |
+| LLM | ein kleines Modell (z. B. `qwen3:0.6b`) ordnet die letzte Anfrage (mit bis zu N früheren als Kontext) einer Stufe zu; Anweisung anpassbar | Stufe |
+| Arch-Router | [katanemo/Arch-Router-1.5B](https://huggingface.co/katanemo/Arch-Router-1.5B), z. B. `arch-router:1.5b` in Ollama, wählt eine von dir beschriebene Route (Name + Beschreibung → Modell); „other“ → Standardmodell | Route |
+
+* **Stufen** SIMPLE / MEDIUM / COMPLEX / REASONING mit je einem oder mehreren Modellen (das erste mit freiem Server);
+  eine leere Stufe geht an die nächsthöhere. Regeln können statt eines Modells auch eine Stufe als Ziel haben (wie
+  LiteLLMs `keyword_tier_rules`).
+* Der Klassifizierer läuft **am Slot-System vorbei** direkt auf einem Server mit dem Modell (oder dem eingestellten), damit
+  er nicht auf das große Modell wartet; Ollama hält ihn 30 min geladen (`OLLAMA_MAX_LOADED_MODELS` ≥ 2 empfohlen).
+  Timeout einstellbar (Standard 5 s); bei Fehler oder Timeout gilt das Standardmodell oder die Heuristik.
+* Mit Session-Bindung wird nur die erste Anfrage einer Unterhaltung klassifiziert.
+* Systemhinweise (`<system-reminder>`), System-Prompt und reine Tool-Ausgaben werden für die Einordnung ignoriert.
+* Der Test auf der Router-Seite ruft den Klassifizierer wirklich auf und zeigt Ergebnis und Dauer.
+
 **Modell-Fähigkeiten** pro Server (Dialog „Bearbeiten“): Bilder, Tools, Denken und Kontextlänge pro Modell oder Muster.
 Bei Ollama-Servern werden sie aus `/api/show` erkannt (Kontext = maximale Länge des Modells, nicht das eingestellte
 `num_ctx` – bei Bedarf hier überschreiben). Die Seite Modelle zeigt sie mit an.
@@ -502,6 +520,7 @@ Mit Benutzern ist alles erst nach der Anmeldung sichtbar; Betrachter sehen keine
 | POST | `/balancer/api/config/import?sections=…` | Konfiguration einspielen (Body = Exportdatei) |
 | GET/POST | `/balancer/api/routers` | Router auflisten (mit Treffern) / anlegen `{"name","models":[…],"default","sticky","auto_caps","disabled","rules":[…]}` |
 | PUT / DELETE | `/balancer/api/routers/{name}` | Router ändern / löschen; `PUT /balancer/api/routers` ersetzt die ganze Liste |
+| | | Router-Felder für Klassifizierer: `"classifier":"heuristic\|llm\|arch"`, `"tiers":{"SIMPLE":[…],…}`, `"routes":[{"name","description","models":[…]}]`, `"class_model"`, `"class_server"`, `"class_timeout_ms"`, `"class_turns"`, `"class_prompt"`, `"class_fallback":"default\|heuristic"`, `"thresholds":[0.15,0.35,0.6]`; Regel-Ziel `"tier"` |
 | POST | `/balancer/api/routers/test` | `{"request":{…},"token","client"}` – Entscheidung erklären, ohne etwas auszuführen |
 | GET | `/balancer/api/ollama/models` | Modelle und geladene Modelle aller Ollama-Server (live) |
 | POST | `/balancer/api/ollama/pull` · `/delete` · `/unload` | `{"model":"qwen3:8b","servers":["gpu1",…]}` – herunterladen (Hintergrund) / löschen / entladen |

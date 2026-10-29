@@ -47,7 +47,11 @@ func newTransport(skipVerify bool, dns []string) *http.Transport {
 }
 
 func NewProxy(cfg Config, pool *Pool) *Proxy {
-	return &Proxy{cfg: cfg, pool: pool, transport: newTransport(false, cfg.dnsServers), insecure: newTransport(true, cfg.dnsServers)}
+	px := &Proxy{cfg: cfg, pool: pool, transport: newTransport(false, cfg.dnsServers), insecure: newTransport(true, cfg.dnsServers)}
+	pool.mu.Lock()
+	pool.transport = func(insecure bool) http.RoundTripper { return px.transportFor(insecure) }
+	pool.mu.Unlock()
+	return px
 }
 
 func (px *Proxy) transportFor(skipVerify bool) *http.Transport {

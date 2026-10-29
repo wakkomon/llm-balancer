@@ -688,6 +688,44 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
     <div class="sechead" style="margin:18px 0 0"><h2>Regeln <span style="text-transform:none;letter-spacing:0;font-weight:400">– von oben nach unten, die erste passende gewinnt; leere Felder = egal</span></h2>
       <button type="button" onclick="addRule()">+ Regel</button></div>
     <div id="r-rules"></div>
+    <div class="sechead" style="margin:20px 0 0"><h2>Wenn keine Regel passt</h2></div>
+    <select id="r-cls" style="margin-top:6px">
+      <option value="">Standardmodell nehmen</option>
+      <option value="heuristic">Heuristik – Komplexität bewerten wie LiteLLM (ohne Modellaufruf)</option>
+      <option value="llm">LLM – ein kleines Modell ordnet einer Stufe zu</option>
+      <option value="arch">Arch-Router – ein Modell wählt eine beschriebene Route</option>
+    </select>
+    <div id="r-tiersbox" class="rule">
+      <div class="hint" style="margin-top:0">Modelle pro Stufe (mehrere mit Komma: das erste mit freiem Server). Leere Stufe = nächsthöhere.</div>
+      <div class="rgrid">
+        <div class="wide2"><label>SIMPLE – Smalltalk, kurze Fakten</label><input data-tier="SIMPLE" list="r-models"></div>
+        <div class="wide2"><label>MEDIUM – normale Fragen, Erklärungen</label><input data-tier="MEDIUM" list="r-models"></div>
+        <div class="wide2"><label>COMPLEX – Code, Technik, mehrstufig</label><input data-tier="COMPLEX" list="r-models"></div>
+        <div class="wide2"><label>REASONING – schwierige Probleme</label><input data-tier="REASONING" list="r-models"></div>
+      </div>
+      <div id="r-thrbox"><label>Schwellen der Heuristik (Score → MEDIUM / COMPLEX / REASONING)</label>
+        <div class="two" style="grid-template-columns:repeat(3,1fr)"><input id="r-t1" type="number" step="0.01" placeholder="0.15"><input id="r-t2" type="number" step="0.01" placeholder="0.35"><input id="r-t3" type="number" step="0.01" placeholder="0.60"></div>
+        <div class="hint">Score aus Länge, Code, Reasoning-Markern, Fachbegriffen, einfachen Fragen, mehrstufigen Aufträgen und Fragezeichen (Gewichte wie LiteLLM).
+          Zwei oder mehr Reasoning-Marker („Schritt für Schritt“, „analysiere“, „vergleiche“ …) → REASONING.</div></div>
+    </div>
+    <div id="r-routesbox" class="rule">
+      <div class="hint" style="margin-top:0">Routen für Arch-Router: kurzer Name, eine Beschreibung, wofür die Route da ist (auf Englisch funktioniert am besten), und das Modell.
+        Antwortet das Modell „other“, gilt das Standardmodell.</div>
+      <div id="r-routes"></div>
+      <button type="button" style="margin-top:8px" onclick="addRoute()">+ Route</button>
+    </div>
+    <div id="r-clsbox" class="rule">
+      <div class="rgrid">
+        <div class="wide2"><label>Klassifizierer-Modell</label><input id="r-cmodel" list="r-models" placeholder="arch-router:1.5b"></div>
+        <div><label>Server</label><select id="r-cserver"></select></div>
+        <div><label>Timeout (ms)</label><input id="r-ctimeout" type="number" min="0" placeholder="5000"></div>
+        <div><label>Bisherige Anfragen als Kontext</label><input id="r-cturns" type="number" min="0" max="20" placeholder="3"></div>
+        <div><label>Bei Fehler / Timeout</label><select id="r-cfb"><option value="default">Standardmodell</option><option value="heuristic">Heuristik</option></select></div>
+      </div>
+      <div id="r-cpromptbox"><label>Eigene Anweisung (optional, ersetzt die eingebaute)</label><textarea id="r-cprompt" rows="3" placeholder="leer = eingebaute Einordnung in SIMPLE / MEDIUM / COMPLEX / REASONING, Antwort als JSON {&quot;tier&quot;: …}"></textarea></div>
+      <div class="hint">Der Klassifizierer läuft am Slot-System vorbei direkt auf dem Server, damit er nicht auf das große Modell wartet.
+        Bei Ollama bleibt das Modell 30 min geladen – dafür sollte <code>OLLAMA_MAX_LOADED_MODELS</code> ≥ 2 sein. Mit Session-Bindung wird nur die erste Anfrage einer Unterhaltung klassifiziert.</div>
+    </div>
     <datalist id="r-models"></datalist>
     <div class="formerr" id="r-err"></div>
     <div class="btns"><button type="button" onclick="$('rdlg').close()">Abbrechen</button><button class="primary" type="submit">Speichern</button></div>
@@ -1965,7 +2003,7 @@ function ruleSummary(r) {
   if (r.hours) c.push(`${r.hours} Uhr`);
   return c.join(' · ') || 'immer';
 }
-const ruleTarget = r => r.model ? `<b>${esc(r.model)}</b>` : `<span title="das passende Modell mit diesen Fähigkeiten">Modell mit ${esc((r.needs || []).map(n => NEEDS[n]).join(' + '))}</span>`;
+const ruleTarget = r => r.model ? `<b>${esc(r.model)}</b>` : r.tier ? `Stufe <b>${esc(r.tier)}</b>` : `<span title="das passende Modell mit diesen Fähigkeiten">Modell mit ${esc((r.needs || []).map(n => NEEDS[n]).join(' + '))}</span>`;
 function renderRouters(st) {
   const list = st.routers || [];
   setHTML($('routers'), list.length ? list.map(rc => {
@@ -1977,7 +2015,8 @@ function renderRouters(st) {
         ${rc.sticky ? '<span class="gbadge">Session-Bindung</span>' : ''}${rc.auto_caps !== false ? '<span class="gbadge">Fähigkeiten beachten</span>' : ''}</div>
       <div class="tbl rtbl" style="margin-top:10px"><table><thead><tr><th>#</th><th>Regel</th><th>Bedingungen</th><th>Ziel</th><th class="n">Treffer</th></tr></thead><tbody>
         ${rc.rules.map((r, i) => `<tr class="${r.disabled ? 'muted' : ''}"><td>${i + 1}</td><td>${esc(r.name)}${r.disabled ? ' (aus)' : ''}</td><td class="cond">${esc(ruleSummary(r))}</td><td>${ruleTarget(r)}</td><td class="n">${num(hits[r.name] || 0)}</td></tr>`).join('')}
-        <tr class="sum"><td></td><td>Standard</td><td class="cond">keine Regel passt</td><td>${rc.default ? `<b>${esc(rc.default)}</b>` : '<span class="muted">angefragtes Modell</span>'}</td><td class="n">${num(hits[''] || 0)}</td></tr>
+        ${clsRows(rc, hits)}
+        <tr class="sum"><td></td><td>Standard</td><td class="cond">${rc.classifier ? 'Klassifizierer ohne Ergebnis' : 'keine Regel passt'}</td><td>${rc.default ? `<b>${esc(rc.default)}</b>` : '<span class="muted">angefragtes Modell</span>'}</td><td class="n">${num(hits[''] || 0)}</td></tr>
       </tbody></table></div>
       <div class="btns">
         <button class="need-admin" onclick='toggleRouter(${attr(rc.name)})'>${rc.disabled ? 'Aktivieren' : 'Deaktivieren'}</button>
@@ -1986,6 +2025,32 @@ function renderRouters(st) {
   }).join('') : `<div class="empty-card">Noch kein Router. Ein Router ist ein virtuelles Modell (z. B. <code>auto</code>): anhand von Regeln – Größe der Anfrage,
     Bilder, Tools, Stichwörter, API-Token, Last, Uhrzeit – wählt er das echte Modell. Er kann auch Anfragen für echte Modellnamen übernehmen.</div>`);
 }
+const CLS = {heuristic: 'Heuristik', llm: 'LLM-Stufen', arch: 'Arch-Router'};
+function clsRows(rc, hits) {
+  if (!rc.classifier) return '';
+  const who = rc.classifier === 'heuristic' ? 'Heuristik' : esc(rc.class_model);
+  const head = `<tr><td></td><td colspan="4" class="cond" style="padding-top:12px"><b style="color:var(--ink)">${CLS[rc.classifier]}</b> entscheidet, wenn keine Regel passt${rc.classifier !== 'heuristic' ? ` – Modell ${who}${rc.class_server ? ' auf ' + esc(rc.class_server) : ''}` : ''}</td></tr>`;
+  if (rc.classifier === 'arch') return head + (rc.routes || []).map(r => `<tr><td></td><td>Route <b>${esc(r.name)}</b></td><td class="cond">${esc(r.description)}</td><td><b>${esc(r.models.join(', '))}</b></td><td class="n">${num(hits['route:' + r.name] || 0)}</td></tr>`).join('');
+  return head + ['SIMPLE', 'MEDIUM', 'COMPLEX', 'REASONING'].map(t => `<tr><td></td><td>Stufe ${t}</td><td class="cond">${({SIMPLE: 'Smalltalk, kurze Fakten', MEDIUM: 'normale Fragen', COMPLEX: 'Code, Technik, mehrstufig', REASONING: 'schwierige Probleme'})[t]}</td>
+    <td>${rc.tiers?.[t] ? `<b>${esc(rc.tiers[t].join(', '))}</b>` : '<span class="muted">→ nächsthöhere</span>'}</td><td class="n">${num(hits['tier:' + t] || 0)}</td></tr>`).join('');
+}
+function routeRow(r) {
+  return `<div class="frow" style="grid-template-columns:1fr 3fr 1.5fr auto"><input data-f="name" value="${esc(r.name || '')}" placeholder="code_generation">
+    <input data-f="description" value="${esc(r.description || '')}" placeholder="writing new code, functions or scripts"><input data-f="models" list="r-models" value="${esc((r.models || []).join(', '))}" placeholder="Modell">
+    <button type="button" onclick="this.parentElement.remove()">✕</button></div>`;
+}
+function addRoute() { $('r-routes').insertAdjacentHTML('beforeend', routeRow({})); }
+function clsVisibility() {
+  const c = $('r-cls').value;
+  $('r-tiersbox').hidden = !(c === 'heuristic' || c === 'llm' || (c === 'arch' && $('r-cfb').value === 'heuristic')); $('r-thrbox').hidden = c !== 'heuristic';
+  $('r-routesbox').hidden = c !== 'arch'; $('r-clsbox').hidden = !(c === 'llm' || c === 'arch'); $('r-cpromptbox').hidden = c !== 'llm';
+  if (c === 'arch' && !$('r-cmodel').value) $('r-cmodel').value = 'arch-router:1.5b';
+  if (c === 'arch' && !$('r-routes').children.length) ['code_generation|writing new code, functions, scripts or fixing bugs', 'reasoning|math, logic, step-by-step analysis, planning and comparing options', 'general|everyday questions, explanations, conversation']
+    .forEach(x => { const [name, description] = x.split('|'); $('r-routes').insertAdjacentHTML('beforeend', routeRow({name, description})); });
+}
+$('r-cls').addEventListener('change', clsVisibility);
+$('r-cfb').addEventListener('change', clsVisibility);
+const csv = v => v.split(',').map(x => x.trim()).filter(Boolean);
 let editingRouter = null;
 const boolSel = (f, v, yes = 'ja', no = 'nein') => `<select data-f="${f}"><option value="">egal</option><option value="1" ${v === true ? 'selected' : ''}>${yes}</option><option value="0" ${v === false ? 'selected' : ''}>${no}</option></select>`;
 function ruleBlock(r) {
@@ -1997,6 +2062,7 @@ function ruleBlock(r) {
       <button type="button" class="danger" title="entfernen" onclick="this.closest('.rule').remove()">✕</button></div>
     <div class="rgrid">
       <div class="wide2"><label>Ziel: Modell</label><input data-f="model" list="r-models" value="${esc(r.model || '')}" placeholder="leer = nach Fähigkeit wählen"></div>
+      <div><label>… oder Stufe</label><select data-f="tier"><option value="">–</option>${['SIMPLE', 'MEDIUM', 'COMPLEX', 'REASONING'].map(t => `<option ${r.tier === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
       <div class="wide2"><label>… oder Modell mit</label><div class="chklist inline">${Object.entries(NEEDS).map(([k, l]) => `<label><input type="checkbox" data-need="${k}" ${needs.includes(k) ? 'checked' : ''}> ${l}</label>`).join('')}</div></div>
       <div><label>Tokens ab (≈)</label><input data-f="min_tokens" type="number" min="0" value="${r.min_tokens || ''}"></div>
       <div><label>Tokens bis (≈)</label><input data-f="max_tokens" type="number" min="0" value="${r.max_tokens || ''}"></div>
@@ -2019,6 +2085,7 @@ function readRules() {
     const g = f => el.querySelector(`[data-f="${f}"]`).value.trim();
     const r = {name: g('name'), disabled: !el.querySelector('[data-f="enabled"]').checked};
     if (g('model')) r.model = g('model');
+    if (g('tier')) r.tier = g('tier');
     const needs = [...el.querySelectorAll('[data-need]:checked')].map(i => i.dataset.need); if (needs.length) r.needs = needs;
     for (const k of ['min_tokens', 'max_tokens', 'queue_min']) { const v = parseInt(g(k), 10); if (v > 0) r[k] = v; }
     for (const k of ['images', 'tools', 'json', 'reasoning']) { const v = g(k); if (v) r[k] = v === '1'; }
@@ -2049,6 +2116,15 @@ function openRouter(name) {
     {name: 'Code', pattern: '```|programmier|funktion|python|javascript|code', model: ''},
     {name: 'Langer Kontext', min_tokens: 16000, needs: ['context']},
   ].filter(r => r.model !== '' || r.needs));
+  $('r-cls').value = rc?.classifier || '';
+  document.querySelectorAll('#r-tiersbox [data-tier]').forEach(i => i.value = (rc?.tiers?.[i.dataset.tier] || []).join(', '));
+  const th = rc?.thresholds || []; $('r-t1').value = th[0] ?? ''; $('r-t2').value = th[1] ?? ''; $('r-t3').value = th[2] ?? '';
+  $('r-routes').innerHTML = (rc?.routes || []).map(routeRow).join('');
+  $('r-cmodel').value = rc?.class_model || ''; $('r-ctimeout').value = rc?.class_timeout_ms || ''; $('r-cturns').value = rc?.class_turns ?? '';
+  $('r-cfb').value = rc?.class_fallback || 'default'; $('r-cprompt').value = rc?.class_prompt || '';
+  $('r-cserver').innerHTML = '<option value="">automatisch (Server mit dem Modell)</option>' + current.backends.map(b => `<option>${esc(b.name)}</option>`).join('');
+  $('r-cserver').value = rc?.class_server || '';
+  clsVisibility();
   $('r-err').textContent = '';
   $('rdlg').showModal(); $('r-name').focus();
 }
@@ -2056,6 +2132,20 @@ $('rform').addEventListener('submit', async ev => {
   ev.preventDefault(); $('formerr').textContent = '';
   const body = {name: $('r-name').value.trim(), default: $('r-default').value.trim(), models: $('r-take').value.split('\n').map(x => x.trim()).filter(Boolean),
     sticky: $('r-sticky').checked, auto_caps: $('r-caps').checked, disabled: $('r-off').checked, rules: readRules()};
+  const c = $('r-cls').value;
+  if (c) {
+    body.classifier = c;
+    if (!$('r-tiersbox').hidden) { body.tiers = {}; document.querySelectorAll('#r-tiersbox [data-tier]').forEach(i => { const v = csv(i.value); if (v.length) body.tiers[i.dataset.tier] = v; }); }
+    if (c === 'heuristic' && $('r-t1').value && $('r-t2').value && $('r-t3').value) body.thresholds = [+$('r-t1').value, +$('r-t2').value, +$('r-t3').value];
+    if (c === 'arch') body.routes = [...$('r-routes').querySelectorAll('.frow')].map(r => ({name: r.querySelector('[data-f=name]').value.trim(),
+      description: r.querySelector('[data-f=description]').value.trim(), models: csv(r.querySelector('[data-f=models]').value)})).filter(r => r.name || r.description);
+    if (c !== 'heuristic') {
+      body.class_model = $('r-cmodel').value.trim(); body.class_server = $('r-cserver').value; body.class_fallback = $('r-cfb').value;
+      if (+$('r-ctimeout').value > 0) body.class_timeout_ms = +$('r-ctimeout').value;
+      if ($('r-cturns').value !== '') body.class_turns = +$('r-cturns').value;
+      if (c === 'llm' && $('r-cprompt').value.trim()) body.class_prompt = $('r-cprompt').value.trim();
+    }
+  }
   const ok = editingRouter === null ? await call('POST', '/routers', body) : await call('PUT', `/routers/${enc(editingRouter)}`, body);
   if (!ok) { $('r-err').textContent = $('formerr').textContent; return; }
   $('rdlg').close(); toast('Gespeichert');
@@ -2075,6 +2165,7 @@ async function testRouter() {
   const f = d.request || {};
   $('rt-res').innerHTML = `<div>→ <span class="big">${esc(d.model || '–')}</span> ${d.router ? `<span class="muted">Router ${esc(d.router)} · ${esc(d.reason)}</span>` : `<span class="muted">${esc(d.reason)}</span>`}</div>
     <div class="muted" style="margin-top:6px">Erkannt: ≈ ${num(f.tokens)} Tokens · Bilder ${f.images ? 'ja' : 'nein'} · Tools ${f.tools ? 'ja' : 'nein'} · JSON ${f.json ? 'ja' : 'nein'} · Denken ${f.reasoning ? 'ja' : 'nein'}</div>
+    ${d.classifier ? `<div style="margin-top:6px">Klassifizierer: ${esc(d.classifier.detail)} <span class="muted">(${d.classifier.ms} ms)</span></div>` : ''}
     ${d.checks?.length ? `<ul class="impres">${d.checks.map(c => `<li class="muted">${esc(c)}</li>`).join('')}</ul>` : ''}`;
 }
 

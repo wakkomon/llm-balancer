@@ -3,6 +3,16 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.7.0 – 2026-10-29
+
+- **Klassifizierer für Router** (wenn keine Regel passt), angelehnt an LiteLLMs Auto Routing:
+  - **Heuristik**: Komplexitäts-Score ohne Modellaufruf → Stufe SIMPLE / MEDIUM / COMPLEX / REASONING
+  - **LLM**: ein kleines Modell ordnet einer Stufe zu
+  - **Arch-Router**: `arch-router:1.5b` (katanemo/Arch-Router-1.5B) wählt eine beschriebene Route
+- Stufen mit Modell-Pools (erstes mit freiem Server, leere Stufe → nächsthöhere); Regeln können eine Stufe als Ziel haben
+- Klassifizierer laufen am Slot-System vorbei, mit Timeout und Rückfall auf Standardmodell oder Heuristik;
+  Anzeige von Stufe/Route und Dauer in „Letzte Anfragen“ und im Test
+
 ## 1.6.0 – 2026-10-29
 
 - **Modell-Router** (neue Seite „Router“): virtuelle Modelle wie `auto`, die per Regeln das echte Modell wählen – nach

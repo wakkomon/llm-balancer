@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -168,6 +169,7 @@ type Pool struct {
 	initialRouters []RouterConfig
 	sticky         map[string]*stickyEntry
 	routerHits     map[string]*atomic.Int64
+	transport      func(insecure bool) http.RoundTripper // set by the proxy (classifier calls)
 	access         *Access
 
 	totalReqs     int64

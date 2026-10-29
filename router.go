@@ -27,6 +27,7 @@ type RouterRule struct {
 	Disabled bool   `json:"disabled,omitempty"`
 	// target: a model, or (if empty) the best model with the required capabilities
 	Model string   `json:"model,omitempty"`
+	Tier  string   `json:"tier,omitempty"`  // or a tier of the router (its model pool)
 	Needs []string `json:"needs,omitempty"` // vision | tools | reasoning | context
 	// conditions – every condition that is set must hold
 	MinTokens int      `json:"min_tokens,omitempty"` // estimated prompt tokens
@@ -55,6 +56,17 @@ type RouterConfig struct {
 	Sticky   bool         `json:"sticky,omitempty"`    // keep the model per session
 	Disabled bool         `json:"disabled,omitempty"`
 	Rules    []RouterRule `json:"rules"`
+	// decision when no rule matches (LiteLLM-like)
+	Classifier     string              `json:"classifier,omitempty"` // "" | heuristic | llm | arch
+	Tiers          map[string][]string `json:"tiers,omitempty"`      // SIMPLE/MEDIUM/COMPLEX/REASONING → models
+	Routes         []RouteDef          `json:"routes,omitempty"`     // Arch-Router routes
+	ClassModel     string              `json:"class_model,omitempty"`
+	ClassServer    string              `json:"class_server,omitempty"`
+	ClassTimeoutMs int                 `json:"class_timeout_ms,omitempty"`
+	ClassTurns     *int                `json:"class_turns,omitempty"`
+	ClassPrompt    string              `json:"class_prompt,omitempty"`
+	ClassFallback  string              `json:"class_fallback,omitempty"` // default | heuristic
+	Thresholds     []float64           `json:"thresholds,omitempty"`
 }
 
 func (rc RouterConfig) autoCaps() bool { return rc.AutoCaps == nil || *rc.AutoCaps }
@@ -77,6 +89,9 @@ func normalizeRouter(rc *RouterConfig) error {
 	if rc.Rules == nil {
 		rc.Rules = []RouterRule{}
 	}
+	if err := normalizeClassifier(rc); err != nil {
+		return err
+	}
 	for i := range rc.Rules {
 		r := &rc.Rules[i]
 		r.Name = strings.TrimSpace(r.Name)
@@ -89,8 +104,12 @@ func normalizeRouter(rc *RouterConfig) error {
 				return fmt.Errorf("%s: unbekannte Fähigkeit %q", r.Name, n)
 			}
 		}
-		if r.Model == "" && len(r.Needs) == 0 {
-			return fmt.Errorf("%s: Zielmodell oder benötigte Fähigkeit fehlt", r.Name)
+		r.Tier = strings.ToUpper(strings.TrimSpace(r.Tier))
+		if r.Tier != "" && !validTier(r.Tier) {
+			return fmt.Errorf("%s: unbekannte Stufe %q", r.Name, r.Tier)
+		}
+		if r.Model == "" && len(r.Needs) == 0 && r.Tier == "" {
+			return fmt.Errorf("%s: Zielmodell, Stufe oder benötigte Fähigkeit fehlt", r.Name)
 		}
 		if r.Pattern != "" {
 			re, err := regexp.Compile("(?is)" + r.Pattern)
@@ -443,13 +462,14 @@ func (p *Pool) modelBusyLocked(model string) bool {
 // ---- decision ----
 
 type RouteDecision struct {
-	Router  string      `json:"router"`
-	Rule    string      `json:"rule,omitempty"` // "" = default / unchanged
-	Model   string      `json:"model"`          // target
-	Reason  string      `json:"reason"`
-	Sticky  bool        `json:"sticky,omitempty"`
-	Request reqFeatures `json:"request"`
-	Checks  []string    `json:"checks,omitempty"` // test tool: why rules did not match
+	Router     string       `json:"router"`
+	Rule       string       `json:"rule,omitempty"` // "" = default / unchanged
+	Model      string       `json:"model"`          // target
+	Reason     string       `json:"reason"`
+	Sticky     bool         `json:"sticky,omitempty"`
+	Request    reqFeatures  `json:"request"`
+	Checks     []string     `json:"checks,omitempty"` // test tool: why rules did not match
+	Classifier *classResult `json:"classifier,omitempty"`
 }
 
 type routeCtx struct {
@@ -569,12 +589,17 @@ type stickyEntry struct {
 
 const stickyTTL = 2 * time.Hour
 
-// decideLocked runs the router for a request; nil if no router is responsible.
-func (p *Pool) decideLocked(c routeCtx) *RouteDecision {
-	rc := p.routerForLocked(c.model)
-	if rc == nil {
+// decide runs the router for a request; nil if no router is responsible. Explicit rules first; if none
+// matches, the classifier (heuristic / LLM / Arch-Router) chooses a tier or route; then the default.
+// The pool lock is not held while a classifier model answers.
+func (p *Pool) decide(c routeCtx) *RouteDecision {
+	p.mu.Lock()
+	rcp := p.routerForLocked(c.model)
+	if rcp == nil {
+		p.mu.Unlock()
 		return nil
 	}
+	rc := *rcp
 	now := time.Now()
 	f := analyzeRequest(c.body)
 	d := &RouteDecision{Router: rc.Name, Request: f}
@@ -584,6 +609,7 @@ func (p *Pool) decideLocked(c routeCtx) *RouteDecision {
 			e.until = now.Add(stickyTTL)
 			d.Model, d.Rule, d.Sticky, d.Reason = e.model, e.rule, true, "Session "+c.session
 			p.routerHit(rc.Name, e.rule)
+			p.mu.Unlock()
 			return d
 		}
 	}
@@ -597,29 +623,73 @@ func (p *Pool) decideLocked(c routeCtx) *RouteDecision {
 			continue
 		}
 		target := r.Model
-		if target == "" {
+		reason := "Regel " + r.Name
+		if target == "" && r.Tier != "" {
+			var used string
+			if target, used = p.tierModelLocked(&rc, r.Tier); used != "" && used != r.Tier {
+				reason += fmt.Sprintf(" → Stufe %s (leer) → %s", r.Tier, used)
+			} else if target != "" {
+				reason += " → Stufe " + r.Tier
+			}
+		}
+		if target == "" && len(r.Needs) > 0 {
 			prefer := ""
 			if !virtual {
 				prefer = c.model
 			}
-			if target = p.pickCapableLocked(r.Needs, f.Tokens, prefer); target == "" {
-				if c.explain {
-					d.Checks = append(d.Checks, r.Name+": kein Modell mit "+needsText(r.Needs)+" bekannt")
-				}
-				continue
-			}
+			target = p.pickCapableLocked(r.Needs, f.Tokens, prefer)
 		}
-		d.Rule, d.Model, d.Reason = r.Name, target, "Regel "+r.Name
+		if target == "" {
+			if c.explain {
+				d.Checks = append(d.Checks, r.Name+": kein passendes Modell bekannt")
+			}
+			continue
+		}
+		d.Rule, d.Model, d.Reason = r.Name, target, reason
 		break
 	}
+	if d.Model == "" && rc.Classifier != "" {
+		p.mu.Unlock()
+		cr := p.classify(&rc, c.body) // may call a model
+		p.mu.Lock()
+		d.Classifier = &cr
+		switch {
+		case cr.Route != "":
+			for _, rt := range rc.Routes {
+				if rt.Name == cr.Route {
+					d.Model, d.Rule = p.pickPoolLocked(rt.Models), "route:"+rt.Name
+				}
+			}
+			if d.Model == "" && cr.Route != "other" {
+				cr.Detail += " (unbekannte Route)"
+			}
+		case cr.Tier != "":
+			m, used := p.tierModelLocked(&rc, cr.Tier)
+			if m != "" {
+				d.Model, d.Rule = m, "tier:"+used
+				if used != cr.Tier {
+					cr.Detail += fmt.Sprintf(" → Stufe %s ohne Modell → %s", cr.Tier, used)
+				}
+			}
+		}
+		d.Reason = cr.Detail
+		if d.Model == "" {
+			d.Rule = ""
+		}
+	}
 	if d.Model == "" {
+		reason := ""
+		if d.Reason != "" {
+			reason = d.Reason + " → "
+		}
 		switch {
 		case rc.Default != "":
-			d.Model, d.Reason = rc.Default, "Standard"
+			d.Model, d.Reason = rc.Default, reason+"Standard"
 		case !virtual:
-			d.Model, d.Reason = c.model, "unverändert"
+			d.Model, d.Reason = c.model, reason+"unverändert"
 		default:
-			d.Reason = "keine Regel passt und kein Standardmodell"
+			d.Reason = reason + "keine Regel passt und kein Standardmodell"
+			p.mu.Unlock()
 			return d
 		}
 	}
@@ -648,6 +718,7 @@ func (p *Pool) decideLocked(c routeCtx) *RouteDecision {
 			p.sticky[key] = &stickyEntry{model: d.Model, rule: d.Rule, until: now.Add(stickyTTL)}
 		}
 	}
+	p.mu.Unlock()
 	return d
 }
 
@@ -681,11 +752,12 @@ func (p *Pool) pruneStickyLocked(now time.Time) {
 // applyRouter is called by the proxy before the slot is requested.
 func (p *Pool) applyRouter(req *ReqInfo, r *http.Request, body []byte) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.routers) == 0 {
+	n := len(p.routers)
+	p.mu.Unlock()
+	if n == 0 {
 		return
 	}
-	d := p.decideLocked(routeCtx{model: req.Model, token: req.Token, client: req.Client, header: r.Header, session: req.Session, body: body})
+	d := p.decide(routeCtx{model: req.Model, token: req.Token, client: req.Client, header: r.Header, session: req.Session, body: body})
 	if d == nil || d.Model == "" {
 		return
 	}
@@ -833,9 +905,7 @@ func registerRouters(mux *http.ServeMux, pre string, pool *Pool, token string) {
 			writeAPIError(w, http.StatusBadRequest, errors.New("Anfrage ist kein JSON-Objekt"))
 			return
 		}
-		pool.mu.Lock()
-		d := pool.decideLocked(routeCtx{model: meta.Model, token: in.Token, client: in.Client, header: http.Header{}, body: in.Request, explain: true})
-		pool.mu.Unlock()
+		d := pool.decide(routeCtx{model: meta.Model, token: in.Token, client: in.Client, header: http.Header{}, body: in.Request, explain: true})
 		w.Header().Set("Content-Type", "application/json")
 		if d == nil {
 			json.NewEncoder(w).Encode(map[string]any{"router": "", "model": meta.Model, "reason": "kein Router zuständig – Modell bleibt", "request": analyzeRequest(in.Request)})
