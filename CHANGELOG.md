@@ -3,6 +3,12 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.8.1 – 2026-10-30
+
+- Umbenennen eines Servers oder API-Tokens überträgt seine Statistik (Tage, Stunden, Einnahmen) auf den neuen Namen
+- Reste früherer Umbenennungen lassen sich in der Statistik bzw. unter API-Zugriff per „zusammenführen …“ auf einen
+  vorhandenen Server/Token übertragen (`POST /balancer/api/stats/merge {"kind":"backend|token","from","to"}`)
+
 ## 1.8.0 – 2026-10-30
 
 - **API-Tokens bearbeiten**: Name, erlaubte Modelle (mit `*`), Preise, Kostendeckel, neuer Token-Wert. Nicht erlaubte

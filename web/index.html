@@ -1334,7 +1334,7 @@ function renderTokens() {
   $('tokrevhead').innerHTML = tokRange ? `Einnahmen<br><span class="muted" style="font-weight:400">${TOK_RANGE[tokRange]}</span>` : 'Einnahmen gesamt';
   const sum = list.reduce((a, t) => ({requests: a.requests + (t.u.requests || 0), tokens_in: a.tokens_in + (t.u.tokens_in || 0), tokens_out: a.tokens_out + (t.u.tokens_out || 0), cost: a.cost + (t.u.cost || 0)}), {requests: 0, tokens_in: 0, tokens_out: 0, cost: 0});
   setHTML($('tokens'), list.length ? list.map(t => t.gone ? `<tr class="muted">
-    <td>${esc(t.name)}</td><td><span class="tstate off">gelöscht</span></td><td>–</td><td>–</td><td>–</td>
+    <td>${esc(t.name)} <button class="need-admin" style="padding:1px 6px" title="Statistik auf einen vorhandenen Token übertragen" onclick='mergeStats("token", ${attr(t.name)})'>zusammenführen …</button></td><td><span class="tstate off">gelöscht/umbenannt</span></td><td>–</td><td>–</td><td>–</td>
     <td class="n">${num(t.u.requests)}</td><td class="n">–</td><td class="n">${ktok(t.u.tokens_in)}</td><td class="n">${ktok(t.u.tokens_out)}</td><td class="n">${money(t.u.cost)}</td><td class="n">–</td><td></td></tr>` : `<tr>
     <td>${esc(t.name)}${t.models?.length ? `<div class="mchips" style="margin-top:3px">${t.models.map(m => `<span class="mchip${m.includes('*') ? ' pat' : ''}">${esc(m)}</span>`).join('')}</div>` : ''}</td>
     <td>${t.disabled ? '<span class="tstate off">gesperrt</span>' : t.capped ? '<span class="tstate capped" title="Kostendeckel erreicht">Deckel erreicht</span>' : '<span class="tstate">aktiv</span>'}</td>
@@ -1639,8 +1639,11 @@ function renderStatTables() {
   $('stbyhead').textContent = label; $('stbyhead2').textContent = label; $('stdaysum').textContent = 'Pro Tag und ' + label;
   const all = names.reduce((a, n) => a + V.totals[n].requests, 0);
   const sw = n => `<td class="sw"><i style="background:${V.color(n)}"></i>${esc(n)}</td>`;
+  const gone = n => stBy === 'server' && n !== '(kein Server)' && current && !current.backends.some(b => b.name === n);
+  const swm = n => gone(n) ? `<td class="sw"><i style="background:${V.color(n)}"></i>${esc(n)} <span class="muted">(entfernt/umbenannt)</span>
+    <button class="need-admin" style="padding:1px 6px;margin-left:4px" title="Statistik auf einen vorhandenen Server übertragen" onclick='mergeStats("backend", ${attr(n)})'>zusammenführen …</button></td>` : sw(n);
   setHTML($('sttotals'), names.length ? names.map(n => { const t = V.totals[n];
-    return `<tr>${sw(n)}<td class="n">${t.requests}</td><td class="n">${all ? Math.round(t.requests * 100 / all) : 0} %</td>${statRow(t)}</tr>`; }).join('')
+    return `<tr>${swm(n)}<td class="n">${t.requests}</td><td class="n">${all ? Math.round(t.requests * 100 / all) : 0} %</td>${statRow(t)}</tr>`; }).join('')
     : '<tr><td colspan="18" class="empty">Keine Anfragen in diesem Zeitraum.</td></tr>');
   const rows = [];
   for (const day of [...d.days].reverse()) for (const n of names) {
@@ -1808,6 +1811,14 @@ function segment(id, set) {
 segment('rangeSeg', v => { stRange = +v; setDayMode(); loadStats(); });
 segment('metricSeg', v => { stMetric = v; renderChart(); });
 segment('bySeg', v => { stBy = v; renderChart(); renderStatTables(); $('csvlink').href = `${base}/api/stats?days=${stRange}&format=csv&by=${stBy}`; });
+async function mergeStats(kind, from) {
+  const names = kind === 'backend' ? current.backends.map(b => b.name) : tokenList.map(t => t.name);
+  const to = prompt(`Statistik von „${from}“ übertragen auf:\n${names.join(', ')}`, names[0] || '');
+  if (!to) return;
+  if (!names.includes(to.trim())) { toast(`„${to}“ gibt es nicht`); return; }
+  const r = await call('POST', '/stats/merge', {kind, from, to: to.trim()});
+  if (r) { toast(`${r.days} Tage übertragen`); loadStats(); if (kind === 'token') loadTokens(); }
+}
 async function resetStats() {
   if (confirm('Gesamte Statistik unwiderruflich löschen?')) { await call('POST', '/stats/reset'); loadStats(); }
 }

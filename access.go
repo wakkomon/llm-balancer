@@ -48,6 +48,7 @@ type AccessToken struct {
 // plus tokens created in the UI (persisted in DATA_DIR/access.json).
 type Access struct {
 	onChange func() // called after settings changed (re-check caps)
+	onRename func(old, new string)
 	mu       sync.Mutex
 	tokens   []*AccessToken
 	path     string
@@ -277,6 +278,9 @@ func (a *Access) Update(name string, u tokenUpdate) (string, error) {
 				}
 			}
 			log.Printf("access token %q renamed to %q via UI", t.Name, nn)
+			if a.onRename != nil {
+				a.onRename(t.Name, nn)
+			}
 			t.Name = nn
 		}
 		if u.Models != nil {

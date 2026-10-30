@@ -193,6 +193,9 @@ func (p *Pool) UpdateBackend(name string, bc BackendConfig, key, group *string) 
 				r.Backend = bc.Name
 			}
 		}
+		if p.stats != nil { // the statistics follow the new name
+			p.stats.Merge("backend", name, bc.Name)
+		}
 	}
 	if bc.URL != b.URL {
 		u, _ := url.Parse(bc.URL)

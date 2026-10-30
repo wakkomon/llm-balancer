@@ -171,3 +171,37 @@ func TestEmptyStatsReportHasEmptyLists(t *testing.T) {
 		t.Errorf("empty report contains null (breaks the UI): %s", b)
 	}
 }
+
+func TestStatsFollowRenames(t *testing.T) {
+	a := newFakeLLM(t, "a", 10*time.Millisecond)
+	srv, pool := setup(t, func(c *Config) { c.APIKeys = "env=sk-env-value-0001" }, a)
+	hdr := map[string]string{"Authorization": "Bearer sk-env-value-0001"}
+	w := newWeb(t, srv.URL)
+	_, b := w.do("POST", "/api/tokens", `{"name":"alt","token":"sk-alt-0000001"}`)
+	_ = b
+	chatModel(t, srv.URL, "m", hdr)
+	chatModel(t, srv.URL, "m", map[string]string{"Authorization": "Bearer sk-alt-0000001"})
+	waitFor(t, func() bool { return getStats(t, srv.URL, 1).Totals["a"] != nil && getStats(t, srv.URL, 1).Totals["a"].Requests == 2 })
+	api(t, "PUT", srv.URL+"/balancer/api/backends/a", `{"name":"gpu","url":"`+a.srv.URL+`"}`, "")
+	w.do("PUT", "/api/tokens/alt", `{"name":"neu"}`)
+	chatModel(t, srv.URL, "m", map[string]string{"Authorization": "Bearer sk-alt-0000001"})
+	waitFor(t, func() bool { r := getStats(t, srv.URL, 1); return r.Totals["gpu"] != nil && r.Totals["gpu"].Requests == 3 })
+	rep := getStats(t, srv.URL, 1)
+	if len(rep.Backends) != 1 || rep.Totals["a"] != nil {
+		t.Errorf("backends: %v", rep.Backends)
+	}
+	if rep.TokenTotals["alt"] != nil || rep.TokenTotals["neu"] == nil || rep.TokenTotals["neu"].Requests != 2 {
+		t.Errorf("tokens: %v", rep.Tokens)
+	}
+	if h := pool.stats.Day(time.Now(), 1, nil); h.Today["a"] != nil || h.Today["gpu"] == nil {
+		t.Errorf("hourly not renamed: %v", h.Backends)
+	}
+	// manual merge of a leftover name
+	pool.stats.Record(&ReqInfo{Backend: "rest", Status: 200, QueuedAt: time.Now(), StartedAt: time.Now(), EndedAt: time.Now()})
+	if c, b := w.do("POST", "/api/stats/merge", `{"kind":"backend","from":"rest","to":"gpu"}`); c != 200 || !strings.Contains(b, `"days":1`) {
+		t.Errorf("merge: %d %s", c, b)
+	}
+	if r := getStats(t, srv.URL, 1); r.Totals["rest"] != nil || r.Totals["gpu"].Requests != 4 {
+		t.Errorf("after merge: %v", r.Backends)
+	}
+}

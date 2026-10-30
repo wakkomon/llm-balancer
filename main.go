@@ -65,6 +65,7 @@ func main() {
 		log.Fatalf("ADMIN_USER/ADMIN_PASSWORD: %v", err)
 	}
 	access.onChange = pool.kickCaps
+	access.onRename = func(o, n string) { pool.stats.Merge("token", o, n) }
 	pool.notifier = NewNotifier(cfg.DataDir)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -154,6 +155,7 @@ func newMux(cfg Config, pool *Pool, px *Proxy) http.Handler {
 	})
 	registerAdmin(ui, pre, pool, cfg.AdminToken)
 	registerStats(ui, pre, pool.stats, cfg.AdminToken, pool.ResetCounters)
+	registerStatsMerge(ui, pre, pool.stats, cfg.AdminToken)
 	registerDayView(ui, pre, pool)
 	registerGroups(ui, pre, pool, cfg.AdminToken)
 	if pool.notifier != nil {

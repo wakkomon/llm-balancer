@@ -87,6 +87,7 @@ func setup(t *testing.T, mod func(*Config), backends ...*fakeLLM) (*httptest.Ser
 	}
 	px.access, pool.access = acc, acc
 	acc.onChange = pool.kickCaps
+	acc.onRename = func(o, n string) { pool.stats.Merge("token", o, n) }
 	pool.notifier = NewNotifier(statsDir)
 	stop := make(chan struct{})
 	go pool.capsLoop(stop)
