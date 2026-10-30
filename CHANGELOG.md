@@ -3,6 +3,12 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.8.0 – 2026-10-30
+
+- **API-Tokens bearbeiten**: Name, erlaubte Modelle (mit `*`), Preise, Kostendeckel, neuer Token-Wert. Nicht erlaubte
+  Modelle → HTTP 403 `model_not_allowed`; `/v1/models` und `/api/tags` zeigen pro Token nur die erlaubten
+- Router: Vorschläge funktionieren jetzt auch nach dem Komma (mehrere Modelle in Regel-Ziel, Standardmodell, Stufen, Routen)
+
 ## 1.7.1 – 2026-10-29
 
 - **Router: mehrere gleichwertige Zielmodelle** (mit Komma) für Regeln, Standardmodell, Stufen und Routen – die Anfrage

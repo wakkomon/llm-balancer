@@ -522,12 +522,27 @@ func (p *Pool) AllModels() []string {
 	return out
 }
 
+// modelsFor: the models a client token may use (all if it has no list).
+func (px *Proxy) modelsFor(token string) []string {
+	all := px.pool.AllModels()
+	if px.access == nil || len(px.access.ModelsOf(token)) == 0 {
+		return all
+	}
+	out := []string{}
+	for _, m := range all {
+		if px.access.Allowed(token, m) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 // serveModel answers GET /v1/models/{id} for a model the balancer knows; false = unknown here.
-func (px *Proxy) serveModel(w http.ResponseWriter, id string) bool {
+func (px *Proxy) serveModel(w http.ResponseWriter, id, token string) bool {
 	if u, err := url.PathUnescape(id); err == nil {
 		id = u
 	}
-	for _, m := range px.pool.AllModels() {
+	for _, m := range px.modelsFor(token) {
 		if strings.EqualFold(m, id) {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{"id": m, "object": "model", "created": px.pool.started.Unix(), "owned_by": "llm-balancer"})
@@ -538,9 +553,9 @@ func (px *Proxy) serveModel(w http.ResponseWriter, id string) bool {
 }
 
 // serveModelList answers GET /v1/models with the models of all servers.
-func (px *Proxy) serveModelList(w http.ResponseWriter) bool {
-	models := px.pool.AllModels()
-	if len(models) == 0 {
+func (px *Proxy) serveModelList(w http.ResponseWriter, token string) bool {
+	models := px.modelsFor(token)
+	if len(px.pool.AllModels()) == 0 {
 		return false
 	}
 	type entry struct {

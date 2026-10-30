@@ -185,6 +185,7 @@ func ollamaError(w http.ResponseWriter, code int, msg string) {
 
 // serveOllamaInfo answers /api/tags, /api/ps and /api/version from the Ollama servers (true = handled).
 func (px *Proxy) serveOllamaInfo(w http.ResponseWriter, r *http.Request, path string) bool {
+	token := tokenOf(r)
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return false
 	}
@@ -205,7 +206,7 @@ func (px *Proxy) serveOllamaInfo(w http.ResponseWriter, r *http.Request, path st
 			}
 			for _, raw := range src {
 				var t struct{ Name string }
-				if json.Unmarshal(raw, &t) == nil && !seen[strings.ToLower(t.Name)] {
+				if json.Unmarshal(raw, &t) == nil && !seen[strings.ToLower(t.Name)] && (px.access == nil || px.access.Allowed(token, t.Name)) {
 					seen[strings.ToLower(t.Name)] = true
 					list = append(list, raw)
 				}

@@ -408,6 +408,12 @@ Tokens und Kosten pro API-Token im gewählten Zeitraum; „Letzte Anfragen“ ze
 
 ### Tokens
 
+**Bearbeiten** eines API-Tokens (Seite API-Zugriff): Name, **erlaubte Modelle** (Namen oder Muster mit `*`, leer = alle),
+Preise, Kostendeckel und auf Wunsch ein neuer Token-Wert. Ist eine Modellliste gesetzt, lehnt der Balancer andere Modelle
+mit HTTP 403 `model_not_allowed` ab, und `/v1/models` bzw. `/api/tags` zeigen diesem Token nur die erlaubten. Geprüft wird
+das angefragte Modell – ein erlaubtes virtuelles Router-Modell wie `auto` darf auf jedes Modell geroutet werden.
+Bei Tokens aus `API_KEYS` lassen sich Modelle, Preise und Deckel ändern, Name und Wert nur in der Variable.
+
 **Zugriff auf den Balancer (Clients → Balancer).** Sobald mindestens ein Token existiert, brauchen alle Anfragen an die
 LLM-API (alles außerhalb von `/balancer/`) einen gültigen Token als `Authorization: Bearer <token>`, `x-api-key` oder `api-key`.
 Sonst antwortet der Balancer mit 401 im OpenAI-Fehlerformat. Tokens kommen aus `API_KEYS` (fest, nur per Umgebungsvariable
@@ -505,7 +511,7 @@ Mit Benutzern ist alles erst nach der Anmeldung sichtbar; Betrachter sehen keine
 | POST | `/balancer/api/requests/{id}/stop` | eine Anfrage (laufend oder wartend) abbrechen |
 | POST | `/balancer/api/reset` | zurück zur Startkonfiguration |
 | GET/POST | `/balancer/api/tokens` | Client-Tokens auflisten / erzeugen (`{"name","token"?}`) |
-| PUT | `/balancer/api/tokens/{name}` | Preis, Deckel, Sperre: `{"price_in":0.4,"price_out":1.6,"cost_cap":10,"cap_period":"month","disabled":false}` |
+| PUT | `/balancer/api/tokens/{name}` | ändern (Felder optional): `{"name","models":["auto","qwen3*"],"price_in":0.4,"price_out":1.6,"cost_cap":10,"cap_period":"month","disabled":false,"token":""}` – `"token":""` erzeugt einen neuen Wert (Antwort `{"token":…}`) |
 | DELETE | `/balancer/api/tokens/{name}` | Client-Token löschen |
 | POST | `/balancer/api/groups` | Gruppe anlegen: `{"name","models":[…],"auto_models","members":[…],"force_model","fallback","fallback_after_sec","fallback_model"}` |
 | PUT / DELETE | `/balancer/api/groups/{name}` | Gruppe ändern (umbenennen erlaubt; `members` / `disabled` weglassen = unverändert) / löschen |

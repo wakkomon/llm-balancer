@@ -672,7 +672,7 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
     <div class="two">
       <div><label for="r-name">Name = virtuelles Modell</label><input id="r-name" required placeholder="z. B. auto" autocomplete="off">
         <div class="hint">Clients fragen dieses Modell an, z. B. <code>"model": "auto"</code>; es erscheint in /v1/models.</div></div>
-      <div><label for="r-default">Standardmodell(e)</label><input id="r-default" list="r-models" placeholder="wenn keine Regel passt – mehrere mit Komma" autocomplete="off">
+      <div><label for="r-default">Standardmodell(e)</label><input id="r-default" class="multi" placeholder="wenn keine Regel passt – mehrere mit Komma" autocomplete="off">
         <div class="hint">Leer: bei übernommenen echten Modellen bleibt das angefragte.</div></div>
     </div>
     <label for="r-take">Übernimmt außerdem diese angefragten Modelle (eins pro Zeile, * erlaubt)</label>
@@ -700,10 +700,10 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
     <div id="r-tiersbox" class="rule">
       <div class="hint" style="margin-top:0">Modelle pro Stufe – mehrere mit Komma sind gleichwertig. Leere Stufe = nächsthöhere.</div>
       <div class="rgrid">
-        <div class="wide2"><label>SIMPLE – Smalltalk, kurze Fakten</label><input data-tier="SIMPLE" list="r-models"></div>
-        <div class="wide2"><label>MEDIUM – normale Fragen, Erklärungen</label><input data-tier="MEDIUM" list="r-models"></div>
-        <div class="wide2"><label>COMPLEX – Code, Technik, mehrstufig</label><input data-tier="COMPLEX" list="r-models"></div>
-        <div class="wide2"><label>REASONING – schwierige Probleme</label><input data-tier="REASONING" list="r-models"></div>
+        <div class="wide2"><label>SIMPLE – Smalltalk, kurze Fakten</label><input data-tier="SIMPLE" class="multi" autocomplete="off"></div>
+        <div class="wide2"><label>MEDIUM – normale Fragen, Erklärungen</label><input data-tier="MEDIUM" class="multi" autocomplete="off"></div>
+        <div class="wide2"><label>COMPLEX – Code, Technik, mehrstufig</label><input data-tier="COMPLEX" class="multi" autocomplete="off"></div>
+        <div class="wide2"><label>REASONING – schwierige Probleme</label><input data-tier="REASONING" class="multi" autocomplete="off"></div>
       </div>
       <div id="r-thrbox"><label>Schwellen der Heuristik (Score → MEDIUM / COMPLEX / REASONING)</label>
         <div class="two" style="grid-template-columns:repeat(3,1fr)"><input id="r-t1" type="number" step="0.01" placeholder="0.15"><input id="r-t2" type="number" step="0.01" placeholder="0.35"><input id="r-t3" type="number" step="0.01" placeholder="0.60"></div>
@@ -763,7 +763,14 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
 </dialog>
 <dialog id="pdlg">
   <form id="pform" method="dialog">
-    <h3 id="ptitle">Preis</h3>
+    <h3 id="ptitle">API-Token</h3>
+    <label for="p-name">Name</label><input id="p-name" autocomplete="off">
+    <div class="hint" id="p-namehint"></div>
+    <label for="p-models">Erlaubte Modelle (eins pro Zeile, * erlaubt)</label>
+    <textarea id="p-models" rows="3" placeholder="leer = alle Modelle&#10;z. B.&#10;auto&#10;qwen3*"></textarea>
+    <div class="hint">Gilt für das angefragte Modell (auch virtuelle Router-Modelle wie <code>auto</code> – was der Router daraus macht, ist erlaubt).
+      Andere Modelle werden mit 403 abgelehnt; <code>/v1/models</code> zeigt diesem Token nur die erlaubten.</div>
+    <div id="p-renewrow"><label class="chk"><input type="checkbox" id="p-renew"> neuen Token-Wert erzeugen (der alte wird sofort ungültig)</label></div>
     <div class="two">
       <div><label for="p-in">Aus (Prompt) pro 1 Mio. Tokens</label><input id="p-in" type="number" min="0" step="0.01"></div>
       <div><label for="p-out">Ein (Antwort) pro 1 Mio. Tokens</label><input id="p-out" type="number" min="0" step="0.01"></div>
@@ -1329,7 +1336,7 @@ function renderTokens() {
   setHTML($('tokens'), list.length ? list.map(t => t.gone ? `<tr class="muted">
     <td>${esc(t.name)}</td><td><span class="tstate off">gelöscht</span></td><td>–</td><td>–</td><td>–</td>
     <td class="n">${num(t.u.requests)}</td><td class="n">–</td><td class="n">${ktok(t.u.tokens_in)}</td><td class="n">${ktok(t.u.tokens_out)}</td><td class="n">${money(t.u.cost)}</td><td class="n">–</td><td></td></tr>` : `<tr>
-    <td>${esc(t.name)}</td>
+    <td>${esc(t.name)}${t.models?.length ? `<div class="mchips" style="margin-top:3px">${t.models.map(m => `<span class="mchip${m.includes('*') ? ' pat' : ''}">${esc(m)}</span>`).join('')}</div>` : ''}</td>
     <td>${t.disabled ? '<span class="tstate off">gesperrt</span>' : t.capped ? '<span class="tstate capped" title="Kostendeckel erreicht">Deckel erreicht</span>' : '<span class="tstate">aktiv</span>'}</td>
     <td style="font-family:var(--mono)">…${esc(t.hint)}</td>
     <td>${t.source === 'env' ? 'API_KEYS' : 'Web-UI'}</td>
@@ -1337,7 +1344,7 @@ function renderTokens() {
     <td class="n" data-v="${(t.price_in || 0) + (t.price_out || 0)}">${t.price_in || t.price_out ? money(t.price_in) + ' / ' + money(t.price_out) : '<span class="muted">kein Preis</span>'}</td>
     <td class="n">${ktok(t.u.tokens_in)}</td><td class="n">${ktok(t.u.tokens_out)}</td><td class="n"><b>${money(t.u.cost)}</b></td>
     <td class="n capcell" data-v="${t.cost_cap ? (t.cap_spent || 0) / t.cost_cap : ''}">${t.cost_cap ? `${money(t.cap_spent)} / ${money(t.cost_cap)}<br><span class="muted">${t.cap_period === 'total' ? 'gesamt' : 'pro ' + PERIOD[t.cap_period || 'month']}</span>${capBar(t)}` : '<span class="muted">–</span>'}</td>
-    <td style="text-align:right;white-space:nowrap"><button class="need-admin" onclick='openPrice(${attr(t.name)})' title="Preis und Kostendeckel">Bearbeiten</button>
+    <td style="text-align:right;white-space:nowrap"><button class="need-admin" onclick='openPrice(${attr(t.name)})' title="Name, erlaubte Modelle, Preis, Kostendeckel">Bearbeiten</button>
       <button class="need-admin" onclick='toggleToken(${attr(t.name)}, ${!t.disabled})'>${t.disabled ? 'Freigeben' : 'Sperren'}</button>
       ${t.source === 'env' ? '' : `<button class="danger need-admin" onclick='deleteToken(${attr(t.name)})'>Löschen</button>`}</td></tr>`).join('')
     + (list.length > 1 ? `<tr class="sum"><td>Summe</td><td></td><td></td><td></td><td></td><td class="n">${num(sum.requests)}</td><td></td>
@@ -1353,7 +1360,12 @@ async function toggleToken(name, disable) {
 function openPrice(name) {
   pricing = name;
   const t = tokenList.find(x => x.name === name);
-  $('ptitle').textContent = `Preis & Kostendeckel für „${name}“`;
+  $('ptitle').textContent = `API-Token „${name}“ bearbeiten`;
+  const env = t?.source === 'env';
+  $('p-name').value = name; $('p-name').disabled = env;
+  $('p-namehint').textContent = env ? 'Kommt aus API_KEYS – Name und Wert werden dort geändert.' : 'Umbenennen ändert nichts am Token-Wert; die Statistik führt ihn ab jetzt unter dem neuen Namen.';
+  $('p-models').value = (t?.models || []).join('\n');
+  $('p-renew').checked = false; $('p-renewrow').hidden = env;
   $('p-in').value = t?.price_in || 0; $('p-out').value = t?.price_out || 0;
   $('p-cap').value = t?.cost_cap || ''; $('p-capp').value = t?.cap_period || 'month';
   $('p-hint').textContent = `Aus Sicht der Anwendung: Aus = Prompt-Tokens, die sie sendet; Ein = Antwort-Tokens, die sie bekommt. Währung: ${current?.currency || '€'}. Gilt für neue Anfragen; bisher gezählte Beträge bleiben.`;
@@ -1363,10 +1375,18 @@ function openPrice(name) {
 $('pform').addEventListener('submit', async ev => {
   ev.preventDefault();
   $('formerr').textContent = '';
-  const ok = await call('PUT', `/tokens/${enc(pricing)}`, {price_in: parseFloat($('p-in').value) || 0, price_out: parseFloat($('p-out').value) || 0,
-    cost_cap: parseFloat($('p-cap').value) || 0, cap_period: $('p-capp').value});
+  const body = {price_in: parseFloat($('p-in').value) || 0, price_out: parseFloat($('p-out').value) || 0,
+    cost_cap: parseFloat($('p-cap').value) || 0, cap_period: $('p-capp').value,
+    models: $('p-models').value.split('\n').map(x => x.trim()).filter(Boolean)};
+  if (!$('p-name').disabled && $('p-name').value.trim() !== pricing) body.name = $('p-name').value.trim();
+  if ($('p-renew').checked) {
+    if (!confirm('Neuen Token-Wert erzeugen? Clients mit dem alten Wert bekommen sofort 401.')) return;
+    body.token = '';
+  }
+  const ok = await call('PUT', `/tokens/${enc(pricing)}`, body);
   if (!ok) { $('p-err').textContent = $('formerr').textContent; return; }
   $('pdlg').close(); toast('Gespeichert'); setTimeout(loadTokens, 300);
+  if (ok.token) { $('t-plain').value = ok.token; $('tshow').showModal(); $('t-plain').select(); }
 });
 async function askAdmin() {
   const t = prompt('Admin-Token:', ''); if (t === null) return;
@@ -2038,7 +2058,7 @@ function clsRows(rc, hits) {
 }
 function routeRow(r) {
   return `<div class="frow" style="grid-template-columns:1fr 3fr 1.5fr auto"><input data-f="name" value="${esc(r.name || '')}" placeholder="code_generation">
-    <input data-f="description" value="${esc(r.description || '')}" placeholder="writing new code, functions or scripts"><input data-f="models" list="r-models" value="${esc((r.models || []).join(', '))}" placeholder="Modell">
+    <input data-f="description" value="${esc(r.description || '')}" placeholder="writing new code, functions or scripts"><input data-f="models" class="multi" value="${esc((r.models || []).join(', '))}" placeholder="Modell(e)" autocomplete="off">
     <button type="button" onclick="this.parentElement.remove()">✕</button></div>`;
 }
 function addRoute() { $('r-routes').insertAdjacentHTML('beforeend', routeRow({})); }
@@ -2052,6 +2072,19 @@ function clsVisibility() {
 }
 $('r-cls').addEventListener('change', clsVisibility);
 $('r-cfb').addEventListener('change', clsVisibility);
+// Suggestions for fields with several models ("a, b"): a datalist per field whose entries carry the part
+// already typed, so the browser keeps suggesting after each comma.
+let dlSeq = 0;
+function multiSuggest(el) {
+  if (!el.list) { const dl = document.createElement('datalist'); dl.id = 'mdl' + (++dlSeq); document.body.append(dl); el.setAttribute('list', dl.id); }
+  const all = [...$('r-models').options].map(o => o.value);
+  const v = el.value, cut = v.lastIndexOf(','), head = cut >= 0 ? v.slice(0, cut + 1).replace(/\s*$/, ' ') : '';
+  const used = new Set(v.split(',').map(x => x.trim().toLowerCase()));
+  const html = all.filter(m => !used.has(m.toLowerCase())).map(m => `<option value="${esc(head + m)}">`).join('');
+  if (el.list.__html !== html) { el.list.__html = html; el.list.innerHTML = html; }
+}
+document.addEventListener('focusin', ev => { if (ev.target.matches?.('input.multi')) multiSuggest(ev.target); });
+document.addEventListener('input', ev => { if (ev.target.matches?.('input.multi')) multiSuggest(ev.target); });
 const csv = v => v.split(',').map(x => x.trim()).filter(Boolean);
 let editingRouter = null;
 const boolSel = (f, v, yes = 'ja', no = 'nein') => `<select data-f="${f}"><option value="">egal</option><option value="1" ${v === true ? 'selected' : ''}>${yes}</option><option value="0" ${v === false ? 'selected' : ''}>${no}</option></select>`;
@@ -2063,7 +2096,7 @@ function ruleBlock(r) {
       <button type="button" title="nach oben" onclick="moveRule(this,-1)">↑</button><button type="button" title="nach unten" onclick="moveRule(this,1)">↓</button>
       <button type="button" class="danger" title="entfernen" onclick="this.closest('.rule').remove()">✕</button></div>
     <div class="rgrid">
-      <div class="wide2"><label>Ziel: Modell(e) <span class="muted">– mehrere mit Komma = gleichwertig</span></label><input data-f="model" list="r-models" value="${esc(r.model || '')}" placeholder="z. B. qwen3:30b-a3b, qwen3:32b"></div>
+      <div class="wide2"><label>Ziel: Modell(e) <span class="muted">– mehrere mit Komma = gleichwertig</span></label><input data-f="model" class="multi" value="${esc(r.model || '')}" placeholder="z. B. qwen3:30b-a3b, qwen3:32b" autocomplete="off"></div>
       <div><label>… oder Stufe</label><select data-f="tier"><option value="">–</option>${['SIMPLE', 'MEDIUM', 'COMPLEX', 'REASONING'].map(t => `<option ${r.tier === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
       <div class="wide2"><label>… oder Modell mit</label><div class="chklist inline">${Object.entries(NEEDS).map(([k, l]) => `<label><input type="checkbox" data-need="${k}" ${needs.includes(k) ? 'checked' : ''}> ${l}</label>`).join('')}</div></div>
       <div><label>Tokens ab (≈)</label><input data-f="min_tokens" type="number" min="0" value="${r.min_tokens || ''}"></div>

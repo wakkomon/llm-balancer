@@ -36,9 +36,10 @@ type AccessToken struct {
 	TokensOut int64   `json:"tokens_out"`
 	Cost      float64 `json:"cost"`
 	// Incoming cost cap: the token is blocked when its costs reach CostCap per CapPeriod.
-	CostCap   float64 `json:"cost_cap,omitempty"`
-	CapPeriod string  `json:"cap_period,omitempty"`
-	Disabled  bool    `json:"disabled,omitempty"` // switched off by the admin
+	CostCap   float64  `json:"cost_cap,omitempty"`
+	CapPeriod string   `json:"cap_period,omitempty"`
+	Disabled  bool     `json:"disabled,omitempty"` // switched off by the admin
+	Models    []string `json:"models,omitempty"`   // allowed models (names / patterns with *); empty = all
 	capped    bool
 	capSpent  float64
 }
@@ -109,7 +110,7 @@ func NewAccess(dir, envKeys string) (*Access, error) {
 			if e.FromEnv && e.Name == t.Name {
 				e.Created, e.LastUsed, e.Requests = t.Created, t.LastUsed, t.Requests
 				e.PriceIn, e.PriceOut, e.TokensIn, e.TokensOut, e.Cost = t.PriceIn, t.PriceOut, t.TokensIn, t.TokensOut, t.Cost
-				e.CostCap, e.CapPeriod, e.Disabled = t.CostCap, t.CapPeriod, t.Disabled
+				e.CostCap, e.CapPeriod, e.Disabled, e.Models = t.CostCap, t.CapPeriod, t.Disabled, t.Models
 			}
 		}
 	}
@@ -207,27 +208,108 @@ func (a *Access) Flush() {
 
 // SetPrice changes the prices (per 1M tokens). Costs already counted are not recalculated.
 type tokenUpdate struct {
-	PriceIn   *float64 `json:"price_in"`
-	PriceOut  *float64 `json:"price_out"`
-	CostCap   *float64 `json:"cost_cap"`
-	CapPeriod *string  `json:"cap_period"`
-	Disabled  *bool    `json:"disabled"`
+	PriceIn   *float64  `json:"price_in"`
+	PriceOut  *float64  `json:"price_out"`
+	CostCap   *float64  `json:"cost_cap"`
+	CapPeriod *string   `json:"cap_period"`
+	Disabled  *bool     `json:"disabled"`
+	Name      *string   `json:"name"`   // rename (not for tokens from API_KEYS)
+	Models    *[]string `json:"models"` // allowed models
+	NewValue  *string   `json:"token"`  // set a new secret ("" = generate one)
 }
 
-// Update changes prices, cost cap and on/off of a token (fields left out stay as they are).
-func (a *Access) Update(name string, u tokenUpdate) error {
-	if err := a.SetPrice(name, u.PriceIn, u.PriceOut); err != nil {
-		return err
+// Allowed: may this token use the model? (no token / no list = everything)
+func (a *Access) Allowed(name, model string) bool {
+	if name == "" || model == "" {
+		return true
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for _, t := range a.tokens {
+		if t.Name == name {
+			return len(t.Models) == 0 || matchesAny(t.Models, model)
+		}
+	}
+	return true
+}
+
+// ModelsOf returns the allowed-model list of a token (nil = all).
+func (a *Access) ModelsOf(name string) []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, t := range a.tokens {
+		if t.Name == name {
+			return t.Models
+		}
+	}
+	return nil
+}
+
+func newTokenValue() string {
+	b := make([]byte, 24)
+	rand.Read(b)
+	return "llmb-" + base64.RawURLEncoding.EncodeToString(b)
+}
+
+// Update changes prices, cost cap and on/off of a token (fields left out stay as they are).
+func (a *Access) Update(name string, u tokenUpdate) (string, error) {
+	if err := a.SetPrice(name, u.PriceIn, u.PriceOut); err != nil {
+		return "", err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	newValue := ""
+	for _, t := range a.tokens {
 		if t.Name != name {
 			continue
 		}
+		if u.Name != nil && strings.TrimSpace(*u.Name) != t.Name {
+			nn := strings.TrimSpace(*u.Name)
+			if t.FromEnv {
+				return "", httpErr{400, errors.New("Tokens aus API_KEYS werden in der Umgebungsvariable umbenannt")}
+			}
+			if nn == "" || strings.ContainsAny(nn, "/?#") {
+				return "", httpErr{400, errors.New("Name fehlt oder enthält / ? #")}
+			}
+			for _, o := range a.tokens {
+				if o.Name == nn {
+					return "", httpErr{409, fmt.Errorf("Name %q ist schon vergeben", nn)}
+				}
+			}
+			log.Printf("access token %q renamed to %q via UI", t.Name, nn)
+			t.Name = nn
+		}
+		if u.Models != nil {
+			var ms []string
+			for _, m := range *u.Models {
+				if m = strings.TrimSpace(m); m != "" {
+					ms = append(ms, m)
+				}
+			}
+			t.Models = ms
+		}
+		if u.NewValue != nil {
+			if t.FromEnv {
+				return "", httpErr{400, errors.New("der Wert von Tokens aus API_KEYS steht in der Umgebungsvariable")}
+			}
+			v := strings.TrimSpace(*u.NewValue)
+			if v == "" {
+				v = newTokenValue()
+			} else if len(v) < 12 {
+				return "", httpErr{400, errors.New("Token muss mindestens 12 Zeichen lang sein")}
+			}
+			h := hashToken(v)
+			for _, o := range a.tokens {
+				if o != t && o.Hash == h {
+					return "", httpErr{409, errors.New("Dieser Token existiert schon")}
+				}
+			}
+			t.Hash, t.Hint, newValue = h, hint(v), v
+			log.Printf("access token %q got a new value via UI", t.Name)
+		}
 		if u.CostCap != nil {
 			if *u.CostCap < 0 || *u.CostCap > 1e9 {
-				return httpErr{400, errors.New("Kostendeckel muss zwischen 0 und 1.000.000.000 liegen")}
+				return "", httpErr{400, errors.New("Kostendeckel muss zwischen 0 und 1.000.000.000 liegen")}
 			}
 			t.CostCap = *u.CostCap
 			if t.CostCap == 0 {
@@ -237,7 +319,7 @@ func (a *Access) Update(name string, u tokenUpdate) error {
 		if u.CapPeriod != nil {
 			p, err := normalizePeriod(*u.CapPeriod)
 			if err != nil {
-				return httpErr{400, err}
+				return "", httpErr{400, err}
 			}
 			t.CapPeriod = p
 		}
@@ -248,9 +330,9 @@ func (a *Access) Update(name string, u tokenUpdate) error {
 			t.Disabled = *u.Disabled
 			log.Printf("access token %q %s via UI", name, map[bool]string{true: "disabled", false: "enabled"}[t.Disabled])
 		}
-		return a.saveLocked()
+		return newValue, a.saveLocked()
 	}
-	return httpErr{404, errors.New("unbekannter Token")}
+	return "", httpErr{404, errors.New("unbekannter Token")}
 }
 
 func (a *Access) SetPrice(name string, in, out *float64) error {
@@ -347,22 +429,23 @@ func (a *Access) Delete(name string) error {
 }
 
 type tokenView struct {
-	Name      string  `json:"name"`
-	Hint      string  `json:"hint"`
-	Source    string  `json:"source"` // env | ui
-	Created   string  `json:"created,omitempty"`
-	LastUsed  string  `json:"last_used,omitempty"`
-	Requests  int64   `json:"requests"`
-	PriceIn   float64 `json:"price_in"`
-	PriceOut  float64 `json:"price_out"`
-	TokensIn  int64   `json:"tokens_in"`
-	TokensOut int64   `json:"tokens_out"`
-	Cost      float64 `json:"cost"`
-	CostCap   float64 `json:"cost_cap"`
-	CapPeriod string  `json:"cap_period"`
-	CapSpent  float64 `json:"cap_spent"`
-	Capped    bool    `json:"capped"`
-	Disabled  bool    `json:"disabled"`
+	Name      string   `json:"name"`
+	Hint      string   `json:"hint"`
+	Source    string   `json:"source"` // env | ui
+	Created   string   `json:"created,omitempty"`
+	LastUsed  string   `json:"last_used,omitempty"`
+	Requests  int64    `json:"requests"`
+	PriceIn   float64  `json:"price_in"`
+	PriceOut  float64  `json:"price_out"`
+	TokensIn  int64    `json:"tokens_in"`
+	TokensOut int64    `json:"tokens_out"`
+	Cost      float64  `json:"cost"`
+	CostCap   float64  `json:"cost_cap"`
+	CapPeriod string   `json:"cap_period"`
+	CapSpent  float64  `json:"cap_spent"`
+	Capped    bool     `json:"capped"`
+	Disabled  bool     `json:"disabled"`
+	Models    []string `json:"models"`
 }
 
 func (a *Access) List() []tokenView {
@@ -372,7 +455,7 @@ func (a *Access) List() []tokenView {
 	for _, t := range a.tokens {
 		v := tokenView{Name: t.Name, Hint: t.Hint, Source: "ui", Created: fmtTime(t.Created), LastUsed: fmtTime(t.LastUsed), Requests: t.Requests,
 			PriceIn: t.PriceIn, PriceOut: t.PriceOut, TokensIn: t.TokensIn, TokensOut: t.TokensOut, Cost: t.Cost,
-			CostCap: t.CostCap, CapPeriod: t.CapPeriod, CapSpent: t.capSpent, Capped: t.capped, Disabled: t.Disabled}
+			CostCap: t.CostCap, CapPeriod: t.CapPeriod, CapSpent: t.capSpent, Capped: t.capped, Disabled: t.Disabled, Models: append([]string{}, t.Models...)}
 		if v.CapPeriod == "" {
 			v.CapPeriod = PeriodMonth
 		}
@@ -420,9 +503,14 @@ func registerAccess(mux *http.ServeMux, pre string, acc *Access, adminToken stri
 			writeAPIError(w, 400, fmt.Errorf("ungültiges JSON: %v", err))
 			return
 		}
-		err := acc.Update(r.PathValue("name"), req)
+		value, err := acc.Update(r.PathValue("name"), req)
 		if err == nil && acc.onChange != nil {
 			acc.onChange() // re-check the cost caps right away
+		}
+		if value != "" && err == nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"token": value})
+			return
 		}
 		writeResult(w, err)
 	}))

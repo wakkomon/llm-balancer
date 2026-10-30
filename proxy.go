@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -135,6 +136,10 @@ func (px *Proxy) upstream(ctx context.Context, r *http.Request, b *Backend, body
 }
 
 // ServeHTTP proxies every request that is not for the UI.
+type tokenKey struct{}
+
+func tokenOf(r *http.Request) string { s, _ := r.Context().Value(tokenKey{}).(string); return s }
+
 func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	tokenName := ""
 	if px.access != nil {
@@ -167,6 +172,24 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	r = r.WithContext(context.WithValue(r.Context(), tokenKey{}, tokenName))
+	// models the API token may use
+	if px.access != nil && tokenName != "" && len(body) > 0 {
+		var m struct {
+			Model string `json:"model"`
+			Name  string `json:"name"`
+		}
+		if json.Unmarshal(body, &m) == nil {
+			if model := cmp.Or(m.Model, m.Name); model != "" && !px.access.Allowed(tokenName, model) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+					"message": fmt.Sprintf("llm-balancer: API key %s may not use model %q", tokenName, model),
+					"type":    "invalid_request_error", "code": "model_not_allowed"}})
+				return
+			}
+		}
+	}
 	ollamaAPI := isOllamaPath(r.URL.Path)
 	if ollamaAPI {
 		path := strings.TrimRight(r.URL.Path, "/")
@@ -458,10 +481,10 @@ func (px *Proxy) stream(w http.ResponseWriter, resp *http.Response, req *ReqInfo
 // passthrough forwards requests that don't need a slot (GET /v1/models, /health, ...).
 func (px *Proxy) passthrough(w http.ResponseWriter, r *http.Request, body []byte, ollamaOnly bool) {
 	path := strings.TrimRight(r.URL.Path, "/")
-	if r.Method == http.MethodGet && path == "/v1/models" && px.serveModelList(w) {
+	if r.Method == http.MethodGet && path == "/v1/models" && px.serveModelList(w, tokenOf(r)) {
 		return // models of all servers, so clients see everything the balancer can route
 	}
-	if r.Method == http.MethodGet && strings.HasPrefix(path, "/v1/models/") && px.serveModel(w, strings.TrimPrefix(path, "/v1/models/")) {
+	if r.Method == http.MethodGet && strings.HasPrefix(path, "/v1/models/") && px.serveModel(w, strings.TrimPrefix(path, "/v1/models/"), tokenOf(r)) {
 		return // a single model the balancer knows (OpenAI "retrieve model")
 	}
 	// Requests that don't need a slot (GET …) go to one server; on an error answer the next one is tried.

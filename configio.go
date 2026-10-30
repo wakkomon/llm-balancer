@@ -19,15 +19,16 @@ const configFormat = "llm-balancer-config"
 var configSections = []string{"servers", "tokens", "notify", "users"}
 
 type tokenExport struct {
-	Name      string  `json:"name"`
-	Hash      string  `json:"hash,omitempty"`
-	Hint      string  `json:"hint,omitempty"`
-	FromEnv   bool    `json:"env,omitempty"` // from API_KEYS: only prices/cap/lock are applied on import
-	PriceIn   float64 `json:"price_in"`
-	PriceOut  float64 `json:"price_out"`
-	CostCap   float64 `json:"cost_cap,omitempty"`
-	CapPeriod string  `json:"cap_period,omitempty"`
-	Disabled  bool    `json:"disabled,omitempty"`
+	Name      string   `json:"name"`
+	Hash      string   `json:"hash,omitempty"`
+	Hint      string   `json:"hint,omitempty"`
+	FromEnv   bool     `json:"env,omitempty"` // from API_KEYS: only prices/cap/lock are applied on import
+	PriceIn   float64  `json:"price_in"`
+	PriceOut  float64  `json:"price_out"`
+	CostCap   float64  `json:"cost_cap,omitempty"`
+	CapPeriod string   `json:"cap_period,omitempty"`
+	Disabled  bool     `json:"disabled,omitempty"`
+	Models    []string `json:"models,omitempty"`
 }
 
 type ConfigFile struct {
@@ -86,7 +87,7 @@ func exportConfig(pool *Pool, acc *Access, users *Users, sec map[string]bool, se
 		ts := []tokenExport{}
 		for _, t := range acc.tokens {
 			e := tokenExport{Name: t.Name, Hint: t.Hint, FromEnv: t.FromEnv, PriceIn: t.PriceIn, PriceOut: t.PriceOut,
-				CostCap: t.CostCap, CapPeriod: t.CapPeriod, Disabled: t.Disabled}
+				CostCap: t.CostCap, CapPeriod: t.CapPeriod, Disabled: t.Disabled, Models: t.Models}
 			if secrets && !t.FromEnv {
 				e.Hash = t.Hash
 			}
@@ -282,7 +283,7 @@ func (a *Access) importTokens(in []tokenExport, res *importResult) int {
 		}
 	}
 	apply := func(t *AccessToken, e tokenExport) {
-		t.PriceIn, t.PriceOut, t.CostCap, t.Disabled = e.PriceIn, e.PriceOut, e.CostCap, e.Disabled
+		t.PriceIn, t.PriceOut, t.CostCap, t.Disabled, t.Models = e.PriceIn, e.PriceOut, e.CostCap, e.Disabled, e.Models
 		t.CapPeriod, _ = normalizePeriod(e.CapPeriod)
 		if t.CapPeriod == "" {
 			t.CapPeriod = PeriodMonth

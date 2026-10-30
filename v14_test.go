@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -180,4 +183,62 @@ func TestServerForceModel(t *testing.T) {
 		t.Error("force model not cleared")
 	}
 	pool.mu.Unlock()
+}
+
+func TestTokenEditAndModelAllowlist(t *testing.T) {
+	a := newModelLLM(t, "a", 10*time.Millisecond, "qwen3:8b", "llama3:70b")
+	srv, pool := setup(t, func(c *Config) {
+		c.APIKeys = "env=sk-env-value-0001"
+		c.Backends = []BackendConfig{{Name: "a", URL: a.srv.URL}}
+	})
+	discover(t, pool)
+	w := newWeb(t, srv.URL)
+	_, b := w.do("POST", "/api/tokens", `{"name":"hermes","token":"sk-hermes-00001"}`)
+	if !strings.Contains(b, "sk-hermes") {
+		t.Fatal(b)
+	}
+	if c, b := w.do("PUT", "/api/tokens/hermes", `{"name":"agent","models":["qwen*"," "]}`); c != 204 {
+		t.Fatalf("edit: %d %s", c, b)
+	}
+	ask := func(key, model string) int {
+		code, _ := chatModel(t, srv.URL, model, map[string]string{"Authorization": "Bearer " + key})
+		return code
+	}
+	if c := ask("sk-hermes-00001", "qwen3:8b"); c != 200 {
+		t.Errorf("allowed model: %d", c)
+	}
+	if c := ask("sk-hermes-00001", "llama3:70b"); c != 403 {
+		t.Errorf("forbidden model: %d", c)
+	}
+	if c := ask("sk-env-value-0001", "llama3:70b"); c != 200 {
+		t.Errorf("token without list: %d", c)
+	}
+	// /v1/models only lists allowed ones
+	req, _ := http.NewRequest("GET", srv.URL+"/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer sk-hermes-00001")
+	resp, _ := http.DefaultClient.Do(req)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if strings.Contains(string(body), "llama") || !strings.Contains(string(body), "qwen3:8b") {
+		t.Errorf("models list: %s", body)
+	}
+	// new value: the old one stops working
+	c, b := w.do("PUT", "/api/tokens/agent", `{"token":""}`)
+	var nv struct{ Token string }
+	json.Unmarshal([]byte(b), &nv)
+	if c != 200 || !strings.HasPrefix(nv.Token, "llmb-") {
+		t.Fatalf("new value: %d %s", c, b)
+	}
+	if c := ask("sk-hermes-00001", "qwen3:8b"); c != 401 {
+		t.Errorf("old value still works: %d", c)
+	}
+	if c := ask(nv.Token, "qwen3:8b"); c != 200 {
+		t.Errorf("new value: %d", c)
+	}
+	if c, _ := w.do("PUT", "/api/tokens/env", `{"name":"x"}`); c != 400 {
+		t.Errorf("rename env token: %d", c)
+	}
+	if c, _ := w.do("PUT", "/api/tokens/env", `{"models":["qwen*"]}`); c != 204 {
+		t.Errorf("models on env token: %d", c)
+	}
 }
