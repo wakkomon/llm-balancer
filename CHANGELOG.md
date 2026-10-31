@@ -3,6 +3,13 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.8.2 – 2026-10-31
+
+- Anleitung: Hinweis, dass das Projekt KI-generiert ist; neuer Abschnitt „Funktionsumfang“ und „Bedienung“ mit
+  Screenshots aller Seiten (`docs/screenshots/`)
+- Behoben: nach dem Umschalten auf die Listenansicht (oder Auf-/Zuklappen einer Gruppe) blieb die Liste bis zur
+  nächsten Aktualisierung leer
+
 ## 1.8.1 – 2026-10-30
 
 - Umbenennen eines Servers oder API-Tokens überträgt seine Statistik (Tage, Stunden, Einnahmen) auf den neuen Namen

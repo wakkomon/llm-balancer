@@ -1020,11 +1020,11 @@ function setView(v) {
   view = v; try { localStorage.setItem('llmb-view', v); } catch {}
   document.querySelectorAll('#viewSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
   $('backends').hidden = v !== 'cards'; $('blist').hidden = v !== 'list';
-  if (current) renderServers(current);
+  setTimeout(() => current && renderServers(current), 20); // after the click's pointerup (setHTML skips while the pointer is down)
 }
 function toggleGroup(name) {
   collapsed[name] = !collapsed[name]; try { localStorage.setItem('llmb-collapsed', JSON.stringify(collapsed)); } catch {}
-  if (current) renderServers(current);
+  setTimeout(() => current && renderServers(current), 20);
 }
 function listRow(b) {
   const dim = route && route.mode !== 'all' && !route.backends.includes(b.name) ? ' dim' : '';

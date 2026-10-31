@@ -1,56 +1,61 @@
 # llm-balancer
 
+> **Hinweis:** Dieses Projekt ist KI-generiert. Code, Tests und Dokumentation wurden mit Claude (Anthropic) erstellt
+> und vom Betreiber in der eigenen Umgebung eingesetzt und getestet. Es gibt keine Gewähr – vor dem Einsatz bitte
+> selbst prüfen, insbesondere bei öffentlich erreichbaren Installationen.
+
 Kleiner, abhängigkeitsfreier Reverse-Proxy für lokale LLM-Server (llama.cpp, Ollama, vLLM, LM Studio …),
-die nur **eine Anfrage gleichzeitig** sinnvoll verarbeiten können.
+die nur **wenige oder nur eine Anfrage gleichzeitig** sinnvoll verarbeiten können.
 
-Statt zufällig zu verteilen (wie LiteLLM) zählt der Balancer die **offenen Verbindungen pro Server**:
+Statt zufällig zu verteilen zählt der Balancer die **offenen Verbindungen pro Server**:
 
-* Ist ein Server frei → Anfrage geht sofort dorthin.
-* Ist er belegt → nächster freier Server in der Liste.
-* Sind alle belegt → Anfrage wartet in einer **FIFO-Warteschlange**, bis irgendein Slot frei wird.
+* Ist ein passender Server frei → Anfrage geht sofort dorthin.
+* Ist er belegt → nächster freier Server, der das angefragte Modell hat.
+* Sind alle belegt → Anfrage wartet in einer **Warteschlange**, bis ein Slot frei wird.
 
-Request und Response werden **1:1 durchgereicht** (Body, Header, SSE-Streaming ohne Pufferung).
-Modellname & Co. werden nicht ausgewertet – nur zur Anzeige in der Web-UI gelesen.
+Request und Response werden **1:1 durchgereicht** (Body, Header, SSE-Streaming ohne Pufferung). Den Modellnamen liest
+der Balancer, um den richtigen Server zu finden; ändern tut er ihn nur, wenn du es einstellst (Router, Fallback,
+erzwungenes Modell).
 
 ```
 Hermes-Agent ─► LiteLLM ─► llm-balancer :8080 ─┬─► LLM-Server A (1 Slot)
-                                               ├─► LLM-Server B (1 Slot)
-                                               └─► LLM-Server C (1 Slot)
+Open WebUI ───────────────►                    ├─► LLM-Server B (1 Slot)
+                                               └─► Ollama-Server C (1 Slot)
 ```
 
-## Funktionen
+![Übersicht](docs/screenshots/uebersicht.png)
 
-* Slot-Zählung pro Backend (`max_concurrent`, Standard 1). Der Slot wird erst freigegeben, wenn der Stream komplett beendet ist oder der Client abbricht
-* FIFO-Queue mit optionalem Limit (`max_queue`) und Timeout (`queue_timeout_sec`)
-* Priorität: Bei mehreren freien Servern wird der mit kleinerer `priority` bevorzugt (z. B. die schnellere GPU), sonst Round-Robin
-* Failover: Verbindungsfehler oder HTTP 503 (z. B. llama.cpp „no slot available“ / „loading model“) → automatisch nächster Server; wiederholte Anfragen rücken an die Spitze der Queue
-* Health-Checks (Standard `GET /v1/models` alle 15 s) für **freie** Server; ausgefallene Server werden übersprungen, bis sie wieder antworten
-* `GET`-Anfragen (z. B. `/v1/models`, Health-Checks von LiteLLM) belegen keinen Slot und warten nie
-* **Servergruppen mit Routing nach Modell**: Anfragen gehen nur an die Server, die das angefragte Modell bedienen – pro Gruppe mit eigener, fairer Warteschlange (ist die eine Gruppe ausgelastet, warten Anfragen für andere Gruppen nicht mit)
-* Modellerkennung: die Modelle jedes Servers werden per `/v1/models` abgefragt; `GET /v1/models` am Balancer liefert die Modelle aller Server
-* **Token-Zählung und Preise**: Prompt- und Antwort-Tokens jeder Anfrage aus der Antwort (OpenAI, Anthropic, Ollama, llama.cpp), Preis pro 1 Mio. Tokens je API-Token, Kosten pro Token und Tag
-* **Fallback-Gruppe** pro Gruppe: wartet eine Anfrage länger als eingestellt (oder ist die ganze Gruppe down), dürfen Server einer anderen Gruppe sie übernehmen – optional mit ersetztem Modellnamen
-* **Prüfung des generierten Texts**: Tags wie `<think>` oder `<tool_call>` müssen korrekt geöffnet und geschlossen sein, Fehler werden pro Anfrage, Server, Modell und Tag angezeigt
-* **Tokens pro Sekunde** pro Anfrage und Server (Generierung und Prompt-Verarbeitung), live geschätzt während des Streams
-* Statistik auch **nach Modell**
-* Status-Übersicht pro Server: **beschäftigt**, **idle**, **fehlerhaft** (erreichbar, aber letzte Anfrage fehlgeschlagen – bis zur nächsten erfolgreichen, max. 15 min), **down** (Health-Check/Verbindung fehlgeschlagen), **deaktiviert**
-* **Tagesansicht der Auslastung**: pro Stunde, wie viel der Slot-Zeit gerechnet wurde – heute im Vergleich zum Ø der letzten 7 Tage, dazu die aktuelle Auslastung, pro Server und gesamt; ebenso Anfragen und wartende Anfragen pro Stunde
-* **Statistik der Warteschlange** pro Tag: wie viele Anfragen warten mussten, Ø/max. Wartezeit, max. Länge, abgelehnte
-* **Sessions** in „Letzte Anfragen“: zusammengehörende Anfragen (eine Unterhaltung / ein Agenten-Lauf) bekommen dieselbe Kennung, per Klick filterbar
-* **Modell-Router**: virtuelle Modelle wie `auto` wählen per Regeln (Größe, Bilder, Tools, Text-Muster, Token, Last, Uhrzeit, Fähigkeiten) das passende Modell, optional mit Session-Bindung
-* **Ollama**: Erkennung, native Ollama-API (`/api/chat` …) mit Slot-Verwaltung, Modellverwaltung (herunterladen mit Fortschritt, löschen, entladen) wie in Open WebUI
-* **Benutzerverwaltung** mit Anmeldung und Rollen (Administrator, Operator, Betrachter)
-* **Konfiguration exportieren/importieren** (Server, Gruppen, API-Tokens, E-Mail, Benutzer – Geheimnisse optional)
-* Alle Tabellen per Klick auf die Spaltenüberschrift sortierbar, das Ereignisprotokoll zusätzlich filterbar
-* **Gruppen deaktivierbar**: ihre Server bekommen keine Anfragen mehr, die Fallback-Gruppe übernimmt sofort
-* Statistik pro Tag und Server (7/30/90/365 Tage): Anfragen, Fehler, Abbrüche, Rechenzeit, Ø/Max-Dauer, Ø Zeit bis zum ersten Byte, Ø Wartezeit in der Queue, Datenmenge – als gestapelte Balkengrafik und Tabelle, CSV-Export; gespeichert in `/data/stats.json`
-* Web-UI unter `/balancer/` mit Tabs Übersicht, Gruppen (`#gruppen`), Statistik (`#statistik`), Letzte Anfragen (`#anfragen`) und API-Zugriff (`#zugriff`); Server als Kacheln mit fester Größe oder als kompakte Liste (eine Zeile pro Server, nach Gruppen, auf-/zuklappbar): Slots, laufende Anfragen (Prompt-Verarbeitung vs. Streaming, Dauer, Bytes), Warteschlange, letzte Anfragen, Ø Zeit bis zum ersten Byte / Ø Dauer, Server per Klick deaktivieren (drain) und aktivieren
-* Server-Liste **im laufenden Betrieb** in der Web-UI ändern: hinzufügen, bearbeiten (URL, Name, Slots, Priorität), entfernen – ohne Neustart, laufende Anfragen laufen weiter
-* Bearer-Token pro LLM-Server (z. B. für vLLM `--api-key` oder einen vorgeschalteten Proxy), in der UI hinterlegbar
-* Zugriffsschutz für die LLM-API des Balancers mit eigenen Tokens (aus `API_KEYS` oder in der UI erzeugt, nur als Hash gespeichert)
-* JSON-API `/balancer/api/status`, Prometheus-Metriken `/balancer/metrics`
-* https-Server mit öffentlichen Zertifikaten oder (per Option „TLS-Zertifikat nicht prüfen“) selbstsignierten
-* Eine statische Go-Binary ohne Abhängigkeiten, Docker-Image `FROM scratch` (~7 MB)
+## Funktionsumfang
+
+**Verteilung**
+* Slot-Zählung pro Server (`max_concurrent`, Standard 1) – der Slot wird erst frei, wenn der Stream beendet ist oder der Client abbricht
+* Warteschlange mit optionalem Limit und Timeout; jede Gruppe wartet fair für sich
+* Priorität pro Server (kleiner = bevorzugt, z. B. die schnellere GPU), sonst reihum
+* **Servergruppen** mit Routing nach Modell: Anfragen gehen nur an Server, die das Modell haben; Modellfilter und Ersatzmodell pro Server
+* **Fallback-Gruppe**: nach einer Wartezeit oder sofort, wenn die Gruppe ausfällt bzw. deaktiviert ist – optional mit anderem Modell
+* **Modell-Router**: virtuelle Modelle wie `auto` wählen per Regeln (Größe, Bilder, Tools, Text-Muster, API-Token, Last, Uhrzeit …) oder per Klassifizierer (Heuristik wie LiteLLM, kleines LLM, **Arch-Router**) das passende Modell – optional mit Session-Bindung
+* **Fehler bleiben intern**: liefert ein Server einen Fehler (auch 404, abgebrochener Stream, leere Antwort), versucht der Balancer den nächsten passenden Server und dann den Fallback, bevor der Client etwas merkt
+
+**Server**
+* OpenAI-kompatible Server und **Ollama** (automatisch erkannt), http und https (auch selbstsigniert), Bearer-Token pro Server
+* Health-Checks und Modellerkennung über `/v1/models` bzw. `/api/tags`; Modell-Fähigkeiten (Bilder, Tools, Denken, Kontext) – bei Ollama automatisch
+* Native **Ollama-API** am Balancer (`/api/chat`, `/api/generate`, `/api/embed`, `/api/tags` …) – z. B. für Open WebUI
+* **Modellverwaltung für Ollama**: herunterladen (mit Fortschritt, auf mehrere Server), kopieren, löschen, entladen
+* Server, Gruppen und Router im laufenden Betrieb ändern; STOP-Knopf für laufende Anfragen; Prüfung von `<think>`-/`<tool_call>`-Tags im Text
+
+**Zugriff und Kosten**
+* API-Tokens für die LLM-API mit **erlaubten Modellen**, Preisen (eingehend), Kostendeckel und Sperre
+* Preise und Kostendeckel pro Server (ausgehend) – mit Saldo in der Statistik
+* **Benutzerverwaltung** für die Web-UI mit Rollen Administrator / Operator / Betrachter
+* E-Mail-Benachrichtigung bei Ausfällen, Fehlern und erreichten Kostendeckeln
+* Konfiguration exportieren/importieren (mit oder ohne Geheimnisse)
+
+**Auswertung**
+* Live-Übersicht mit Zustand jedes Servers, laufenden Anfragen, tok/s und Warteschlange
+* Statistik pro Tag, Server, Modell und API-Token (7 Tage bis 1 Jahr, Diagramm, CSV), **Tagesansicht der Auslastung** pro Stunde, Statistik der Warteschlange
+* Letzte 300 Anfragen mit Session-Erkennung, Retry-Weg, Router-Entscheidung, Tokens und Kosten
+* Prometheus-Metriken unter `/balancer/metrics`, JSON-API für alles, was die UI kann
+* Eine statische Go-Binary ohne Abhängigkeiten, Docker-Image `FROM scratch`; alles Veränderliche liegt in `/data`
 
 ## Start
 
@@ -82,6 +87,128 @@ zusätzlich als `ghcr.io/wakkomon/llm-balancer:<version>` laut Datei `VERSION` (
 go build -o llm-balancer .
 BACKENDS="http://host-a:8080,http://host-b:8080" ./llm-balancer
 ```
+
+## Bedienung
+
+Die Web-UI liegt unter `http://<host>:8080/balancer/` und aktualisiert sich jede Sekunde. Alle Tabellen lassen sich
+per Klick auf die Spaltenüberschrift sortieren. Die Screenshots zeigen eine Beispiel-Installation mit zwei GPU-Servern
+(Gruppe „gross“), einem Ollama-Server (Gruppe „klein“) und einem ausgefallenen Server.
+
+### Erste Schritte
+
+1. Stack starten (siehe oben) und die Web-UI öffnen.
+2. **Einstellungen → Benutzer**: ersten Administrator anlegen – ab dann braucht die Web-UI eine Anmeldung.
+3. **Übersicht → + Server hinzufügen**: URL des LLM-Servers ohne `/v1` (z. B. `http://192.168.1.50:8080`), Anzahl
+   paralleler Anfragen, ggf. Bearer-Token. Der Typ (OpenAI-kompatibel / Ollama) wird automatisch erkannt.
+4. **API-Zugriff → + Token erstellen**: Token für LiteLLM, Hermes oder Open WebUI erzeugen und dort als API-Key eintragen.
+5. Clients auf `http://<host>:8080/v1` (OpenAI) bzw. `http://<host>:8080` (Ollama) zeigen lassen.
+
+Optional danach: **Gruppen** anlegen, wenn Server unterschiedliche Modelle bedienen, und einen **Router**, wenn der
+Balancer das Modell selbst wählen soll.
+
+### Übersicht
+
+Oben die Kacheln: freie Slots, Länge der Warteschlange, Anfragen seit Start, abgelehnte Anfragen und wie viele Server
+gerade beschäftigt, frei, fehlerhaft, nicht erreichbar, am Kostendeckel oder deaktiviert sind.
+
+Darunter jeder Server als Karte: Zustand (ein pulsierender ▶ zeigt „beschäftigt“), Priorität, Gruppe, Preise,
+gemeldete Modelle (grüner Punkt = bei Ollama im Speicher geladen), belegte Slots, die laufende Anfrage mit Dauer und
+geschätzten tok/s oder der letzte Fehler, dazu Zähler und Durchschnittswerte. Knöpfe: **Stop** bricht die laufende
+Anfrage ab, **Bearbeiten**, **Deaktivieren** (laufende Anfragen laufen zu Ende) und **Entfernen**.
+
+Im Feld **Modell** einen Modellnamen eintippen: die Übersicht zeigt, welche Gruppe und welche Server es bekommen würden.
+
+Mit **Liste** wird jeder Server zu einer Zeile, nach Gruppen sortiert und auf-/zuklappbar; darunter die Warteschlange
+mit API-Token und Wartezeit jeder Anfrage:
+
+![Listenansicht mit Warteschlange](docs/screenshots/uebersicht-liste.png)
+
+Der Dialog **Bearbeiten** eines Servers enthält Typ, Slots, Priorität, Gruppe, Modellfilter, die Modell-Fähigkeiten für
+den Router (bei Ollama automatisch erkannt), ein Ersatzmodell, Preise, Kostendeckel und das Bearer-Token:
+
+<img src="docs/screenshots/server-dialog.png" alt="Server bearbeiten" width="440">
+
+### Gruppen
+
+Eine Gruppe fasst Server zusammen, die dieselben Modelle bedienen. Anfragen werden über den Modellnamen einer Gruppe
+zugeordnet; innerhalb der Gruppe bekommen nur die Server die Anfrage, die das Modell haben. Pro Gruppe einstellbar:
+zusätzliche Modellnamen/Muster, ein erzwungener Modellname und eine **Fallback-Gruppe** mit Wartezeit und Ersatzmodell.
+**Deaktivieren** nimmt alle Server der Gruppe aus der Verteilung – Anfragen gehen sofort an den Fallback.
+
+![Gruppen](docs/screenshots/gruppen.png)
+
+### Router
+
+Ein Router ist ein virtuelles Modell (hier `auto`), das Clients anfragen. Er prüft seine Regeln von oben nach unten;
+passt keine, entscheidet der Klassifizierer – hier Arch-Router, der die Anfrage einer beschriebenen Route zuordnet.
+Pro Regel und Route steht die Zahl der Treffer. Unten lässt sich eine Anfrage einfügen und **testen**: angezeigt werden
+das gewählte Modell, die erkannten Merkmale und warum andere Regeln nicht gepasst haben.
+
+![Router](docs/screenshots/router.png)
+
+Im Dialog stehen Standardmodell, übernommene echte Modellnamen, Session-Bindung, die Regeln mit allen Bedingungen und
+der Klassifizierer. Mehrere Modelle mit Komma gelten als gleichwertig – die Anfrage nimmt den ersten freien Server
+mit einem davon. Details im Abschnitt [Modell-Router](#modell-router).
+
+![Router bearbeiten](docs/screenshots/router-dialog.png)
+
+### Modelle (Ollama)
+
+Alle Modelle aller Ollama-Server mit Größe, Parametern, Quantisierung, Familie, Fähigkeiten und Speicherbelegung.
+Oben ein Modell herunterladen (Name wie auf ollama.com oder `hf.co/…`, auf einen oder mehrere Server) – der Fortschritt
+erscheint darunter und läuft weiter, auch wenn die Seite geschlossen wird. Pro Modell: **Entladen** aus dem Speicher,
+**Kopieren …** auf weitere Server, **Löschen**.
+
+![Modelle](docs/screenshots/modelle.png)
+
+### Statistik
+
+Zeitraum 7 Tage bis 1 Jahr, aufgeteilt nach Server oder Modell; das Diagramm zeigt Anfragen, Rechenzeit, Ø Dauer oder
+Tokens pro Tag. Die Tabelle enthält Fehler, Abbrüche, Zeiten, Tokens, tok/s, Tag-Fehler, Datenmenge sowie Einnahmen
+(Preise der API-Tokens), Kosten (Preise der Server) und Saldo. Darunter die Warteschlange pro Tag. **CSV-Export** und
+**Statistik löschen** oben rechts. Server, die es nicht mehr gibt, lassen sich per **zusammenführen …** auf einen
+vorhandenen übertragen.
+
+![Statistik](docs/screenshots/statistik.png)
+
+Mit **Tag** erscheint die Tagesansicht: Auslastung pro Stunde (Balken heute, Linie Ø der letzten 7 Tage), umschaltbar
+auf Anfragen und Warteschlange, für alle oder einen Server – dazu Auslastung jetzt und im Vergleich zu den Vortagen.
+
+![Tagesansicht](docs/screenshots/statistik-tag.png)
+
+### Letzte Anfragen
+
+Die letzten 300 Anfragen mit Zeit, Session, Modell (`auto → qwen3-coder:30b` = vom Router gewählt, ⑂ im Tooltip die
+Regel), Gruppe, API-Token, Server (↻ = auf einem anderen Server wiederholt, Weg im Tooltip), Status, Wartezeit, Zeit bis
+zum ersten Byte, Dauer, Tokens, tok/s, Einnahme, Kosten und Tag-Prüfung. Ein Klick auf eine **Session** zeigt nur die
+Anfragen dieser Unterhaltung bzw. dieses Agenten-Laufs.
+
+![Letzte Anfragen](docs/screenshots/anfragen.png)
+
+### API-Zugriff
+
+Die Tokens für die LLM-API. Pro Token: erlaubte Modelle (unter dem Namen), Status, Quelle, zuletzt benutzt, Anfragen,
+Preise, Tokens, Einnahmen im gewählten Zeitraum und Kostendeckel mit Füllstand. **Bearbeiten** ändert Name, erlaubte
+Modelle, Preise und Deckel oder erzeugt einen neuen Token-Wert; **Sperren** lehnt alle Anfragen mit dem Token ab.
+
+![API-Zugriff](docs/screenshots/api-zugriff.png)
+
+### Report
+
+Das Ereignisprotokoll (Server nicht erreichbar / wieder da / liefert Fehler, Kostendeckel erreicht / frei), filterbar
+nach Text und Art, mit dem Ergebnis des Mail-Versands. Darunter die SMTP-Einstellungen, welche Ereignisse eine Mail
+auslösen und nach welcher Verzögerung – kurze Aussetzer lösen so keine Mail aus. **Testmail senden** prüft die
+Einstellungen.
+
+![Report](docs/screenshots/report.png)
+
+### Einstellungen
+
+**Mein Konto** (eigenes Passwort ändern), **Benutzer** mit Rollen – *Administrator* darf alles, *Operator* darf Server
+und Gruppen an-/ausschalten und Anfragen stoppen, *Betrachter* nur lesen – sowie **Konfiguration** exportieren und
+importieren. Solange es keinen Benutzer gibt, ist die Web-UI offen; hier wird dann der erste Administrator angelegt.
+
+![Einstellungen](docs/screenshots/einstellungen.png)
 
 ## Konfiguration
 
@@ -488,14 +615,10 @@ Hinweise:
   bzw. sein Slot sofort freigegeben.
 * Jede Antwort enthält den Header `X-LLM-Balancer-Backend` mit dem verwendeten Server.
 
-## Web-UI
+## Web-UI und API
 
-`http://<host>:8080/balancer/` – aktualisiert sich jede Sekunde. Status pro Server: *frei*, *belegt*,
-*nicht erreichbar*, *deaktiviert*. Pro Server: **Bearbeiten**, **Deaktivieren (drain)** – nimmt ihn aus der
-Verteilung, laufende Anfragen laufen zu Ende, praktisch für Modellwechsel oder Wartung – und **Entfernen**.
-Oben rechts: **+ Server hinzufügen**.
-
-Mit Benutzern ist alles erst nach der Anmeldung sichtbar; Betrachter sehen keine Knöpfe zum Ändern.
+Die Bedienung der Web-UI ist im Abschnitt [Bedienung](#bedienung) beschrieben. Jede Antwort enthält den Header
+`X-LLM-Balancer-Backend` mit dem verwendeten Server.
 
 ### API
 
