@@ -170,7 +170,9 @@ type Pool struct {
 	initialRouters []RouterConfig
 	sticky         map[string]*stickyEntry
 	routerHits     map[string]*atomic.Int64
-	transport      func(insecure bool) http.RoundTripper // set by the proxy (classifier calls)
+	transport      func(insecure bool) http.RoundTripper
+	doneOut        map[string]int64 // output tokens of finished requests (throughput)
+	tpsHist        []tpsSample      // set by the proxy (classifier calls)
 	access         *Access
 
 	totalReqs     int64
@@ -602,6 +604,9 @@ func (p *Pool) Finish(r *ReqInfo, b *Backend, status int, errMsg string) {
 	r.State = "done"
 	p.nextSeq++
 	r.Seq = p.nextSeq
+	if _, ok := p.active[r.ID]; ok {
+		p.finishedOutLocked(r)
+	}
 	delete(p.active, r.ID)
 	if b != nil && r.Status > 0 && r.Status < 500 && r.Status != 499 && r.Status != 401 && r.Status != 403 && errMsg == "" {
 		b.lastOkAt = r.EndedAt
@@ -710,6 +715,7 @@ type Status struct {
 	Commit     string          `json:"commit,omitempty"`
 	States     map[string]int  `json:"states"` // state → number of backends
 	TotalSlots int             `json:"total_slots"`
+	Live       LiveStatus      `json:"live"`
 }
 
 func snapshot(r *ReqInfo, now time.Time) *ReqInfo {
@@ -765,6 +771,7 @@ func (p *Pool) Status() Status {
 	if p.access != nil {
 		st.AccessAuth = p.access.Enabled()
 	}
+	st.Live = p.liveLocked()
 	st.Currency = p.cfg.Currency
 	st.Version = versionString()
 	st.Commit = shortCommit()
@@ -980,6 +987,7 @@ func (p *Pool) tick() {
 			p.dispatchLocked()
 		}
 		p.pruneStickyLocked(time.Now())
+		p.sampleTPSLocked(time.Now())
 		p.mu.Unlock()
 	}
 }

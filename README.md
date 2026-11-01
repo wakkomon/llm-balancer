@@ -51,7 +51,7 @@ Open WebUI ───────────────►                    �
 * Konfiguration exportieren/importieren (mit oder ohne Geheimnisse)
 
 **Auswertung**
-* Live-Übersicht mit Zustand jedes Servers, laufenden Anfragen, tok/s und Warteschlange
+* Live-Übersicht mit Zustand jedes Servers, laufenden Anfragen, tok/s, Gesamtdurchsatz und Warteschlange; aktive Verbindungen und Durchsatz pro API-Token
 * Statistik pro Tag, Server, Modell und API-Token (7 Tage bis 1 Jahr, Diagramm, CSV), **Tagesansicht der Auslastung** pro Stunde, Statistik der Warteschlange
 * Letzte 300 Anfragen mit Session-Erkennung, Retry-Weg, Router-Entscheidung, Tokens und Kosten
 * Prometheus-Metriken unter `/balancer/metrics`, JSON-API für alles, was die UI kann
@@ -108,7 +108,8 @@ Balancer das Modell selbst wählen soll.
 
 ### Übersicht
 
-Oben die Kacheln: freie Slots, Länge der Warteschlange, Anfragen seit Start, abgelehnte Anfragen und wie viele Server
+Oben die Kacheln: freie Slots, Länge der Warteschlange, **Durchsatz** (erzeugte Tokens pro Sekunde über alle Server,
+Ø der letzten 10 s), Anfragen seit Start, abgelehnte Anfragen und wie viele Server
 gerade beschäftigt, frei, fehlerhaft, nicht erreichbar, am Kostendeckel oder deaktiviert sind.
 
 Darunter jeder Server als Karte: Zustand (ein pulsierender ▶ zeigt „beschäftigt“), Priorität, Gruppe, Preise,
@@ -187,7 +188,9 @@ Anfragen dieser Unterhaltung bzw. dieses Agenten-Laufs.
 
 ### API-Zugriff
 
-Die Tokens für die LLM-API. Pro Token: erlaubte Modelle (unter dem Namen), Status, Quelle, zuletzt benutzt, Anfragen,
+Die Tokens für die LLM-API. Rechts oben steht, wie viele Anfragen gerade über alle Tokens laufen bzw. warten und der
+gesamte Durchsatz. Pro Token: erlaubte Modelle (unter dem Namen), Status, **Aktiv** (laufende Anfragen, `+N` wartende),
+**Durchsatz** (tok/s, Ø der letzten 10 s), die Summenzeile darunter, Quelle, zuletzt benutzt, Anfragen,
 Preise, Tokens, Einnahmen im gewählten Zeitraum und Kostendeckel mit Füllstand. **Bearbeiten** ändert Name, erlaubte
 Modelle, Preise und Deckel oder erzeugt einen neuen Token-Wert; **Sperren** lehnt alle Anfragen mit dem Token ab.
 

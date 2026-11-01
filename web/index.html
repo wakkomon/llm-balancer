@@ -27,7 +27,7 @@ h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--mute
 .live{display:inline-flex;align-items:center;gap:6px}
 .live i{width:7px;height:7px;border-radius:50%;background:var(--free)}
 .live.stale i{background:var(--down)}
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:10px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:10px}
 .tile{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:11px 12px;min-width:0}
 .tile span{display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:640px){.tile span{white-space:normal;line-height:1.25;hyphens:auto;overflow-wrap:anywhere}}
@@ -265,6 +265,7 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
 .panel h3{margin:0 0 6px;font-size:14px}
 .chklist label{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:13px;color:var(--ink)} .chklist input{width:auto}
 .impres{font-size:12.5px;margin-top:10px} .impres li{margin:2px 0}
+.lrun{display:inline-flex;align-items:center;gap:6px;font-weight:600}
 #toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100vw - 32px)}
 #toast.show{opacity:1}
 </style>
@@ -283,14 +284,15 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
   <div id="page-main">
   <div class="tiles">
     <div class="tile"><b id="t-free">–</b><span>freie Slots</span></div>
-    <div class="tile"><b id="t-queue">–</b><span>Warteschlange</span></div>
+    <div class="tile" title="Anfragen in der Warteschlange"><b id="t-queue">–</b><span>wartend</span></div>
+    <div class="tile" title="Erzeugte Tokens pro Sekunde über alle Server, Ø der letzten 10 s"><b id="t-tps">–</b><span id="t-tpssub">tok/s</span></div>
     <div class="tile" title="Anfragen gesamt"><b id="t-total">–</b><span>Anfragen</span></div>
     <div class="tile"><b id="t-rej">–</b><span>abgelehnt</span></div>
     <div class="tile st busy" id="s-busy"><b>–</b><span><i class="sdot"></i>beschäftigt</span></div>
     <div class="tile st idle" id="s-idle"><b>–</b><span><i class="sdot"></i>idle</span></div>
     <div class="tile st error" id="s-error"><b>–</b><span><i class="sdot"></i>fehlerhaft</span></div>
     <div class="tile st down" id="s-down"><b>–</b><span><i class="sdot"></i>down</span></div>
-    <div class="tile st capped" id="s-capped"><b>–</b><span><i class="sdot"></i>Kostendeckel</span></div>
+    <div class="tile st capped" id="s-capped"><b>–</b><span title="Kostendeckel erreicht"><i class="sdot"></i>Deckel</span></div>
     <div class="tile st disabled" id="s-disabled"><b>–</b><span><i class="sdot"></i>deaktiviert</span></div>
   </div>
 
@@ -464,9 +466,10 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
     <div class="seg" id="tokRangeSeg">
       <button data-v="1">Heute</button><button data-v="7">7 Tage</button><button data-v="30">30 Tage</button><button data-v="90">90 Tage</button><button data-v="365">1 Jahr</button><button data-v="0" class="on">gesamt</button>
     </div>
+    <span class="srcnote" id="tokenlive" style="margin-left:auto"></span>
   </div>
   <div class="tbl"><table data-sort>
-    <thead><tr><th>Name</th><th>Status</th><th>Token</th><th>Quelle</th><th data-type="date">Zuletzt benutzt</th><th class="n">Anfragen</th>
+    <thead><tr><th>Name</th><th>Status</th><th class="n" title="laufende Anfragen (+ wartende)">Aktiv</th><th class="n" title="erzeugte Tokens pro Sekunde, Ø der letzten 10 s">Durchsatz</th><th>Token</th><th>Quelle</th><th data-type="date">Zuletzt benutzt</th><th class="n">Anfragen</th>
       <th class="n" title="Sicht der Anwendung: Preis pro 1 Mio. gesendete Prompt-Tokens / empfangene Antwort-Tokens">Preis Aus / Ein<br><span class="muted" style="font-weight:400">Prompt / Antwort, pro 1 Mio.</span></th>
       <th class="n" title="Sicht der Anwendung: gesendete Prompt-Tokens">Tokens Aus<br><span class="muted" style="font-weight:400">Prompt</span></th><th class="n" title="Sicht der Anwendung: empfangene Antwort-Tokens">Tokens Ein<br><span class="muted" style="font-weight:400">Antwort</span></th><th class="n" id="tokrevhead">Einnahmen gesamt</th><th class="n">Kostendeckel</th><th data-nosort></th></tr></thead>
     <tbody id="tokens"></tbody>
@@ -1153,6 +1156,10 @@ async function refresh() {
     renderRouters(st);
     renderModelList(st);
     if (location.hash === '#statistik' && stRange === 1) renderDay(false);
+    if (location.hash === '#zugriff' && tokenList.length) renderTokens();
+    const lv = st.live || {};
+    $('t-tps').textContent = tpsTxt(lv.tps || 0).replace(' tok/s', '');
+    $('t-tpssub').parentElement.title = `Erzeugte Tokens pro Sekunde über alle Server, Ø der letzten 10 s\n${lv.running || 0} Anfragen laufen${lv.queued ? ', ' + lv.queued + ' warten' : ''}`;
   } catch (e) { /* shown via live indicator */ }
   const stale = Date.now() - lastOk > 4000;
   $('live').classList.toggle('stale', stale);
@@ -1313,7 +1320,7 @@ async function loadTokens(interactive) {
   let resp;
   try { resp = await fetch(base + '/api/tokens', {headers, cache:'no-store'}); } catch { return; }
   if (resp.status === 401) {
-    $('tokens').innerHTML = `<tr><td colspan="12" class="empty">Zum Anzeigen wird der Admin-Token benötigt. <button onclick="askAdmin()">Admin-Token eingeben</button></td></tr>`;
+    $('tokens').innerHTML = `<tr><td colspan="14" class="empty">Zum Anzeigen wird der Admin-Token benötigt. <button onclick="askAdmin()">Admin-Token eingeben</button></td></tr>`;
     return;
   }
   if (!resp.ok) return;
@@ -1325,7 +1332,18 @@ async function loadTokens(interactive) {
 }
 let tokRange = 0, tokStats = null;
 const TOK_RANGE = {1: 'heute', 7: '7 Tage', 30: '30 Tage', 90: '90 Tage', 365: '1 Jahr'};
+// live: running (+ queued) requests and generated tokens/s per API token; null = all
+const tpsTxt = v => v >= 0.05 ? v.toLocaleString('de-DE', {maximumFractionDigits: v < 10 ? 1 : 0}) + ' tok/s' : '–';
+function liveCells(name) {
+  const lv = current?.live;
+  const l = name === null ? lv : lv?.tokens?.[name];
+  const run = l?.running || 0, q = l?.queued || 0;
+  return `<td class="n" data-v="${run + q}">${run ? `<span class="lrun"><i class="play" style="${phase(1400)}"></i>${run}</span>` : '<span class="muted">0</span>'}${q ? ` <span class="muted" title="wartend">+${q}</span>` : ''}</td>
+    <td class="n" data-v="${l?.tps || 0}">${l?.tps >= 0.05 ? `<b>${tpsTxt(l.tps)}</b>` : '<span class="muted">–</span>'}</td>`;
+}
 function renderTokens() {
+  const lv = current?.live;
+  if (lv) $('tokenlive').innerHTML = `Gerade über alle Tokens: <b style="color:var(--ink)">${lv.running} aktiv</b>${lv.queued ? `, ${lv.queued} wartend` : ''} · <b style="color:var(--ink)">${tpsTxt(lv.tps)}</b>`;
   // numbers: the token's totals ("gesamt") or the statistics of the chosen range
   const use = t => !tokRange ? t : (tokStats?.token_totals?.[t.name] || {requests: 0, tokens_in: 0, tokens_out: 0, cost: 0});
   const list = tokenList.map(t => ({...t, u: use(t)}));
@@ -1334,10 +1352,11 @@ function renderTokens() {
   $('tokrevhead').innerHTML = tokRange ? `Einnahmen<br><span class="muted" style="font-weight:400">${TOK_RANGE[tokRange]}</span>` : 'Einnahmen gesamt';
   const sum = list.reduce((a, t) => ({requests: a.requests + (t.u.requests || 0), tokens_in: a.tokens_in + (t.u.tokens_in || 0), tokens_out: a.tokens_out + (t.u.tokens_out || 0), cost: a.cost + (t.u.cost || 0)}), {requests: 0, tokens_in: 0, tokens_out: 0, cost: 0});
   setHTML($('tokens'), list.length ? list.map(t => t.gone ? `<tr class="muted">
-    <td>${esc(t.name)} <button class="need-admin" style="padding:1px 6px" title="Statistik auf einen vorhandenen Token übertragen" onclick='mergeStats("token", ${attr(t.name)})'>zusammenführen …</button></td><td><span class="tstate off">gelöscht/umbenannt</span></td><td>–</td><td>–</td><td>–</td>
+    <td>${esc(t.name)} <button class="need-admin" style="padding:1px 6px" title="Statistik auf einen vorhandenen Token übertragen" onclick='mergeStats("token", ${attr(t.name)})'>zusammenführen …</button></td><td><span class="tstate off">gelöscht/umbenannt</span></td>${liveCells(t.name)}<td>–</td><td>–</td><td>–</td>
     <td class="n">${num(t.u.requests)}</td><td class="n">–</td><td class="n">${ktok(t.u.tokens_in)}</td><td class="n">${ktok(t.u.tokens_out)}</td><td class="n">${money(t.u.cost)}</td><td class="n">–</td><td></td></tr>` : `<tr>
     <td>${esc(t.name)}${t.models?.length ? `<div class="mchips" style="margin-top:3px">${t.models.map(m => `<span class="mchip${m.includes('*') ? ' pat' : ''}">${esc(m)}</span>`).join('')}</div>` : ''}</td>
     <td>${t.disabled ? '<span class="tstate off">gesperrt</span>' : t.capped ? '<span class="tstate capped" title="Kostendeckel erreicht">Deckel erreicht</span>' : '<span class="tstate">aktiv</span>'}</td>
+    ${liveCells(t.name)}
     <td style="font-family:var(--mono)">…${esc(t.hint)}</td>
     <td>${t.source === 'env' ? 'API_KEYS' : 'Web-UI'}</td>
     <td data-v="${Date.parse(t.last_used) || ''}">${dateFmt(t.last_used)}</td><td class="n">${num(t.u.requests)}</td>
@@ -1347,9 +1366,9 @@ function renderTokens() {
     <td style="text-align:right;white-space:nowrap"><button class="need-admin" onclick='openPrice(${attr(t.name)})' title="Name, erlaubte Modelle, Preis, Kostendeckel">Bearbeiten</button>
       <button class="need-admin" onclick='toggleToken(${attr(t.name)}, ${!t.disabled})'>${t.disabled ? 'Freigeben' : 'Sperren'}</button>
       ${t.source === 'env' ? '' : `<button class="danger need-admin" onclick='deleteToken(${attr(t.name)})'>Löschen</button>`}</td></tr>`).join('')
-    + (list.length > 1 ? `<tr class="sum"><td>Summe</td><td></td><td></td><td></td><td></td><td class="n">${num(sum.requests)}</td><td></td>
+    + (list.length > 1 ? `<tr class="sum"><td>Summe</td><td></td>${liveCells(null)}<td></td><td></td><td></td><td class="n">${num(sum.requests)}</td><td></td>
       <td class="n">${ktok(sum.tokens_in)}</td><td class="n">${ktok(sum.tokens_out)}</td><td class="n">${money(sum.cost)}</td><td></td><td></td></tr>` : '')
-    : '<tr><td colspan="12" class="empty">Keine Tokens – die LLM-API ist offen.</td></tr>');
+    : '<tr><td colspan="14" class="empty">Keine Tokens – die LLM-API ist offen.</td></tr>');
 }
 segment('tokRangeSeg', v => { tokRange = +v; loadTokens(); });
 let tokenList = [], pricing = null;

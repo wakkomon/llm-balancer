@@ -181,11 +181,16 @@ func TestStatsFollowRenames(t *testing.T) {
 	_ = b
 	chatModel(t, srv.URL, "m", hdr)
 	chatModel(t, srv.URL, "m", map[string]string{"Authorization": "Bearer sk-alt-0000001"})
-	waitFor(t, func() bool { return getStats(t, srv.URL, 1).Totals["a"] != nil && getStats(t, srv.URL, 1).Totals["a"].Requests == 2 })
+	waitFor(t, func() bool {
+		return getStats(t, srv.URL, 1).Totals["a"] != nil && getStats(t, srv.URL, 1).Totals["a"].Requests == 2
+	})
 	api(t, "PUT", srv.URL+"/balancer/api/backends/a", `{"name":"gpu","url":"`+a.srv.URL+`"}`, "")
 	w.do("PUT", "/api/tokens/alt", `{"name":"neu"}`)
 	chatModel(t, srv.URL, "m", map[string]string{"Authorization": "Bearer sk-alt-0000001"})
-	waitFor(t, func() bool { r := getStats(t, srv.URL, 1); return r.Totals["gpu"] != nil && r.Totals["gpu"].Requests == 3 })
+	waitFor(t, func() bool {
+		r := getStats(t, srv.URL, 1)
+		return r.Totals["gpu"] != nil && r.Totals["gpu"].Requests == 3
+	})
 	rep := getStats(t, srv.URL, 1)
 	if len(rep.Backends) != 1 || rep.Totals["a"] != nil {
 		t.Errorf("backends: %v", rep.Backends)
@@ -203,5 +208,33 @@ func TestStatsFollowRenames(t *testing.T) {
 	}
 	if r := getStats(t, srv.URL, 1); r.Totals["rest"] != nil || r.Totals["gpu"].Requests != 4 {
 		t.Errorf("after merge: %v", r.Backends)
+	}
+}
+
+func TestLiveThroughput(t *testing.T) {
+	a := newFakeLLM(t, "a", 10*time.Millisecond)
+	srv, pool := setup(t, func(c *Config) { c.APIKeys = "hermes=sk-hermes-00001" }, a)
+	r := pool.NewRequest("POST", "/v1/chat/completions", "x")
+	r.Token = "hermes"
+	pool.mu.Lock()
+	r.State, r.Backend = "running", "a"
+	pool.active[r.ID] = r
+	pool.sampleTPSLocked(time.Now().Add(-2 * time.Second))
+	r.chunks.Add(100)
+	pool.sampleTPSLocked(time.Now())
+	pool.mu.Unlock()
+	st := status(t, srv.URL)
+	lt := st.Live.Tokens["hermes"]
+	if st.Live.Running != 1 || lt == nil || lt.Running != 1 || lt.TPS < 45 || lt.TPS > 55 || st.Live.TPS < 45 || st.Live.Backends["a"].TPS < 45 {
+		t.Errorf("live: %+v tokens=%+v", st.Live.LiveLoad, lt)
+	}
+	// finishing keeps the count continuous; the reported tokens replace the estimate
+	r.TokensOut = 120
+	pool.Finish(r, nil, 200, "")
+	pool.mu.Lock()
+	pool.sampleTPSLocked(time.Now().Add(time.Second))
+	pool.mu.Unlock()
+	if v := status(t, srv.URL).Live; v.Running != 0 || v.Tokens["hermes"] == nil || v.Tokens["hermes"].TPS < 35 {
+		t.Errorf("after finish: %+v %+v", v.LiveLoad, v.Tokens["hermes"])
 	}
 }

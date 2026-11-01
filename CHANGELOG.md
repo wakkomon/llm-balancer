@@ -3,6 +3,13 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.9.0 – 2026-11-01
+
+- **Live-Durchsatz**: erzeugte Tokens pro Sekunde (Ø der letzten 10 s) – als Kachel in der Übersicht, pro API-Token
+  und als Summe unter API-Zugriff, dort auch die aktiven (laufenden + wartenden) Anfragen je Token.
+  Status-API: `live` mit `running`, `queued`, `tps` sowie `tokens` und `backends`
+- Kacheln der Übersicht etwas kompakter beschriftet („wartend“, „Deckel“), damit alle in eine Zeile passen
+
 ## 1.8.2 – 2026-10-31
 
 - Anleitung: Hinweis, dass das Projekt KI-generiert ist; neuer Abschnitt „Funktionsumfang“ und „Bedienung“ mit
