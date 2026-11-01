@@ -290,13 +290,11 @@ tr.child td{background:var(--bg);font-size:12px} tr.child td:first-child{padding
     <div class="tile"><b id="t-free">–</b><span>freie Slots</span></div>
     <div class="tile" title="Anfragen in der Warteschlange"><b id="t-queue">–</b><span>wartend</span></div>
     <div class="tile" title="Erzeugte Tokens pro Sekunde über alle Server, Ø der letzten 10 s"><b id="t-tps">–</b><span id="t-tpssub">tok/s</span></div>
-    <div class="tile" title="Anfragen gesamt"><b id="t-total">–</b><span>Anfragen</span></div>
-    <div class="tile"><b id="t-rej">–</b><span>abgelehnt</span></div>
+    <div class="tile" id="t-rpsbox" title="Anfragen pro Sekunde, Ø der letzten 10 s"><b id="t-rps">–</b><span>Anfragen/s</span></div>
     <div class="tile st busy" id="s-busy"><b>–</b><span><i class="sdot"></i>beschäftigt</span></div>
     <div class="tile st idle" id="s-idle"><b>–</b><span><i class="sdot"></i>idle</span></div>
     <div class="tile st error" id="s-error"><b>–</b><span><i class="sdot"></i>fehlerhaft</span></div>
     <div class="tile st down" id="s-down"><b>–</b><span><i class="sdot"></i>down</span></div>
-    <div class="tile st capped" id="s-capped"><b>–</b><span title="Kostendeckel erreicht"><i class="sdot"></i>Deckel</span></div>
     <div class="tile st disabled" id="s-disabled"><b>–</b><span><i class="sdot"></i>deaktiviert</span></div>
   </div>
 
@@ -345,7 +343,7 @@ tr.child td{background:var(--bg);font-size:12px} tr.child td:first-child{padding
       <button data-v="1">Tag</button><button data-v="7">7 Tage</button><button data-v="30" class="on">30 Tage</button><button data-v="90">90 Tage</button><button data-v="365">1 Jahr</button>
     </div>
     <div class="seg" id="bySeg">
-      <button data-v="server" class="on">nach Server</button><button data-v="model">nach Modell</button>
+      <button data-v="server" class="on">nach Server</button><button data-v="group">nach Gruppe</button><button data-v="model">nach Modell</button>
     </div>
     <div class="seg" id="daySeg" hidden>
       <button data-v="util" class="on">Auslastung</button><button data-v="requests">Anfragen</button><button data-v="queue">Warteschlange</button>
@@ -941,7 +939,7 @@ const stateLabel = b => (b.group_disabled && b.enabled ? 'Gruppe aus' : STATE[b.
 // state counters in the tile row; the tile lights up when the count is > 0, hover shows which servers
 function renderOverview(st) {
   const n = st.states || {};
-  for (const k of ['busy', 'idle', 'error', 'down', 'capped', 'disabled']) {
+  for (const k of ['busy', 'idle', 'error', 'down', 'disabled']) {
     const el = $('s-' + k), c = n[k] || 0;
     el.querySelector('b').textContent = c;
     el.classList.toggle('on', c > 0);
@@ -1150,8 +1148,9 @@ async function refresh() {
     $('version').title = st.commit ? 'Commit ' + st.commit : '';
     $('t-free').textContent = `${st.free_slots}/${st.total_slots}`;
     $('t-queue').textContent = st.queue.length;
-    $('t-total').textContent = st.total_requests;
-    $('t-rej').textContent = st.rejected;
+    const rps = st.live?.rps || 0;
+    $('t-rps').textContent = rps.toLocaleString('de-DE', {minimumFractionDigits: rps && rps < 10 ? 1 : 0, maximumFractionDigits: rps < 10 ? 1 : 0});
+    $('t-rpsbox').title = `Anfragen pro Sekunde, Ø der letzten 10 s (${(rps * 60).toLocaleString('de-DE', {maximumFractionDigits: 0})} pro Minute)\nseit Start: ${num(st.total_requests)} Anfragen, ${num(st.rejected)} abgelehnt`;
     $('uptime').textContent = 'Laufzeit ' + up(st.uptime_sec) + ' · max. Queue ' + st.max_queue_seen;
     renderOverview(st);
     renderAccessNote(st);
@@ -1564,6 +1563,17 @@ function stView() {
     if (d.backends.includes('(kein Server)')) names.push('(kein Server)');
     return {names, all: names, row: day => d.data[day] || {}, raw: day => d.data[day] || {}, totals: d.totals, color: seriesColor};
   }
+  if (stBy === 'group') {
+    // the days of each server added up by the group the server belongs to now
+    const gOf = n => { const b = current?.backends.find(x => x.name === n); return b ? (b.group || '(ohne Gruppe)') : '(entfernte Server)'; };
+    const fold = m => { const o = {}; for (const [n, st] of Object.entries(m || {})) { if (n === '(kein Server)') continue; const g = gOf(n); o[g] = o[g] ? mergeStat(o[g], st) : {...st}; } return o; };
+    const cache = {}, row = day => cache[day] ??= fold(d.data[day]);
+    const totals = fold(d.totals);
+    const order = (current?.groups || []).map(g => g.name).concat(['(ohne Gruppe)', '(entfernte Server)']);
+    const names = order.filter(n => totals[n]);
+    const color = n => n === '(entfernte Server)' ? 'var(--sx)' : `var(--s${(order.indexOf(n) % 8) + 1})`;
+    return {names, all: names, row, raw: row, totals, color};
+  }
   const models = d.models || [], top = models.slice(0, 7), rest = models.slice(7);
   const colored = [...top].filter(n => n !== '(ohne Modell)').sort((a, b) => a.localeCompare(b));
   const color = n => { const i = colored.indexOf(n); return i >= 0 ? `var(--s${i + 1})` : 'var(--sx)'; };
@@ -1702,7 +1712,7 @@ function statRow(st) {
 function renderStatTables() {
   const d = stData; if (!d) return;
   const V = stView(), names = V.all;
-  const label = stBy === 'server' ? 'Server' : 'Modell';
+  const label = {server: 'Server', group: 'Gruppe', model: 'Modell'}[stBy];
   $('stbyhead').textContent = label; $('stbyhead2').textContent = label; $('stdaysum').textContent = 'Pro Tag und ' + label;
   const all = names.reduce((a, n) => a + V.totals[n].requests, 0);
   const sw = n => `<td class="sw"><i style="background:${V.color(n)}"></i>${esc(n)}</td>`;
@@ -1864,7 +1874,7 @@ async function loadStats() {
   try {
     stData = await (await fetch(`${base}/api/stats?days=${stRange}`, {cache:'no-store'})).json();
     for (const k of ['backends', 'models', 'tokens', 'days']) stData[k] = stData[k] || []; // older servers sent null
-    $('csvlink').href = `${base}/api/stats?days=${stRange}&format=csv&by=${stBy}`;
+    $('csvlink').href = `${base}/api/stats?days=${stRange}&format=csv&by=${stBy === 'group' ? 'server' : stBy}`;
     renderChart(); renderStatTables();
   } catch (e) {}
 }
@@ -1872,12 +1882,12 @@ function segment(id, set) {
   $(id).addEventListener('click', ev => {
     const btn = ev.target.closest('button'); if (!btn) return;
     $(id).querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
-    set(btn.dataset.v);
+    setTimeout(() => set(btn.dataset.v), 20); // after pointerup: setHTML skips re-renders while the pointer is down
   });
 }
 segment('rangeSeg', v => { stRange = +v; setDayMode(); loadStats(); });
 segment('metricSeg', v => { stMetric = v; renderChart(); });
-segment('bySeg', v => { stBy = v; renderChart(); renderStatTables(); $('csvlink').href = `${base}/api/stats?days=${stRange}&format=csv&by=${stBy}`; });
+segment('bySeg', v => { stBy = v; renderChart(); renderStatTables(); $('csvlink').href = `${base}/api/stats?days=${stRange}&format=csv&by=${stBy === 'group' ? 'server' : stBy}`; });
 async function mergeStats(kind, from) {
   const names = kind === 'backend' ? current.backends.map(b => b.name) : tokenList.map(t => t.name);
   const to = prompt(`Statistik von „${from}“ übertragen auf:\n${names.join(', ')}`, names[0] || '');

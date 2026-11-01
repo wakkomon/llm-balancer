@@ -16,7 +16,8 @@ type tpsSample struct {
 type LiveLoad struct {
 	Running int     `json:"running"`
 	Queued  int     `json:"queued"`
-	TPS     float64 `json:"tps"` // generated tokens/s, average over the last seconds
+	TPS     float64 `json:"tps"`           // generated tokens/s, average over the last seconds
+	RPS     float64 `json:"rps,omitempty"` // requests/s (total only)
 }
 
 type LiveStatus struct {
@@ -57,6 +58,7 @@ func (p *Pool) sampleTPSLocked(now time.Time) {
 		}
 		cum["all"] += n
 	}
+	cum["req"] = p.totalReqs
 	p.tpsHist = append(p.tpsHist, tpsSample{now, cum})
 	if len(p.tpsHist) > tpsWindow+1 {
 		p.tpsHist = p.tpsHist[len(p.tpsHist)-tpsWindow-1:]
@@ -102,6 +104,7 @@ func (p *Pool) liveLocked() LiveStatus {
 		}
 	}
 	ls.TPS = p.tpsLocked("all")
+	ls.RPS = p.tpsLocked("req")
 	if len(p.tpsHist) > 0 { // tokens/servers that produced output recently, even if idle now
 		last := p.tpsHist[len(p.tpsHist)-1].cum
 		for k := range last {

@@ -108,9 +108,10 @@ Balancer das Modell selbst wählen soll.
 
 ### Übersicht
 
-Oben die Kacheln: freie Slots, Länge der Warteschlange, **Durchsatz** (erzeugte Tokens pro Sekunde über alle Server,
-Ø der letzten 10 s), Anfragen seit Start, abgelehnte Anfragen und wie viele Server
-gerade beschäftigt, frei, fehlerhaft, nicht erreichbar, am Kostendeckel oder deaktiviert sind.
+Oben die Kacheln: freie Slots, Länge der Warteschlange, **Durchsatz** (erzeugte Tokens pro Sekunde über alle Server)
+und **Anfragen pro Sekunde** (beides Ø der letzten 10 s; der Tooltip nennt Anfragen und Ablehnungen seit Start) sowie
+wie viele Server gerade beschäftigt, frei, fehlerhaft, nicht erreichbar oder deaktiviert sind. Ein Server am
+Kostendeckel ist auf seiner Karte markiert.
 
 Darunter jeder Server als Karte: Zustand (ein pulsierender ▶ zeigt „beschäftigt“), Priorität, Gruppe, Preise,
 gemeldete Modelle (grüner Punkt = bei Ollama im Speicher geladen), belegte Slots, die laufende Anfrage mit Dauer und
@@ -164,7 +165,8 @@ erscheint darunter und läuft weiter, auch wenn die Seite geschlossen wird. Pro 
 
 ### Statistik
 
-Zeitraum 7 Tage bis 1 Jahr, aufgeteilt nach Server oder Modell; das Diagramm zeigt Anfragen, Rechenzeit, Ø Dauer oder
+Zeitraum 7 Tage bis 1 Jahr, aufgeteilt nach Server, **Gruppe** (die Server zusammengezählt nach ihrer heutigen Gruppe;
+abgelehnte Anfragen ohne Server fehlen hier) oder Modell; das Diagramm zeigt Anfragen, Rechenzeit, Ø Dauer oder
 Tokens pro Tag. Die Tabelle enthält Fehler, Abbrüche, Zeiten, Tokens, tok/s, Tag-Fehler, Datenmenge sowie Einnahmen
 (Preise der API-Tokens), Kosten (Preise der Server) und Saldo. Darunter die Warteschlange pro Tag. **CSV-Export** und
 **Statistik löschen** oben rechts. Server, die es nicht mehr gibt, lassen sich per **zusammenführen …** auf einen

@@ -3,6 +3,13 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.10.0 – 2026-11-01
+
+- Übersicht: Kachel **Anfragen/s** (Ø der letzten 10 s) statt „Anfragen gesamt“; „abgelehnt“ und „Deckel“ entfallen
+  (Gesamtzahlen im Tooltip, Kostendeckel weiter auf der Server-Karte). Status-API: `live.rps`
+- Statistik: Aufteilung **nach Gruppe** (Server nach ihrer aktuellen Gruppe zusammengezählt, ohne abgelehnte Anfragen)
+- Behoben: Umschalter (Zeitraum, Aufteilung, Ansicht …) aktualisierten Tabellen teils erst beim nächsten Refresh
+
 ## 1.9.1 – 2026-11-01
 
 - **Letzte Anfragen nach Session gruppiert** (Standard): eine Zeile pro Session mit Anzahl, Modellen, Tokens, Servern,

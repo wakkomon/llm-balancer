@@ -238,3 +238,16 @@ func TestLiveThroughput(t *testing.T) {
 		t.Errorf("after finish: %+v %+v", v.LiveLoad, v.Tokens["hermes"])
 	}
 }
+
+func TestRequestsPerSecond(t *testing.T) {
+	a := newFakeLLM(t, "a", 10*time.Millisecond)
+	srv, pool := setup(t, nil, a)
+	pool.mu.Lock()
+	pool.sampleTPSLocked(time.Now().Add(-2 * time.Second))
+	pool.totalReqs += 6
+	pool.sampleTPSLocked(time.Now())
+	pool.mu.Unlock()
+	if r := status(t, srv.URL).Live.RPS; r < 2.5 || r > 3.5 {
+		t.Errorf("rps: %v", r)
+	}
+}
