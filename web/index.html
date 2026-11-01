@@ -266,6 +266,10 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
 .chklist label{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:13px;color:var(--ink)} .chklist input{width:auto}
 .impres{font-size:12.5px;margin-top:10px} .impres li{margin:2px 0}
 .lrun{display:inline-flex;align-items:center;gap:6px;font-weight:600}
+tr.sgrp{cursor:pointer} tr.sgrp:hover td{background:color-mix(in srgb, var(--ink) 3%, var(--panel))}
+tr.sgrp .chev{display:inline-block;width:12px;color:var(--muted)}
+tr.child td{background:var(--bg);font-size:12px} tr.child td:first-child{padding-left:28px}
+.okc{color:var(--free)} .errc{color:var(--down)}
 #toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100vw - 32px)}
 #toast.show{opacity:1}
 </style>
@@ -399,7 +403,8 @@ body[data-role=viewer] #nform input,body[data-role=viewer] #nform select,body[da
   <div id="page-recent" hidden>
   <div class="sechead">
     <h2>Letzte Anfragen</h2>
-    <div class="row"><span id="sessfilter"></span><label class="chkf"><input type="checkbox" id="onlytag"> nur Antworten mit Tag-Fehlern</label>
+    <div class="row"><span id="sessfilter"></span><div class="seg" id="recentSeg"><button data-v="sessions">nach Session</button><button data-v="flat">einzeln</button></div>
+    <label class="chkf"><input type="checkbox" id="onlytag"> nur Antworten mit Tag-Fehlern</label>
     <span class="srcnote" id="recentnote"></span></div>
   </div>
   <div class="tbl scroll"><table data-sort>
@@ -1104,12 +1109,14 @@ function applySort(tbody) {
   const th = tbody.closest('table').tHead.rows[0].cells[st.col]; if (!th) return;
   const num = th.classList.contains('n');
   const rows = [...tbody.rows], fixed = rows.filter(r => r.classList.contains('sum') || r.querySelector('td.empty'));
-  const data = rows.filter(r => !fixed.includes(r)).map(r => [r, sortVal(r.cells[st.col], num)]);
+  const kids = new Map(); let parent = null; // rows with class "child" stay below the row they belong to
+  for (const r of rows) if (r.classList.contains('child')) { if (parent) kids.get(parent).push(r); } else { parent = r; kids.set(r, []); }
+  const data = rows.filter(r => !fixed.includes(r) && !r.classList.contains('child')).map(r => [r, sortVal(r.cells[st.col], num)]);
   data.sort(([, x], [, y]) => {
     if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1; // empty cells always last
     return st.dir * (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'de', {numeric: true}));
   });
-  tbody.append(...data.map(d => d[0]), ...fixed);
+  tbody.append(...data.flatMap(d => [d[0], ...(kids.get(d[0]) || [])]), ...fixed);
 }
 function initSortable(table) {
   const tbody = table.tBodies[0];
@@ -1281,10 +1288,38 @@ async function loadRecent() {
   renderRecent();
 }
 $('onlytag').addEventListener('change', () => renderRecent());
-let sessFilter = '';
+let sessFilter = '', recentView = (() => { try { return localStorage.getItem('llmb-recent') || 'sessions'; } catch { return 'sessions'; } })();
+const openSess = new Set();
+function toggleSess(k) { openSess.has(k) ? openSess.delete(k) : openSess.add(k); setTimeout(renderRecent, 0); }
+const uniq = a => [...new Set(a.filter(Boolean))];
+const listCell = (vals, max = 2) => { const u = uniq(vals); return u.length ? esc(u.slice(0, max).join(', ')) + (u.length > max ? ` <span class="muted">+${u.length - max}</span>` : '') : '<span class="muted">–</span>'; };
+function groupHTML(g, rowHTML) {
+  const L = g.list, n = L.length, open = openSess.has(g.key);
+  const sum = k => L.reduce((a, r) => a + (r[k] || 0), 0);
+  const ok = L.filter(r => r.status >= 200 && r.status < 400).length, bad = n - ok;
+  const first = L[n - 1], last = L[0];
+  const span = Date.parse(last.ended_at) - Date.parse(first.queued_at || first.ended_at);
+  const ttfb = L.filter(r => r.ttfb_ms), gen = L.filter(r => r.gen_tps > 0);
+  const tps = gen.length ? gen.reduce((a, r) => a + r.tokens_out, 0) / gen.reduce((a, r) => a + r.tokens_out / r.gen_tps, 0) : 0;
+  const tags = L.filter(r => r.tag_issues?.length).length;
+  const models = L.map(r => (r.requested || r.model || r.path) + (r.effective_model ? ' → ' + r.effective_model : ''));
+  const head = `<tr class="sgrp" onclick='toggleSess(${attr(g.key)})' title="${n} Anfragen von ${hms(first.queued_at || first.ended_at)} bis ${hms(last.ended_at)} (${dur(span)}) – klicken zum ${open ? 'Zuklappen' : 'Aufklappen'}">
+    <td data-v="${Date.parse(last.ended_at) || ''}"><span class="chev">${open ? '▾' : '▸'}</span> ${hms(last.ended_at)}</td><td class="n" data-v="${n}"><b>${n}×</b></td>
+    <td data-v="${esc(g.session || '')}">${g.session ? sessChip(g.session, g.src, n) : '<span class="muted">–</span>'}</td>
+    <td>${listCell(models)}</td><td>${listCell(L.map(r => r.group))}</td><td>${listCell(L.map(r => r.token || r.client))}</td><td>${listCell(L.map(r => r.backend))}</td>
+    <td data-v="${bad}"><span class="okc">✓ ${ok}</span>${bad ? ` <span class="errc">✕ ${bad}</span>` : ''}</td>
+    <td class="n" title="Summe der Wartezeit">${dur(sum('queue_ms'))}</td><td class="n" title="Ø">${ttfb.length ? dur(Math.round(ttfb.reduce((a, r) => a + r.ttfb_ms, 0) / ttfb.length)) : '–'}</td>
+    <td class="n" title="Summe der Rechenzeit; Zeitraum ${dur(span)}">${dur(sum('duration_ms'))}</td>
+    <td class="n">${sum('tokens_in') || sum('tokens_out') ? num(sum('tokens_in')) + ' / ' + num(sum('tokens_out')) : '–'}</td><td class="n">${tpsFmt(tps)}</td>
+    <td class="n">${sum('cost') ? money(sum('cost')) : '–'}</td><td class="n">${sum('backend_cost') ? money(sum('backend_cost')) : '–'}</td>
+    <td class="${tags ? 'tagerr' : 'muted'}">${tags ? '⚠ ' + tags : '–'}</td></tr>`;
+  return head + (open ? L.map(r => rowHTML(r, true)).join('') : '');
+}
+segment('recentSeg', v => { recentView = v; try { localStorage.setItem('llmb-recent', v); } catch {} renderRecent(); });
+document.querySelectorAll('#recentSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === recentView));
 const sessHue = id => parseInt(id.slice(0, 6), 16) % 360;
 const sessChip = (id, src, n) => `<span class="sess" style="color:hsl(${sessHue(id)} 62% 46%);background:hsl(${sessHue(id)} 62% 50% / .13)"
-  title="${esc((src || '') + (n ? `\n${n} Anfragen in der Liste` : '') + '\nAnklicken: nur diese Session zeigen')}" onclick='setSess(${attr(id)})'>${esc(id)}</span>`;
+  title="${esc((src || '') + (n ? `\n${n} Anfragen in der Liste` : '') + '\nAnklicken: nur diese Session zeigen')}" onclick='event.stopPropagation(); setSess(${attr(id)})'>${esc(id)}</span>`;
 function setSess(id) {
   sessFilter = sessFilter === id ? '' : id;
   $('sessfilter').innerHTML = sessFilter ? `<span class="fpill">Session ${esc(sessFilter)} <button title="Filter entfernen" onclick="setSess('')">✕</button></span>` : '';
@@ -1298,10 +1333,10 @@ function renderRecent() {
   const perSess = {}; for (const r of recent) if (r.session) perSess[r.session] = (perSess[r.session] || 0) + 1;
   const nSess = Object.keys(perSess).length;
   $('recentnote').textContent = recent.length ? `${recent.length} von max. 300${nSess ? ` · ${nSess} Sessions` : ''}${nTag ? ` · ${nTag} mit Tag-Fehlern` : ''}` : '';
-  setHTML($('recent'), rows.length ? rows.map(r => {
+  const rowHTML = (r, child) => {
     const tps = tpsFmt(r.gen_tps);
     const tagCell = r.tag_issues?.length ? `<td class="tagerr" title="${esc(r.tag_issues.join('\n'))}">⚠ ${esc(r.tag_issues[0])}${r.tag_issues.length > 1 ? ` (+${r.tag_issues.length - 1})` : ''}</td>` : '<td class="muted">–</td>';
-    return `<tr>
+    return `<tr${child ? ' class="child"' : ''}>
       <td data-v="${Date.parse(r.ended_at) || ''}">${hms(r.ended_at)}</td><td class="n">${r.id}</td>
       <td data-v="${esc(r.session || '')}">${r.session ? sessChip(r.session, r.session_src, perSess[r.session]) : '<span class="muted">–</span>'}</td><td>${esc(r.requested || r.model || r.path)}${r.effective_model ? ` <span class="muted">→ ${esc(r.effective_model)}</span>` : ''}${r.router ? ` <span class="retry" title="Router ${esc(r.router)}">⑂</span>` : ''}</td><td>${esc(r.group || '–')}</td>
       <td>${r.token ? esc(r.token) : '<span class="muted">' + esc(r.client) + '</span>'}</td>
@@ -1309,7 +1344,20 @@ function renderRecent() {
       <td class="${r.status >= 200 && r.status < 400 ? 'ok' : 'bad'}" title="${esc(r.error)}">${r.status}${r.error ? ' · ' + esc(r.error.slice(0, 40)) : ''}</td>
       <td class="n">${dur(r.queue_ms)}</td><td class="n">${dur(r.ttfb_ms)}</td><td class="n">${dur(r.duration_ms)}</td>
       <td class="n">${r.tokens_in || r.tokens_out ? num(r.tokens_in) + ' / ' + num(r.tokens_out) : '–'}</td><td class="n">${tps}</td>
-      <td class="n">${r.cost ? money(r.cost) : '–'}</td><td class="n">${r.backend_cost ? money(r.backend_cost) : '–'}</td>${tagCell}</tr>`; }).join('')
+      <td class="n">${r.cost ? money(r.cost) : '–'}</td><td class="n">${r.backend_cost ? money(r.backend_cost) : '–'}</td>${tagCell}</tr>`; };
+  let html;
+  if (recentView === 'flat' || sessFilter) html = rows.map(r => rowHTML(r, false)).join('');
+  else {
+    // one row per session (requests without session stand alone), newest first; the requests are expandable
+    const groups = [], byKey = {};
+    for (const r of rows) {
+      const k = r.session || 'req:' + r.id;
+      if (!byKey[k]) { byKey[k] = {key: k, session: r.session, src: r.session_src, list: []}; groups.push(byKey[k]); }
+      byKey[k].list.push(r);
+    }
+    html = groups.map(g => g.list.length === 1 && !g.session ? rowHTML(g.list[0], false) : groupHTML(g, rowHTML)).join('');
+  }
+  setHTML($('recent'), rows.length ? html
     : `<tr><td colspan="16" class="empty">${sessFilter ? 'Keine Anfragen dieser Session in der Liste.' : onlyTag ? 'Keine Antworten mit Tag-Fehlern.' : 'Noch keine Anfragen.'}</td></tr>`);
 }
 

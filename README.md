@@ -181,8 +181,13 @@ auf Anfragen und Warteschlange, für alle oder einen Server – dazu Auslastung 
 
 Die letzten 300 Anfragen mit Zeit, Session, Modell (`auto → qwen3-coder:30b` = vom Router gewählt, ⑂ im Tooltip die
 Regel), Gruppe, API-Token, Server (↻ = auf einem anderen Server wiederholt, Weg im Tooltip), Status, Wartezeit, Zeit bis
-zum ersten Byte, Dauer, Tokens, tok/s, Einnahme, Kosten und Tag-Prüfung. Ein Klick auf eine **Session** zeigt nur die
-Anfragen dieser Unterhaltung bzw. dieses Agenten-Laufs.
+zum ersten Byte, Dauer, Tokens, tok/s, Einnahme, Kosten und Tag-Prüfung.
+
+Standardmäßig sind die Anfragen **nach Session gruppiert**: eine Zeile pro Unterhaltung bzw. Agenten-Lauf mit der Zahl
+der Anfragen (`4×`), den beteiligten Modellen, Tokens und Servern, erfolgreichen/fehlgeschlagenen Anfragen (✓/✕) sowie
+Summen von Wartezeit, Rechenzeit, Tokens, Einnahmen und Kosten (1. Byte und tok/s als Durchschnitt). Ein Klick auf die
+Zeile klappt die einzelnen Anfragen auf; sortiert wird nach den Session-Zeilen. **einzeln** zeigt die flache Liste wie
+früher, ein Klick auf eine **Session**-Kennung nur deren Anfragen.
 
 ![Letzte Anfragen](docs/screenshots/anfragen.png)
 

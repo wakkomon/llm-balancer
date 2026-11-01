@@ -3,6 +3,12 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.9.1 – 2026-11-01
+
+- **Letzte Anfragen nach Session gruppiert** (Standard): eine Zeile pro Session mit Anzahl, Modellen, Tokens, Servern,
+  Erfolg/Fehler und Summen (Wartezeit, Rechenzeit, Tokens, Einnahmen, Kosten); die einzelnen Anfragen aufklappbar.
+  Umschalter „nach Session / einzeln“, Sortierung hält die aufgeklappten Anfragen unter ihrer Session
+
 ## 1.9.0 – 2026-11-01
 
 - **Live-Durchsatz**: erzeugte Tokens pro Sekunde (Ø der letzten 10 s) – als Kachel in der Übersicht, pro API-Token
