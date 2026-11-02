@@ -1172,6 +1172,7 @@ async function refresh() {
     renderModelList(st);
     if (location.hash === '#statistik' && stRange === 1) renderDay(false);
     if (location.hash === '#zugriff' && tokenList.length) renderTokens();
+    if (location.hash === '#anfragen') renderRecent();
     const lv = st.live || {};
     $('t-tps').textContent = tpsTxt(lv.tps || 0).replace(' tok/s', '');
     $('t-tpssub').parentElement.title = `Erzeugte Tokens pro Sekunde über alle Server, Ø der letzten 10 s\n${lv.running || 0} Anfragen laufen${lv.queued ? ', ' + lv.queued + ' warten' : ''}`;
@@ -1301,21 +1302,24 @@ const openSess = new Set();
 function toggleSess(k) { openSess.has(k) ? openSess.delete(k) : openSess.add(k); setTimeout(renderRecent, 0); }
 const uniq = a => [...new Set(a.filter(Boolean))];
 const listCell = (vals, max = 2) => { const u = uniq(vals); return u.length ? esc(u.slice(0, max).join(', ')) + (u.length > max ? ` <span class="muted">+${u.length - max}</span>` : '') : '<span class="muted">–</span>'; };
+const endT = r => r.ended_at || r.queued_at; // running/queued requests have no end yet
 function groupHTML(g, rowHTML) {
   const L = g.list, n = L.length, open = openSess.has(g.key);
   const sum = k => L.reduce((a, r) => a + (r[k] || 0), 0);
-  const ok = L.filter(r => r.status >= 200 && r.status < 400).length, bad = n - ok;
+  const nLive = L.filter(r => r.live).length;
+  const nRun = L.filter(r => r.live && r.state === 'running').length;
+  const ok = L.filter(r => !r.live && r.status >= 200 && r.status < 400).length, bad = n - ok - nLive;
   const first = L[n - 1], last = L[0];
-  const span = Date.parse(last.ended_at) - Date.parse(first.queued_at || first.ended_at);
+  const span = (nLive ? Date.now() : Date.parse(last.ended_at)) - Date.parse(first.queued_at || first.ended_at);
   const ttfb = L.filter(r => r.ttfb_ms), gen = L.filter(r => r.gen_tps > 0);
   const tps = gen.length ? gen.reduce((a, r) => a + r.tokens_out, 0) / gen.reduce((a, r) => a + r.tokens_out / r.gen_tps, 0) : 0;
   const tags = L.filter(r => r.tag_issues?.length).length;
   const models = L.map(r => (r.requested || r.model || r.path) + (r.effective_model ? ' → ' + r.effective_model : ''));
-  const head = `<tr class="sgrp" onclick='toggleSess(${attr(g.key)})' title="${n} Anfragen von ${hms(first.queued_at || first.ended_at)} bis ${hms(last.ended_at)} (${dur(span)}) – klicken zum ${open ? 'Zuklappen' : 'Aufklappen'}">
-    <td data-v="${Date.parse(last.ended_at) || ''}"><span class="chev">${open ? '▾' : '▸'}</span> ${hms(last.ended_at)}</td><td class="n" data-v="${n}"><b>${n}×</b></td>
+  const head = `<tr class="sgrp" onclick='toggleSess(${attr(g.key)})' title="${n} Anfragen von ${hms(first.queued_at || first.ended_at)} bis ${nLive ? 'jetzt' : hms(last.ended_at)} (${dur(span)}) – klicken zum ${open ? 'Zuklappen' : 'Aufklappen'}">
+    <td data-v="${nLive ? Date.now() : Date.parse(last.ended_at) || ''}"><span class="chev">${open ? '▾' : '▸'}</span> ${nLive ? 'jetzt' : hms(last.ended_at)}</td><td class="n" data-v="${n}"><b>${n}×</b></td>
     <td data-v="${esc(g.session || '')}">${g.session ? sessChip(g.session, g.src, n) : '<span class="muted">–</span>'}${last.session_title ? `<div class="stitle" title="${esc(last.session_title)}">${esc(last.session_title)}</div>` : ''}</td>
     <td>${listCell(models)}</td><td>${listCell(L.map(r => r.group))}</td><td>${listCell(L.map(r => r.token || r.client))}</td><td>${listCell(L.map(r => r.backend))}</td>
-    <td data-v="${bad}"><span class="okc">✓ ${ok}</span>${bad ? ` <span class="errc">✕ ${bad}</span>` : ''}</td>
+    <td data-v="${bad}">${nRun ? `<span class="lrun" style="color:var(--busy)" title="laufen gerade"><i class="play" style="${phase(1400)}"></i>${nRun}</span> ` : ''}${nLive - nRun ? `<span style="color:var(--busy)" title="warten">⏳ ${nLive - nRun}</span> ` : ''}${ok ? `<span class="okc">✓ ${ok}</span>` : ''}${bad ? ` <span class="errc">✕ ${bad}</span>` : ''}</td>
     <td class="n" title="Summe der Wartezeit">${dur(sum('queue_ms'))}</td><td class="n" title="Ø">${ttfb.length ? dur(Math.round(ttfb.reduce((a, r) => a + r.ttfb_ms, 0) / ttfb.length)) : '–'}</td>
     <td class="n" title="Summe der Rechenzeit; Zeitraum ${dur(span)}">${dur(sum('duration_ms'))}</td>
     <td class="n">${sum('tokens_in') || sum('tokens_out') ? num(sum('tokens_in')) + ' / ' + num(sum('tokens_out')) : '–'}</td><td class="n">${tpsFmt(tps)}</td>
@@ -1365,21 +1369,26 @@ function setSess(id) {
 }
 function renderRecent() {
   const onlyTag = $('onlytag').checked;
-  let rows = onlyTag ? recent.filter(r => r.tag_issues?.length) : recent;
+  // running and waiting requests first (from the status), then the finished ones
+  const done = new Set(recent.map(r => r.id));
+  const live = (current ? current.backends.flatMap(b => b.running || []).concat(current.queue || []) : [])
+    .filter(r => !done.has(r.id)).map(r => ({...r, live: true})).sort((a, b) => b.id - a.id);
+  let rows = onlyTag ? recent.filter(r => r.tag_issues?.length) : live.concat(recent);
   if (sessFilter) rows = rows.filter(r => r.session === sessFilter);
   const nTag = recent.filter(r => r.tag_issues?.length).length;
   const perSess = {}; for (const r of recent) if (r.session) perSess[r.session] = (perSess[r.session] || 0) + 1;
   const nSess = Object.keys(perSess).length;
   $('recentnote').textContent = recent.length ? `${recent.length} von max. 300${nSess ? ` · ${nSess} Sessions` : ''}${nTag ? ` · ${nTag} mit Tag-Fehlern` : ''}` : '';
   const rowHTML = (r, child) => {
-    const tps = tpsFmt(r.gen_tps);
+    const tps = tpsFmt(r.live ? r.live_tps : r.gen_tps);
     const tagCell = r.tag_issues?.length ? `<td class="tagerr" title="${esc(r.tag_issues.join('\n'))}">⚠ ${esc(r.tag_issues[0])}${r.tag_issues.length > 1 ? ` (+${r.tag_issues.length - 1})` : ''}</td>` : '<td class="muted">–</td>';
     return `<tr${child ? ' class="child"' : ''}>
-      <td data-v="${Date.parse(r.ended_at) || ''}">${hms(r.ended_at)}</td><td class="n">${r.id}</td>
+      <td data-v="${r.live ? Date.now() : Date.parse(r.ended_at) || ''}">${r.live ? `<span title="angenommen ${hms(r.queued_at)}">${hms(r.queued_at)}</span>` : hms(r.ended_at)}</td><td class="n">${r.id}</td>
       <td data-v="${esc(r.session || '')}">${r.session ? sessChip(r.session, r.session_src, perSess[r.session]) : '<span class="muted">–</span>'}</td><td>${esc(r.requested || r.model || r.path)}${r.effective_model ? ` <span class="muted">→ ${esc(r.effective_model)}</span>` : ''}${r.router ? ` <span class="retry" title="Router ${esc(r.router)}">⑂</span>` : ''}</td><td>${esc(r.group || '–')}</td>
       <td>${r.token ? esc(r.token) : '<span class="muted">' + esc(r.client) + '</span>'}</td>
       <td>${esc(r.backend || '–')}${r.trail ? ` <span class="retry" title="${esc(r.trail)}">↻ ${r.attempts}×</span>` : r.attempts > 1 ? ' <span class="muted">(' + r.attempts + '×)</span>' : ''}</td>
-      <td class="${r.status >= 200 && r.status < 400 ? 'ok' : 'bad'}" title="${esc(r.error)}">${r.status}${r.error ? ' · ' + esc(r.error.slice(0, 40)) : ''}</td>
+      ${r.live ? `<td><span class="lrun" style="color:var(--busy)">${r.state === 'running' ? `<i class="play" style="${phase(1400)}"></i>${r.ttfb_ms ? 'streamt' : 'Prompt …'}` : 'wartet'}</span></td>`
+        : `<td class="${r.status >= 200 && r.status < 400 ? 'ok' : 'bad'}" title="${esc(r.error)}">${r.status}${r.error ? ' · ' + esc(r.error.slice(0, 40)) : ''}</td>`}
       <td class="n">${dur(r.queue_ms)}</td><td class="n">${dur(r.ttfb_ms)}</td><td class="n">${dur(r.duration_ms)}</td>
       <td class="n">${r.tokens_in || r.tokens_out ? num(r.tokens_in) + ' / ' + num(r.tokens_out) : '–'}</td><td class="n">${tps}</td>
       <td class="n">${r.cost ? money(r.cost) : '–'}</td><td class="n">${r.backend_cost ? money(r.backend_cost) : '–'}</td>${tagCell}</tr>`; };

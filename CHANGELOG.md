@@ -3,6 +3,11 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.11.2 – 2026-11-02
+
+- „Letzte Anfragen“ zeigt auch laufende (▶ Prompt … / streamt) und wartende Anfragen – bisher erschienen sie erst nach
+  dem Ende; in der Session-Ansicht zählt die Session-Zeile sie mit (▶ laufend, ⏳ wartend)
+
 ## 1.11.1 – 2026-11-02
 
 - **Sessions überstehen Kontext-Kompression**: ersetzt ein Agent ältere Nachrichten durch eine Zusammenfassung, wird der

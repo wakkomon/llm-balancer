@@ -181,7 +181,8 @@ auf Anfragen und Warteschlange, für alle oder einen Server – dazu Auslastung 
 
 ### Letzte Anfragen
 
-Die letzten 300 Anfragen mit Zeit, Session, Modell (`auto → qwen3-coder:30b` = vom Router gewählt, ⑂ im Tooltip die
+Oben die gerade laufenden (▶ „Prompt …“ / „streamt“, mit Dauer und geschätzten tok/s) und wartenden Anfragen, darunter
+die letzten 300 abgeschlossenen mit Zeit, Session, Modell (`auto → qwen3-coder:30b` = vom Router gewählt, ⑂ im Tooltip die
 Regel), Gruppe, API-Token, Server (↻ = auf einem anderen Server wiederholt, Weg im Tooltip), Status, Wartezeit, Zeit bis
 zum ersten Byte, Dauer, Tokens, tok/s, Einnahme, Kosten und Tag-Prüfung.
 
