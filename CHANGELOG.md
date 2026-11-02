@@ -3,6 +3,14 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.11.0 – 2026-11-02
+
+- **Session-Details** in „Letzte Anfragen“: Klick auf die Session-Kennung öffnet ein Fenster mit Erkennung (inkl. vom
+  Client gesendeter ID), Zeitraum, API-Token, Quell-IP, X-Forwarded-For, User-Agent, Modellen, identifizierenden Headern
+  und Body-Feldern, Anfang des System-Prompts, erster und letzter Nachricht; Filter auf die Session von dort aus.
+  API: `GET /balancer/api/sessions/{id}` (nur im Speicher, letzte 500 Sessions)
+- In der Session-Ansicht steht unter der Kennung der Titel bzw. Anfang der ersten Nachricht
+
 ## 1.10.0 – 2026-11-01
 
 - Übersicht: Kachel **Anfragen/s** (Ø der letzten 10 s) statt „Anfragen gesamt“; „abgelehnt“ und „Deckel“ entfallen

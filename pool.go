@@ -94,6 +94,7 @@ type ReqInfo struct {
 	Group       string   `json:"group,omitempty"`
 	Session     string   `json:"session,omitempty"`     // short hash, see session.go
 	SessionSrc  string   `json:"session_src,omitempty"` // where it came from
+	SessTitle   string   `json:"session_title,omitempty"`
 	TokensIn    int64    `json:"tokens_in,omitempty"`
 	TokensOut   int64    `json:"tokens_out,omitempty"`
 	Cost        float64  `json:"cost,omitempty"`         // incoming: API token prices
@@ -721,7 +722,7 @@ type Status struct {
 func snapshot(r *ReqInfo, now time.Time) *ReqInfo {
 	c := &ReqInfo{
 		ID: r.ID, Method: r.Method, Path: r.Path, Model: r.Model, Stream: r.Stream, Client: r.Client, Token: r.Token,
-		Group: r.Group, Requested: r.Requested, Router: r.Router, Session: r.Session, SessionSrc: r.SessionSrc, TokensIn: r.TokensIn, TokensOut: r.TokensOut, Cost: r.Cost, BackendCost: r.BackendCost, Seq: r.Seq,
+		Group: r.Group, Requested: r.Requested, Router: r.Router, Session: r.Session, SessionSrc: r.SessionSrc, SessTitle: r.SessTitle, TokensIn: r.TokensIn, TokensOut: r.TokensOut, Cost: r.Cost, BackendCost: r.BackendCost, Seq: r.Seq,
 		Trail: r.Trail, TagIssues: r.TagIssues, GenTPS: r.GenTPS, PromptTPS: r.PromptTPS, Effective: r.Effective,
 		State: r.State, Backend: r.Backend, Attempts: r.Attempts, QueuedAt: r.QueuedAt,
 		StartedAt: r.StartedAt, EndedAt: r.EndedAt, Status: r.Status, Error: r.Error,

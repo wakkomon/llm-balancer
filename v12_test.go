@@ -171,3 +171,36 @@ func TestDayViewEndpoint(t *testing.T) {
 		t.Errorf("day view: %+v", v)
 	}
 }
+
+func TestSessionDetails(t *testing.T) {
+	a := newFakeLLM(t, "a", 10*time.Millisecond)
+	srv, _ := setup(t, nil, a)
+	body := `{"model":"m","user":"hermes-ui","metadata":{"chat_title":"Backup-Analyse"},"messages":[{"role":"system","content":"Du bist Hermes."},{"role":"user","content":"Warum ist das Backup langsam?\nDetails folgen"}]}`
+	for i := 0; i < 2; i++ {
+		req, _ := http.NewRequest("POST", srv.URL+"/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("X-Forwarded-For", "192.168.1.77")
+		req.Header.Set("User-Agent", "hermes-agent/1.0")
+		req.Header.Set("X-Title", "Hermes")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	waitFor(t, func() bool { return len(status(t, srv.URL).Recent) == 2 })
+	id := status(t, srv.URL).Recent[0].Session
+	resp, _ := http.Get(srv.URL + "/balancer/api/sessions/" + id)
+	var si SessionInfo
+	json.NewDecoder(resp.Body).Decode(&si)
+	resp.Body.Close()
+	if si.Requests != 2 || si.Title != "Backup-Analyse" || si.System != "Du bist Hermes." || !strings.HasPrefix(si.FirstMsg, "Warum") ||
+		si.Forwarded[0] != "192.168.1.77" || si.UserAgents[0] != "hermes-agent/1.0" || si.Headers["X-Title"] != "Hermes" || si.Fields["user"] != "hermes-ui" || si.ExplicitID != "hermes-ui" {
+		t.Errorf("details: %+v", si)
+	}
+	if r, _ := http.Get(srv.URL + "/balancer/api/sessions/unbekannt"); r.StatusCode != 404 {
+		t.Errorf("unknown: %d", r.StatusCode)
+	}
+	if g := guessTitle(map[string]any{}, "Erste Zeile\nzweite"); g != "Erste Zeile" {
+		t.Errorf("title: %q", g)
+	}
+}

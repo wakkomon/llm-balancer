@@ -26,6 +26,12 @@ var sessionFields = [][]string{
 }
 
 func detectSession(r *http.Request, body []byte, token string) (id, src string) {
+	id, src, _ = detectSessionRaw(r, body, token)
+	return id, src
+}
+
+// detectSessionRaw also returns the explicit ID the client sent ("" for a fingerprint).
+func detectSessionRaw(r *http.Request, body []byte, token string) (id, src, explicit string) {
 	raw := ""
 	for _, h := range sessionHeaders {
 		if v := strings.TrimSpace(r.Header.Get(h)); v != "" {
@@ -65,10 +71,13 @@ func detectSession(r *http.Request, body []byte, token string) (id, src string) 
 		}
 	}
 	if raw == "" {
-		return "", ""
+		return "", "", ""
 	}
 	sum := sha256.Sum256([]byte(token + "\x00" + raw))
-	return hex.EncodeToString(sum[:4]), src
+	if !strings.HasPrefix(src, "Fingerprint") {
+		explicit = raw
+	}
+	return hex.EncodeToString(sum[:4]), src, explicit
 }
 
 func jsonNum(f float64) string { b, _ := json.Marshal(f); return string(b) }

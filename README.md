@@ -189,7 +189,14 @@ Standardmäßig sind die Anfragen **nach Session gruppiert**: eine Zeile pro Unt
 der Anfragen (`4×`), den beteiligten Modellen, Tokens und Servern, erfolgreichen/fehlgeschlagenen Anfragen (✓/✕) sowie
 Summen von Wartezeit, Rechenzeit, Tokens, Einnahmen und Kosten (1. Byte und tok/s als Durchschnitt). Ein Klick auf die
 Zeile klappt die einzelnen Anfragen auf; sortiert wird nach den Session-Zeilen. **einzeln** zeigt die flache Liste wie
-früher, ein Klick auf eine **Session**-Kennung nur deren Anfragen.
+früher. Unter der Session-Kennung steht der Anfang der ersten Nachricht (oder ein Titel, den der Client mitschickt).
+
+Ein Klick auf eine **Session**-Kennung öffnet die Details: wie die Session erkannt wurde (mit der ID des Clients, falls
+er eine schickt), Zeitraum und Zahl der Anfragen, API-Token, Quell-IP der Verbindung, `X-Forwarded-For`, User-Agent,
+Modelle, identifizierende Header (`X-Title`, `Referer`, Open-WebUI-Benutzer/-Chat …) und Body-Felder (`user`,
+`metadata` …), der Anfang des System-Prompts sowie erste und letzte Nachricht. Von dort lässt sich die Liste auf diese
+Session filtern. Die Details liegen nur im Speicher (die letzten 500 Sessions). Steht LiteLLM vor dem Balancer, ist die
+Quell-IP die von LiteLLM; die eigentliche Anwendung erkennt man dann am Token, an Headern oder am Prompt.
 
 ![Letzte Anfragen](docs/screenshots/anfragen.png)
 

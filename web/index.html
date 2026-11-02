@@ -270,6 +270,10 @@ tr.sgrp{cursor:pointer} tr.sgrp:hover td{background:color-mix(in srgb, var(--ink
 tr.sgrp .chev{display:inline-block;width:12px;color:var(--muted)}
 tr.child td{background:var(--bg);font-size:12px} tr.child td:first-child{padding-left:28px}
 .okc{color:var(--free)} .errc{color:var(--down)}
+.stitle{font-size:11.5px;color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
+.kv{display:grid;grid-template-columns:150px 1fr;gap:6px 14px;font-size:13px;margin-top:6px}
+.kv dt{color:var(--muted)} .kv dd{margin:0;word-break:break-word}
+.kv pre{margin:0;white-space:pre-wrap;font:12px var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;max-height:160px;overflow:auto}
 #toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100vw - 32px)}
 #toast.show{opacity:1}
 </style>
@@ -738,6 +742,11 @@ tr.child td{background:var(--bg);font-size:12px} tr.child td:first-child{padding
     <div class="formerr" id="r-err"></div>
     <div class="btns"><button type="button" onclick="$('rdlg').close()">Abbrechen</button><button class="primary" type="submit">Speichern</button></div>
   </form>
+</dialog>
+<dialog id="sdlg" class="wide">
+  <h3 id="s-title">Session</h3>
+  <div id="s-body"></div>
+  <div class="btns"><button id="s-filter">Nur Anfragen dieser Session zeigen</button><button class="primary" onclick="$('sdlg').close()">Schließen</button></div>
 </dialog>
 <dialog id="gdlg">
   <form id="gform" method="dialog">
@@ -1304,7 +1313,7 @@ function groupHTML(g, rowHTML) {
   const models = L.map(r => (r.requested || r.model || r.path) + (r.effective_model ? ' → ' + r.effective_model : ''));
   const head = `<tr class="sgrp" onclick='toggleSess(${attr(g.key)})' title="${n} Anfragen von ${hms(first.queued_at || first.ended_at)} bis ${hms(last.ended_at)} (${dur(span)}) – klicken zum ${open ? 'Zuklappen' : 'Aufklappen'}">
     <td data-v="${Date.parse(last.ended_at) || ''}"><span class="chev">${open ? '▾' : '▸'}</span> ${hms(last.ended_at)}</td><td class="n" data-v="${n}"><b>${n}×</b></td>
-    <td data-v="${esc(g.session || '')}">${g.session ? sessChip(g.session, g.src, n) : '<span class="muted">–</span>'}</td>
+    <td data-v="${esc(g.session || '')}">${g.session ? sessChip(g.session, g.src, n) : '<span class="muted">–</span>'}${last.session_title ? `<div class="stitle" title="${esc(last.session_title)}">${esc(last.session_title)}</div>` : ''}</td>
     <td>${listCell(models)}</td><td>${listCell(L.map(r => r.group))}</td><td>${listCell(L.map(r => r.token || r.client))}</td><td>${listCell(L.map(r => r.backend))}</td>
     <td data-v="${bad}"><span class="okc">✓ ${ok}</span>${bad ? ` <span class="errc">✕ ${bad}</span>` : ''}</td>
     <td class="n" title="Summe der Wartezeit">${dur(sum('queue_ms'))}</td><td class="n" title="Ø">${ttfb.length ? dur(Math.round(ttfb.reduce((a, r) => a + r.ttfb_ms, 0) / ttfb.length)) : '–'}</td>
@@ -1318,7 +1327,36 @@ segment('recentSeg', v => { recentView = v; try { localStorage.setItem('llmb-rec
 document.querySelectorAll('#recentSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === recentView));
 const sessHue = id => parseInt(id.slice(0, 6), 16) % 360;
 const sessChip = (id, src, n) => `<span class="sess" style="color:hsl(${sessHue(id)} 62% 46%);background:hsl(${sessHue(id)} 62% 50% / .13)"
-  title="${esc((src || '') + (n ? `\n${n} Anfragen in der Liste` : '') + '\nAnklicken: nur diese Session zeigen')}" onclick='event.stopPropagation(); setSess(${attr(id)})'>${esc(id)}</span>`;
+  title="${esc((src || '') + (n ? `\n${n} Anfragen in der Liste` : '') + '\nAnklicken: Details zur Session')}" onclick='event.stopPropagation(); openSession(${attr(id)})'>${esc(id)}</span>`;
+async function openSession(id) {
+  let si;
+  try { const r = await fetch(`${base}/api/sessions/${enc(id)}`, {cache: 'no-store'}); si = await r.json(); if (!r.ok) throw new Error(si.error); }
+  catch (e) { si = {id, error: e.message}; }
+  const reqs = recent.filter(r => r.session === id);
+  $('s-title').innerHTML = `Session ${sessChip(id, si.source)} ${si.title ? '– ' + esc(si.title) : ''}`;
+  const row = (k, v) => v ? `<dt>${k}</dt><dd>${v}</dd>` : '';
+  const list = a => a?.length ? a.map(esc).join('<br>') : '';
+  const kvs = o => Object.entries(o || {}).map(([k, v]) => `<code>${esc(k)}</code>: ${esc(v)}`).join('<br>');
+  $('s-body').innerHTML = si.error ? `<p class="muted">${esc(si.error)}</p>` + (reqs.length ? `<dl class="kv">${row('Clients', list(uniq(reqs.map(r => r.client))))}${row('API-Token', list(uniq(reqs.map(r => r.token))))}</dl>` : '') :
+    `<dl class="kv">
+      ${row('Erkannt über', esc(si.source) + (si.explicit_id ? ` – <code>${esc(si.explicit_id)}</code>` : ''))}
+      ${row('Zeitraum', `${dateFmt(si.first)} – ${dateFmt(si.last)} · ${si.requests} Anfragen · ${si.turns} Nutzer-Nachrichten im letzten Verlauf`)}
+      ${row('API-Token', list(si.tokens))}
+      ${row('Quell-IP (Verbindung)', list(si.clients))}
+      ${row('X-Forwarded-For / X-Real-IP', list(si.forwarded))}
+      ${row('User-Agent', list(si.user_agents))}
+      ${row('Modelle', list(si.models))}
+      ${row('Header', kvs(si.headers))}
+      ${row('Felder im Body', kvs(si.fields))}
+      ${row('System-Prompt (Anfang)', si.system ? `<pre>${esc(si.system)}</pre>` : '')}
+      ${row('Erste Nachricht', si.first_message ? `<pre>${esc(si.first_message)}</pre>` : '')}
+      ${row('Letzte Nachricht', si.last_message && si.last_message !== si.first_message ? `<pre>${esc(si.last_message)}</pre>` : '')}
+    </dl>
+    <p class="hint">Nur im Speicher (die letzten 500 Sessions), nicht über einen Neustart. Quell-IP ist der direkte Absender – steht LiteLLM davor, ist das LiteLLM;
+      die ursprüngliche Adresse steht dann nur in X-Forwarded-For, wenn der Client sie mitschickt.</p>`;
+  $('s-filter').onclick = () => { $('sdlg').close(); if (sessFilter !== id) setSess(id); };
+  $('sdlg').showModal();
+}
 function setSess(id) {
   sessFilter = sessFilter === id ? '' : id;
   $('sessfilter').innerHTML = sessFilter ? `<span class="fpill">Session ${esc(sessFilter)} <button title="Filter entfernen" onclick="setSess('')">✕</button></span>` : '';

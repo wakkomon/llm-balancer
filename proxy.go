@@ -29,6 +29,7 @@ type Proxy struct {
 	pool      *Pool
 	access    *Access
 	users     *Users
+	sessions  sessionStore
 	transport *http.Transport
 	insecure  *http.Transport // for servers with "tls_skip_verify" (self-signed certificates)
 }
@@ -224,7 +225,12 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(body) > 0 && json.Unmarshal(body, &meta) == nil {
 		req.Model, req.Stream = meta.Model, meta.Stream
 	}
-	req.Session, req.SessionSrc = detectSession(r, body, tokenName)
+	var explicitSess string
+	req.Session, req.SessionSrc, explicitSess = detectSessionRaw(r, body, tokenName)
+	px.sessions.note(req.Session, req.SessionSrc, explicitSess, r, body, tokenName, req.Model)
+	if si := px.sessions.get(req.Session); si != nil {
+		req.SessTitle = si.Title
+	}
 	px.pool.applyRouter(req, r, body) // may replace the model before the server is chosen
 	if ollamaAPI {
 		req.ollamaAPI = true
