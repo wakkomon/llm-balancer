@@ -51,9 +51,10 @@ Open WebUI ───────────────►                    �
 * Konfiguration exportieren/importieren (mit oder ohne Geheimnisse)
 
 **Auswertung**
-* Live-Übersicht mit Zustand jedes Servers, laufenden Anfragen, tok/s, Gesamtdurchsatz und Warteschlange; aktive Verbindungen und Durchsatz pro API-Token
-* Statistik pro Tag, Server, Modell und API-Token (7 Tage bis 1 Jahr, Diagramm, CSV), **Tagesansicht der Auslastung** pro Stunde, Statistik der Warteschlange
-* Letzte 300 Anfragen mit Session-Erkennung, Retry-Weg, Router-Entscheidung, Tokens und Kosten
+* Live-Übersicht mit Zustand jedes Servers, laufenden Anfragen, Warteschlange, **Durchsatz (tok/s) und Anfragen pro Sekunde**; aktive Verbindungen und Durchsatz pro API-Token
+* Statistik pro Tag nach Server, **Gruppe**, Modell und API-Token (7 Tage bis 1 Jahr, Diagramm, CSV), **Tagesansicht der Auslastung** pro Stunde, Statistik der Warteschlange
+* Laufende und letzte 300 Anfragen, **nach Session gruppiert** (Summen pro Unterhaltung/Agenten-Lauf, Anfragen aufklappbar), mit Retry-Weg, Router-Entscheidung, Tokens und Kosten
+* **Session-Details**: Herkunft (Quell-IP, X-Forwarded-For, User-Agent, Header), Titel bzw. erste Nachricht, System-Prompt, letzte Nachricht und Antwort; Sessions bleiben über die **Kontext-Kompression** von Agenten hinweg erhalten
 * Prometheus-Metriken unter `/balancer/metrics`, JSON-API für alles, was die UI kann
 * Eine statische Go-Binary ohne Abhängigkeiten, Docker-Image `FROM scratch`; alles Veränderliche liegt in `/data`
 
@@ -199,8 +200,12 @@ Modelle, identifizierende Header (`X-Title`, `Referer`, Open-WebUI-Benutzer/-Cha
 Verlauf (bei Agenten meist ein Tool-Ergebnis oder ein Tool-Aufruf) und der Anfang der letzten erzeugten Antwort. Von dort lässt sich die Liste auf diese
 Session filtern. Die Details liegen nur im Speicher (die letzten 500 Sessions). Steht LiteLLM vor dem Balancer, ist die
 Quell-IP die von LiteLLM; die eigentliche Anwendung erkennt man dann am Token, an Headern oder am Prompt.
+„Kontext komprimiert: n×“ zeigt, dass ein Agent seinen Verlauf zusammengefasst hat und die Session danach am gleichen
+Verlauf wiedererkannt wurde (siehe [Sessions](#sessions)).
 
-![Letzte Anfragen](docs/screenshots/anfragen.png)
+![Letzte Anfragen nach Session, eine Session aufgeklappt](docs/screenshots/anfragen.png)
+
+![Session-Details](docs/screenshots/session-details.png)
 
 ### API-Zugriff
 
@@ -211,6 +216,8 @@ Preise, Tokens, Einnahmen im gewählten Zeitraum und Kostendeckel mit Füllstand
 Modelle, Preise und Deckel oder erzeugt einen neuen Token-Wert; **Sperren** lehnt alle Anfragen mit dem Token ab.
 
 ![API-Zugriff](docs/screenshots/api-zugriff.png)
+
+<img src="docs/screenshots/token-dialog.png" alt="API-Token bearbeiten" width="440">
 
 ### Report
 
@@ -452,7 +459,7 @@ geladene Modelle einen grünen Punkt; ihre Modellliste kommt aus `/api/tags`.
 ### Sessions
 
 Agenten wie Hermes schicken bei jedem Schritt die ganze Unterhaltung mit. „Letzte Anfragen“ zeigt deshalb pro Anfrage eine
-kurze Session-Kennung (8 Zeichen, Klick filtert darauf). Ermittelt wird sie in dieser Reihenfolge:
+kurze Session-Kennung (8 Zeichen, Klick öffnet die Session-Details). Ermittelt wird sie in dieser Reihenfolge:
 
 1. eine vom Client mitgeschickte ID: Header `X-Session-Id`, `Session-Id`, `X-Conversation-Id`, `X-Thread-Id`, `X-Chat-Id`
    oder ein Feld im Body (`session_id`, `conversation_id`, `thread_id`, `chat_id`, `metadata.session_id`,

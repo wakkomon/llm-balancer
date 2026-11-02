@@ -1345,7 +1345,7 @@ async function openSession(id) {
     `<dl class="kv">
       ${row('Erkannt über', esc(si.source) + (si.explicit_id ? ` – <code>${esc(si.explicit_id)}</code>` : ''))}
       ${row('Kontext komprimiert', si.linked?.length ? `${si.linked.length}× – danach am gleichen Verlauf (gemeinsame Nachrichten) wiedererkannt` : '')}
-      ${row('Zeitraum', `${dateFmt(si.first)} – ${dateFmt(si.last)} · ${si.requests} Anfragen · ${si.turns} Nutzer-Nachrichten im letzten Verlauf`)}
+      ${row('Zeitraum', `${dateFmt(si.first)} – ${dateFmt(si.last)} · ${si.requests} ${si.requests === 1 ? 'Anfrage' : 'Anfragen'} · ${si.turns} ${si.turns === 1 ? 'Nutzer-Nachricht' : 'Nutzer-Nachrichten'} im letzten Verlauf`)}
       ${row('API-Token', list(si.tokens))}
       ${row('Quell-IP (Verbindung)', list(si.clients))}
       ${row('X-Forwarded-For / X-Real-IP', list(si.forwarded))}
