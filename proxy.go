@@ -30,6 +30,8 @@ type Proxy struct {
 	access    *Access
 	users     *Users
 	sessions  sessionStore
+	mcp       *MCPTokens     // MCP interface tokens
+	ollama    *ollamaManager // Ollama model management (UI + MCP)
 	transport *http.Transport
 	insecure  *http.Transport // for servers with "tls_skip_verify" (self-signed certificates)
 }

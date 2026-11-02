@@ -43,6 +43,7 @@ type ConfigFile struct {
 	Tokens        *[]tokenExport   `json:"tokens,omitempty"`
 	Notify        *NotifyConfig    `json:"notify,omitempty"`
 	Users         *[]User          `json:"users,omitempty"`
+	MCPTokens     *[]MCPToken      `json:"mcp_tokens,omitempty"`
 }
 
 func parseSections(v string) (map[string]bool, error) {
@@ -67,7 +68,7 @@ func parseSections(v string) (map[string]bool, error) {
 	return out, nil
 }
 
-func exportConfig(pool *Pool, acc *Access, users *Users, sec map[string]bool, secrets bool) ConfigFile {
+func exportConfig(pool *Pool, acc *Access, users *Users, mcp *MCPTokens, sec map[string]bool, secrets bool) ConfigFile {
 	f := ConfigFile{Format: configFormat, FormatVersion: 1, Version: versionString(), ExportedAt: time.Now(), WithSecrets: secrets}
 	if sec["servers"] {
 		pool.mu.Lock()
@@ -95,6 +96,10 @@ func exportConfig(pool *Pool, acc *Access, users *Users, sec map[string]bool, se
 		}
 		acc.mu.Unlock()
 		f.Tokens = &ts
+	}
+	if sec["tokens"] && mcp != nil {
+		ms := mcp.List(secrets)
+		f.MCPTokens = &ms
 	}
 	if sec["notify"] && pool.notifier != nil {
 		pool.notifier.mu.Lock()
@@ -126,7 +131,7 @@ type importResult struct {
 	Warnings []string `json:"warnings"`
 }
 
-func importConfig(pool *Pool, acc *Access, users *Users, f ConfigFile, sec map[string]bool) (importResult, error) {
+func importConfig(pool *Pool, acc *Access, users *Users, mcp *MCPTokens, f ConfigFile, sec map[string]bool) (importResult, error) {
 	res := importResult{Applied: []string{}, Warnings: []string{}}
 	if f.Format != configFormat {
 		return res, httpErr{400, errors.New("keine Konfigurationsdatei des LLM-Balancers")}
@@ -192,7 +197,11 @@ func importConfig(pool *Pool, acc *Access, users *Users, f ConfigFile, sec map[s
 	}
 	if sec["tokens"] && f.Tokens != nil && acc != nil {
 		n := acc.importTokens(*f.Tokens, &res)
-		res.Applied = append(res.Applied, fmt.Sprintf("%d API-Tokens", n))
+		msg := fmt.Sprintf("%d API-Tokens", n)
+		if f.MCPTokens != nil && mcp != nil {
+			msg += fmt.Sprintf(", %d MCP-Tokens", mcp.importTokens(*f.MCPTokens, &res))
+		}
+		res.Applied = append(res.Applied, msg)
 	}
 	if sec["notify"] && f.Notify != nil && pool.notifier != nil {
 		c := *f.Notify
@@ -389,7 +398,7 @@ func (u *Users) applyImport(list []*User) error {
 	return u.saveLocked()
 }
 
-func registerConfigIO(mux *http.ServeMux, pre string, pool *Pool, acc *Access, users *Users, token string) {
+func registerConfigIO(mux *http.ServeMux, pre string, pool *Pool, acc *Access, users *Users, mcp *MCPTokens, token string) {
 	mux.HandleFunc("GET "+pre+"/api/config/export", adminAuth(token, func(w http.ResponseWriter, r *http.Request) {
 		sec, err := parseSections(r.URL.Query().Get("sections"))
 		if err != nil {
@@ -397,7 +406,7 @@ func registerConfigIO(mux *http.ServeMux, pre string, pool *Pool, acc *Access, u
 			return
 		}
 		secrets := r.URL.Query().Get("secrets") == "1" || r.URL.Query().Get("secrets") == "true"
-		f := exportConfig(pool, acc, users, sec, secrets)
+		f := exportConfig(pool, acc, users, mcp, sec, secrets)
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="llm-balancer-config_%s.json"`, time.Now().Format("2006-01-02")))
@@ -421,7 +430,7 @@ func registerConfigIO(mux *http.ServeMux, pre string, pool *Pool, acc *Access, u
 			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("Datei nicht lesbar: %v", err))
 			return
 		}
-		res, err := importConfig(pool, acc, users, f, sec)
+		res, err := importConfig(pool, acc, users, mcp, f, sec)
 		if err != nil {
 			writeResult(w, err)
 			return

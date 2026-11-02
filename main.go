@@ -61,6 +61,7 @@ func main() {
 	px.access = access
 	pool.access = access
 	px.users = NewUsers(cfg.DataDir)
+	px.mcp = NewMCPTokens(cfg.DataDir)
 	if err := px.users.Bootstrap(os.Getenv("ADMIN_USER"), os.Getenv("ADMIN_PASSWORD")); err != nil {
 		log.Fatalf("ADMIN_USER/ADMIN_PASSWORD: %v", err)
 	}
@@ -116,6 +117,9 @@ func main() {
 	} else {
 		log.Printf("no API tokens configured: the LLM API is open to everyone who can reach it")
 	}
+	if n := len(px.mcp.List(false)); n > 0 {
+		log.Printf("MCP interface at %s (%d MCP token(s))", mcpPath, n)
+	}
 	if cfg.AdminToken == "" {
 		log.Printf("ADMIN_TOKEN not set: anyone who can reach the UI can change the backends")
 	}
@@ -128,6 +132,7 @@ func main() {
 		defer cancel()
 		_ = srv.Shutdown(sctx)
 		persistAll(pool, access) // again, including requests that finished during shutdown
+		px.mcp.Flush()
 		close(statsDone)
 	}()
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -170,8 +175,12 @@ func newMux(cfg Config, pool *Pool, px *Proxy) http.Handler {
 		px.users = users
 	}
 	registerUsers(ui, pre, users, cfg.AdminToken)
-	registerConfigIO(ui, pre, pool, px.access, users, cfg.AdminToken)
-	registerOllama(ui, pre, px, cfg.AdminToken)
+	if px.mcp == nil {
+		px.mcp = NewMCPTokens("")
+	}
+	registerMCPTokens(ui, pre, px.mcp, cfg.AdminToken)
+	registerConfigIO(ui, pre, pool, px.access, users, px.mcp, cfg.AdminToken)
+	px.ollama = registerOllama(ui, pre, px, cfg.AdminToken)
 	registerRouters(ui, pre, pool, cfg.AdminToken)
 	registerSessions(ui, pre, px)
 	ui.HandleFunc("GET "+pre+"/api/recent", func(w http.ResponseWriter, r *http.Request) {
@@ -191,6 +200,10 @@ func newMux(cfg Config, pool *Pool, px *Proxy) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == pre || strings.HasPrefix(r.URL.Path, pre+"/") {
 			guarded.ServeHTTP(w, r)
+			return
+		}
+		if r.URL.Path == mcpPath {
+			px.serveMCP(w, r)
 			return
 		}
 		px.ServeHTTP(w, r)

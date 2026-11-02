@@ -47,6 +47,7 @@ Open WebUI ───────────────►                    �
 * API-Tokens für die LLM-API mit **erlaubten Modellen**, Preisen (eingehend), Kostendeckel und Sperre
 * Preise und Kostendeckel pro Server (ausgehend) – mit Saldo in der Statistik
 * **Benutzerverwaltung** für die Web-UI mit Rollen Administrator / Operator / Betrachter
+* **MCP-Schnittstelle** für KI-Agenten (Status, Statistik, Anfragen, Sessions abfragen; Server/Gruppen schalten, Anfragen abbrechen, Ollama-Modelle verwalten) – geschützt mit eigenen MCP-Tokens mit Rolle
 * E-Mail-Benachrichtigung bei Ausfällen, Fehlern und erreichten Kostendeckeln
 * Konfiguration exportieren/importieren (mit oder ohne Geheimnisse)
 
@@ -219,6 +220,12 @@ Modelle, Preise und Deckel oder erzeugt einen neuen Token-Wert; **Sperren** lehn
 
 <img src="docs/screenshots/token-dialog.png" alt="API-Token bearbeiten" width="440">
 
+Darunter steht **MCP-Zugriff**: die Tokens für die [MCP-Schnittstelle](#mcp-schnittstelle) mit Rolle, Status, zuletzt
+benutzt und Zahl der Aufrufe. Beim Erstellen zeigt die UI den Token einmal an – zusammen mit einer fertigen
+Client-Konfiguration zum Kopieren.
+
+![MCP-Zugriff](docs/screenshots/mcp.png)
+
 ### Report
 
 Das Ereignisprotokoll (Server nicht erreichbar / wieder da / liefert Fehler, Kostendeckel erreicht / frei), filterbar
@@ -278,7 +285,7 @@ Anmeldung. Rollen:
 
 ### Konfiguration sichern und übertragen
 
-Einstellungen → **Konfiguration**: Export als JSON-Datei mit wählbaren Bereichen – Server und Gruppen, API-Tokens,
+Einstellungen → **Konfiguration**: Export als JSON-Datei mit wählbaren Bereichen – Server und Gruppen, API-Tokens (inkl. MCP-Tokens),
 E-Mail-Benachrichtigung, Benutzer. **Passwörter und Tokens** (Bearer-Tokens der Server, SMTP-Passwort, Hashes der
 API-Tokens und Benutzer-Passwörter) kommen nur mit, wenn angehakt – dann ist die Datei eine vollständige Sicherung und
 muss geschützt werden. Beim **Import** zeigt die UI, was in der Datei steht; die gewählten Bereiche werden ersetzt.
@@ -477,6 +484,42 @@ Session-Details zeigen, wie oft das passiert ist. Schickt der Client eine eigene
 
 Die Kennung ist ein Hash (zusammen mit dem API-Token), die eigentliche ID oder der Text wird nicht angezeigt. Der Tooltip
 nennt die Quelle. Startet ein Agent mit identischem Prompt neu, landen beide Läufe in derselben Session.
+
+### MCP-Schnittstelle
+
+Unter `/mcp` (gleicher Port wie die LLM-API, z. B. `http://balancer:8080/mcp`) spricht der Balancer das
+[Model Context Protocol](https://modelcontextprotocol.io) (Transport „Streamable HTTP“, JSON-Antworten). Ein KI-Agent –
+Claude Desktop/Code, Cursor, LibreChat, Hermes … – kann damit den Balancer abfragen und steuern.
+
+**Zugriff nur mit MCP-Token** (`Authorization: Bearer mcp-…`). MCP-Tokens werden unter API-Zugriff → MCP-Zugriff
+angelegt, gelten nur für `/mcp` (nicht für die LLM-API, und API-Tokens nicht für MCP) und werden nur als SHA-256-Hash in
+`/data/mcp.json` gespeichert. Ohne MCP-Token ist die Schnittstelle zu (jede Anfrage bekommt 401). Jedes Token hat eine
+Rolle, die bestimmt, welche Tools der Agent sieht und aufrufen darf:
+
+| Rolle | Tools |
+|---|---|
+| Betrachter | `get_status` (Slots, Warteschlange, tok/s, Anfragen/s, Server mit laufenden Anfragen, Gruppen, Router) · `list_requests` (laufend/wartend/fertig, Filter nach Server, Token, Modell, Session, Fehler) · `list_sessions` · `get_session` (Herkunft, Titel, letzte Nachricht/Antwort) · `get_statistics` (Zeitraum; nach Server, Gruppe, Modell, Token, Tag) · `get_day_view` (Anfragen und Auslastung pro Stunde vs. Ø) · `list_models` · `list_ollama_models` · `test_route` · `list_events` |
+| Operator | zusätzlich `set_server_enabled` · `set_group_enabled` · `stop_request` · `stop_server_requests` · `unload_model` |
+| Administrator | zusätzlich `pull_model` · `get_model_jobs` · `delete_model` (Ollama) |
+
+Änderungen über MCP stehen im Log mit dem Namen des Tokens. Beispiel für die Client-Konfiguration (`.mcp.json` von
+Claude Code; andere Clients sehen ähnlich aus):
+
+```json
+{
+  "mcpServers": {
+    "llm-balancer": {
+      "type": "http",
+      "url": "http://balancer:8080/mcp",
+      "headers": { "Authorization": "Bearer mcp-…" }
+    }
+  }
+}
+```
+
+Clients, die nur stdio können, binden die Schnittstelle über eine Brücke wie
+`npx mcp-remote http://balancer:8080/mcp --header "Authorization: Bearer mcp-…"` an. Für Zugriff von außen gehört
+`/mcp` wie die UI hinter HTTPS.
 
 ### Tagesansicht und Warteschlange
 
@@ -695,6 +738,9 @@ Die Bedienung der Web-UI ist im Abschnitt [Bedienung](#bedienung) beschrieben. J
 | POST | `/balancer/api/ollama/jobs/{id}/cancel` · `/jobs/clear` | Download abbrechen / erledigte ausblenden |
 | GET | `/balancer/api/stats/day?days=7` | Tagesansicht: Stundenwerte heute und Ø der letzten Tage, Warteschlange pro Stunde |
 | POST | `/balancer/api/stats/reset` | Statistik löschen |
+| GET/POST | `/balancer/api/mcp-tokens` | MCP-Tokens auflisten / erzeugen `{"name","role"}` (Antwort `{"token":…}`, nur einmal) |
+| PUT / DELETE | `/balancer/api/mcp-tokens/{name}` | ändern `{"name","role","disabled","renew":true}` (Felder optional; `renew` liefert einen neuen Wert) / löschen |
+| POST | `/mcp` | [MCP-Schnittstelle](#mcp-schnittstelle) (JSON-RPC, `Authorization: Bearer mcp-…`) |
 
 ## Fehlersuche
 

@@ -3,6 +3,15 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.12.0 – 2026-11-02
+
+- **MCP-Schnittstelle** unter `/mcp` (Model Context Protocol, Streamable HTTP): KI-Agenten können Status, Anfragen,
+  Sessions, Statistik, Tagesansicht, Modelle und Ereignisse abfragen, Router testen, Server und Gruppen schalten,
+  Anfragen abbrechen und Ollama-Modelle entladen, laden und löschen
+- Geschützt mit eigenen **MCP-Tokens mit Rolle** (Betrachter / Operator / Administrator) – die Rolle bestimmt, welche
+  Tools der Agent sieht. Verwaltung unter API-Zugriff → MCP-Zugriff mit fertiger Client-Konfiguration zum Kopieren;
+  gespeichert nur als Hash in `/data/mcp.json`, im Konfigurations-Export enthalten
+
 ## 1.11.4 – 2026-11-02
 
 - Anleitung und Screenshots auf den aktuellen Stand gebracht (Anfragen/s, Statistik nach Gruppe, Sessions mit

@@ -263,3 +263,32 @@ var errSessionGone = errorString("keine Details mehr zu dieser Session (nur die 
 type errorString string
 
 func (e errorString) Error() string { return string(e) }
+
+// SessionBrief is the short form for lists (MCP list_sessions).
+type SessionBrief struct {
+	ID       string    `json:"id"`
+	Title    string    `json:"title"`
+	First    time.Time `json:"first"`
+	Last     time.Time `json:"last"`
+	Requests int       `json:"requests"`
+	Tokens   []string  `json:"tokens,omitempty"`
+	Clients  []string  `json:"clients,omitempty"`
+	Models   []string  `json:"models,omitempty"`
+	Source   string    `json:"source"`
+}
+
+// list returns the most recently active sessions first.
+func (s *sessionStore) list(limit int) []SessionBrief {
+	s.mu.Lock()
+	out := []SessionBrief{}
+	for _, si := range s.m {
+		out = append(out, SessionBrief{ID: si.ID, Title: si.Title, First: si.First, Last: si.Last, Requests: si.Requests,
+			Tokens: append([]string{}, si.Tokens...), Clients: append([]string{}, si.Clients...), Models: append([]string{}, si.Models...), Source: si.Source})
+	}
+	s.mu.Unlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].Last.After(out[j].Last) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}

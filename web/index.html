@@ -483,6 +483,18 @@ tr.child td{background:var(--bg);font-size:12px} tr.child td:first-child{padding
   </table></div>
 
   <p class="srcnote">Preise und Tokens hier aus Sicht der Anwendung: Aus = gesendeter Prompt, Ein = empfangene Antwort. Ausgehende Preise (was ein Server kostet) stellst du beim jeweiligen Server ein. Die Einnahmen pro Server und Modell stehen im Tab Statistik.</p>
+
+  <div class="sechead" style="margin-top:22px">
+    <h2>MCP-Zugriff</h2>
+    <div class="row"><span class="srcnote">Für KI-Agenten: Status, Statistik und Steuerung über das Model Context Protocol</span>
+      <button class="primary need-admin" onclick="openMCP(null)">+ MCP-Token erstellen</button></div>
+  </div>
+  <div class="srcnote" style="margin-bottom:8px">Endpunkt <code id="mcpurl"></code> (Streamable HTTP), Header <code>Authorization: Bearer mcp-…</code>.
+    MCP-Tokens gelten nur hier, nicht für die LLM-API. <b>Betrachter</b>: lesen · <b>Operator</b>: + Server/Gruppen schalten, Anfragen abbrechen, Modelle entladen · <b>Administrator</b>: + Ollama-Modelle laden und löschen.</div>
+  <div class="tbl"><table data-sort>
+    <thead><tr><th>Name</th><th>Rolle</th><th>Status</th><th>Token</th><th data-type="date">Erstellt</th><th data-type="date">Zuletzt benutzt</th><th class="n">Aufrufe</th><th data-nosort></th></tr></thead>
+    <tbody id="mcptokens"></tbody>
+  </table></div>
   </div>
   <div id="page-routers" hidden>
   <div class="sechead">
@@ -674,6 +686,32 @@ tr.child td{background:var(--bg);font-size:12px} tr.child td:first-child{padding
   <div class="btns">
     <button onclick="navigator.clipboard?.writeText($('t-plain').value).then(() => toast('Kopiert'), () => { $('t-plain').select(); toast('Bitte manuell kopieren'); })">Kopieren</button>
     <button class="primary" onclick="$('tshow').close()">Fertig</button>
+  </div>
+</dialog>
+<dialog id="mdlg">
+  <form id="mform" method="dialog">
+    <h3 id="mtitle">MCP-Token</h3>
+    <label for="m-name">Name</label><input id="m-name" autocomplete="off" placeholder="z. B. hermes-ops">
+    <label for="m-role">Rolle</label>
+    <select id="m-role"><option value="viewer">Betrachter – Status, Anfragen, Sessions, Statistik lesen</option><option value="operator">Operator – zusätzlich Server/Gruppen schalten, Anfragen abbrechen, Modelle entladen</option><option value="admin">Administrator – zusätzlich Ollama-Modelle laden und löschen</option></select>
+    <div id="m-renewrow"><label class="chk"><input type="checkbox" id="m-renew"> neuen Token-Wert erzeugen (der alte wird sofort ungültig)</label></div>
+    <div class="formerr" id="m-err"></div>
+    <div class="btns">
+      <button type="button" onclick="$('mdlg').close()">Abbrechen</button>
+      <button type="submit" class="primary">Speichern</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="mshow" class="wide">
+  <h3>MCP-Token</h3>
+  <p class="srcnote" style="margin:0 0 10px">Jetzt kopieren – er wird nicht noch einmal angezeigt.</p>
+  <input id="m-plain" readonly style="font-family:var(--mono);font-size:13px">
+  <label for="m-conf" style="margin-top:12px">Beispiel für die Client-Konfiguration (z. B. Claude Code <code>.mcp.json</code>, Cursor, LibreChat)</label>
+  <textarea id="m-conf" rows="11" readonly style="font-family:var(--mono);font-size:12px"></textarea>
+  <div class="btns">
+    <button onclick="navigator.clipboard?.writeText($('m-plain').value).then(() => toast('Kopiert'), () => { $('m-plain').select(); toast('Bitte manuell kopieren'); })">Token kopieren</button>
+    <button onclick="navigator.clipboard?.writeText($('m-conf').value).then(() => toast('Kopiert'), () => toast('Bitte manuell kopieren'))">Konfiguration kopieren</button>
+    <button class="primary" onclick="$('mshow').close()">Fertig</button>
   </div>
 </dialog>
 <dialog id="rdlg" class="wide">
@@ -1422,6 +1460,7 @@ async function loadTokens(interactive) {
   }
   if (!resp.ok) return;
   tokenList = await resp.json();
+  loadMCP();
   if (tokRange) {
     try { tokStats = await (await fetch(`${base}/api/stats?days=${tokRange}`, {cache: 'no-store'})).json(); } catch { return; }
   }
@@ -1525,6 +1564,66 @@ $('tform').addEventListener('submit', async ev => {
 });
 async function deleteToken(name) {
   if (confirm(`Token „${name}“ löschen? Clients mit diesem Token bekommen danach 401.`)) { await call('DELETE', `/tokens/${enc(name)}`); loadTokens(); }
+}
+// ---------------- MCP tokens ----------------
+let mcpList = [], mcpEdit = null;
+const mcpURL = () => location.origin + '/mcp';
+async function loadMCP() {
+  $('mcpurl').textContent = mcpURL();
+  let resp;
+  try { resp = await fetch(base + '/api/mcp-tokens', {cache: 'no-store'}); } catch { return; }
+  if (!resp.ok) return;
+  mcpList = await resp.json();
+  setHTML($('mcptokens'), mcpList.length ? mcpList.map(t => `<tr>
+    <td>${esc(t.name)}</td><td data-v="${({viewer: 1, operator: 2, admin: 3})[t.role]}"><span class="rolebadge ${esc(t.role)}">${esc(ROLE[t.role] || t.role)}</span></td>
+    <td>${t.disabled ? '<span class="tstate off">gesperrt</span>' : '<span class="tstate">aktiv</span>'}</td>
+    <td style="font-family:var(--mono)">…${esc(t.hint)}</td>
+    <td data-v="${Date.parse(t.created) || ''}">${dateFmt(t.created)}</td>
+    <td data-v="${Date.parse(t.last_used) || ''}">${t.last_used && !t.last_used.startsWith('0001') ? dateFmt(t.last_used) : '–'}</td>
+    <td class="n">${num(t.calls || 0)}</td>
+    <td style="text-align:right;white-space:nowrap"><button class="need-admin" onclick='openMCP(${attr(t.name)})'>Bearbeiten</button>
+      <button class="need-admin" onclick='toggleMCP(${attr(t.name)}, ${!t.disabled})'>${t.disabled ? 'Freigeben' : 'Sperren'}</button>
+      <button class="danger need-admin" onclick='deleteMCP(${attr(t.name)})'>Löschen</button></td></tr>`).join('')
+    : '<tr><td colspan="8" class="empty">Keine MCP-Tokens – die MCP-Schnittstelle ist damit abgeschaltet.</td></tr>');
+}
+function openMCP(name) {
+  mcpEdit = name;
+  const t = mcpList.find(x => x.name === name);
+  $('mtitle').textContent = name ? `MCP-Token „${name}“ bearbeiten` : 'MCP-Token erstellen';
+  $('m-name').value = name || ''; $('m-role').value = t?.role || 'viewer';
+  $('m-renew').checked = false; $('m-renewrow').hidden = !name; $('m-err').textContent = '';
+  $('mdlg').showModal(); $('m-name').focus();
+}
+function showMCPToken(name, tok) {
+  $('m-plain').value = tok;
+  $('m-conf').value = JSON.stringify({mcpServers: {'llm-balancer': {type: 'http', url: mcpURL(), headers: {Authorization: 'Bearer ' + tok}}}}, null, 2);
+  $('mshow').showModal(); $('m-plain').select();
+}
+$('mform').addEventListener('submit', async ev => {
+  ev.preventDefault();
+  $('formerr').textContent = '';
+  const name = $('m-name').value.trim();
+  let r;
+  if (!mcpEdit) r = await call('POST', '/mcp-tokens', {name, role: $('m-role').value});
+  else {
+    const body = {role: $('m-role').value};
+    if (name !== mcpEdit) body.name = name;
+    if ($('m-renew').checked) {
+      if (!confirm('Neuen Token-Wert erzeugen? Clients mit dem alten Wert bekommen sofort 401.')) return;
+      body.renew = true;
+    }
+    r = await call('PUT', `/mcp-tokens/${enc(mcpEdit)}`, body);
+  }
+  if (!r) { $('m-err').textContent = $('formerr').textContent; return; }
+  $('mdlg').close(); toast('Gespeichert'); loadMCP();
+  if (r.token) showMCPToken(name, r.token);
+});
+async function toggleMCP(name, disable) {
+  if (disable && !confirm(`MCP-Token „${name}“ sperren?`)) return;
+  if (await call('PUT', `/mcp-tokens/${enc(name)}`, {disabled: disable})) loadMCP();
+}
+async function deleteMCP(name) {
+  if (confirm(`MCP-Token „${name}“ löschen? Clients damit bekommen danach 401.`)) { await call('DELETE', `/mcp-tokens/${enc(name)}`); loadMCP(); }
 }
 function renderAccessNote(st) {
   $('accessnote').innerHTML = st.access_auth
