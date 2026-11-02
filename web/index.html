@@ -1355,7 +1355,9 @@ async function openSession(id) {
       ${row('Felder im Body', kvs(si.fields))}
       ${row('System-Prompt (Anfang)', si.system ? `<pre>${esc(si.system)}</pre>` : '')}
       ${row('Erste Nachricht', si.first_message ? `<pre>${esc(si.first_message)}</pre>` : '')}
-      ${row('Letzte Nachricht', si.last_message && si.last_message !== si.first_message ? `<pre>${esc(si.last_message)}</pre>` : '')}
+      ${row('Letzte Nutzer-Nachricht', si.last_user_message && si.last_user_message !== si.first_message ? `<pre>${esc(si.last_user_message)}</pre>` : '')}
+      ${row(`Letzte Nachricht im Verlauf${si.last_role ? ` <span class="muted">(${esc({user: 'Nutzer', assistant: 'Assistent', tool: 'Tool-Ergebnis'}[si.last_role] || si.last_role)})</span>` : ''}`, si.last_message ? `<pre>${esc(si.last_message)}</pre>` : '')}
+      ${row('Letzte Antwort', si.last_answer ? `<pre>${esc(si.last_answer)}</pre>` : '')}
     </dl>
     <p class="hint">Nur im Speicher (die letzten 500 Sessions), nicht über einen Neustart. Quell-IP ist der direkte Absender – steht LiteLLM davor, ist das LiteLLM;
       die ursprüngliche Adresse steht dann nur in X-Forwarded-For, wenn der Client sie mitschickt.</p>`;

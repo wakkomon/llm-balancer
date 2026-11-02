@@ -32,9 +32,12 @@ type SessionInfo struct {
 	Title      string            `json:"title"`             // best guess: what the session is about
 	System     string            `json:"system,omitempty"`  // start of the system prompt
 	FirstMsg   string            `json:"first_message,omitempty"`
-	LastMsg    string            `json:"last_message,omitempty"`
-	Turns      int               `json:"turns"`            // user turns in the latest request
-	Linked     []string          `json:"linked,omitempty"` // later fingerprints joined after context compression
+	LastMsg    string            `json:"last_message,omitempty"`      // latest message of the conversation (any role)
+	LastRole   string            `json:"last_role,omitempty"`         // user | assistant | tool
+	LastUser   string            `json:"last_user_message,omitempty"` // latest user message
+	LastAnswer string            `json:"last_answer,omitempty"`       // start of the latest generated answer
+	Turns      int               `json:"turns"`                       // user turns in the latest request
+	Linked     []string          `json:"linked,omitempty"`            // later fingerprints joined after context compression
 }
 
 type sessionStore struct {
@@ -169,9 +172,56 @@ func (s *sessionStore) note(id, src, explicit, linkedFrom string, r *http.Reques
 		si.System = clip(t, 500)
 	}
 	if last := lastUserText(turns); last != "" {
-		si.LastMsg = clip(strings.TrimSpace(last), 400)
+		si.LastUser = clip(strings.TrimSpace(last), 400)
+	}
+	if role, text := lastMessage(doc); text != "" {
+		si.LastRole, si.LastMsg = role, clip(text, 400)
 	}
 	si.Turns = users
+}
+
+// lastMessage: role and text of the newest non-system message (agents append tool results and
+// assistant turns while the user message stays the same).
+func lastMessage(doc map[string]any) (string, string) {
+	msgs, _ := doc["messages"].([]any)
+	if msgs == nil {
+		msgs, _ = doc["input"].([]any)
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m, ok := msgs[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		role, _ := m["role"].(string)
+		if role == "system" || role == "developer" {
+			continue
+		}
+		text := strings.TrimSpace(systemReminderRe.ReplaceAllString(contentText(m["content"]), ""))
+		if text == "" {
+			if tc, ok := m["tool_calls"].([]any); ok && len(tc) > 0 { // assistant turn that only calls tools
+				var names []string
+				for _, c := range tc {
+					if cm, ok := c.(map[string]any); ok {
+						if f, ok := cm["function"].(map[string]any); ok {
+							if n, ok := f["name"].(string); ok {
+								names = append(names, n)
+							}
+						}
+					}
+				}
+				text = "→ Tool-Aufruf: " + strings.Join(names, ", ")
+			} else if m["type"] == "function_call_output" {
+				text = clip(jsonString(m["output"]), 400)
+			}
+		}
+		if text != "" {
+			if role == "" {
+				role, _ = m["type"].(string)
+			}
+			return role, text
+		}
+	}
+	return "", ""
 }
 
 func jsonString(v any) string { b, _ := json.Marshal(v); return string(b) }

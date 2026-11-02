@@ -195,7 +195,8 @@ früher. Unter der Session-Kennung steht der Anfang der ersten Nachricht (oder e
 Ein Klick auf eine **Session**-Kennung öffnet die Details: wie die Session erkannt wurde (mit der ID des Clients, falls
 er eine schickt), Zeitraum und Zahl der Anfragen, API-Token, Quell-IP der Verbindung, `X-Forwarded-For`, User-Agent,
 Modelle, identifizierende Header (`X-Title`, `Referer`, Open-WebUI-Benutzer/-Chat …) und Body-Felder (`user`,
-`metadata` …), der Anfang des System-Prompts sowie erste und letzte Nachricht. Von dort lässt sich die Liste auf diese
+`metadata` …), der Anfang des System-Prompts, die erste und die letzte Nutzer-Nachricht, die letzte Nachricht im
+Verlauf (bei Agenten meist ein Tool-Ergebnis oder ein Tool-Aufruf) und der Anfang der letzten erzeugten Antwort. Von dort lässt sich die Liste auf diese
 Session filtern. Die Details liegen nur im Speicher (die letzten 500 Sessions). Steht LiteLLM vor dem Balancer, ist die
 Quell-IP die von LiteLLM; die eigentliche Anwendung erkennt man dann am Token, an Headern oder am Prompt.
 

@@ -69,8 +69,8 @@ func requestKeys(body []byte) (keys []uint64, sys uint64) {
 }
 
 type sessLink struct {
-	token string
-	sys   uint64
+	token  string
+	sys    uint64
 	keys   map[uint64]time.Time
 	last   time.Time
 	answer uint64 // key of the latest generated answer
@@ -159,12 +159,20 @@ func (s *sessionStore) resolve(id, src, token string, body []byte) (string, stri
 // noteAnswer remembers the start of a generated answer – the next request (maybe already compressed)
 // carries it as an assistant message.
 func (s *sessionStore) noteAnswer(id, text string) {
-	k := msgKey(text)
-	if id == "" || k == 0 {
+	if id == "" {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if si := s.m[id]; si != nil {
+		if t := strings.TrimSpace(thinkRe.ReplaceAllString(text, "")); t != "" {
+			si.LastAnswer = clip(t, 400)
+		}
+	}
+	k := msgKey(text)
+	if k == 0 {
+		return
+	}
 	if l := s.links[id]; l != nil {
 		l.add(k, time.Now())
 		l.answer = k

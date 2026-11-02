@@ -255,3 +255,25 @@ func TestSessionSurvivesCompression(t *testing.T) {
 		t.Error("normalization")
 	}
 }
+
+func TestSessionLastMessages(t *testing.T) {
+	doc := map[string]any{}
+	json.Unmarshal([]byte(`{"messages":[{"role":"system","content":"s"},{"role":"user","content":"Aufgabe"},
+		{"role":"assistant","content":null,"tool_calls":[{"function":{"name":"read_file"}}]},{"role":"tool","content":"Inhalt der Datei"}]}`), &doc)
+	if r, txt := lastMessage(doc); r != "tool" || txt != "Inhalt der Datei" {
+		t.Errorf("last: %s %q", r, txt)
+	}
+	doc["messages"] = doc["messages"].([]any)[:3]
+	if r, txt := lastMessage(doc); r != "assistant" || txt != "→ Tool-Aufruf: read_file" {
+		t.Errorf("tool call: %s %q", r, txt)
+	}
+	var s sessionStore
+	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	s.note("x", "Fingerprint", "", "", req, []byte(`{"messages":[{"role":"user","content":"Aufgabe"},{"role":"tool","content":"Ergebnis"}]}`), "", "m")
+	s.resolve("x", "Fingerprint", "", nil)
+	s.noteAnswer("x", "<think>hm</think>Fertig: alles erledigt.")
+	si := s.get("x")
+	if si.LastMsg != "Ergebnis" || si.LastRole != "tool" || si.LastUser != "Aufgabe" || si.LastAnswer != "Fertig: alles erledigt." {
+		t.Errorf("info: %+v", si)
+	}
+}

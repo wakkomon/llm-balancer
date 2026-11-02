@@ -3,6 +3,12 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.11.3 – 2026-11-02
+
+- Session-Details: „letzte Nachricht“ fehlte bei Agenten-Läufen (die Nutzer-Nachricht bleibt dort gleich und wurde
+  deshalb ausgeblendet). Jetzt getrennt: letzte Nutzer-Nachricht, letzte Nachricht im Verlauf (mit Rolle – auch
+  Tool-Ergebnisse und Tool-Aufrufe) und der Anfang der letzten erzeugten Antwort
+
 ## 1.11.2 – 2026-11-02
 
 - „Letzte Anfragen“ zeigt auch laufende (▶ Prompt … / streamt) und wartende Anfragen – bisher erschienen sie erst nach
