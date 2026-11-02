@@ -3,6 +3,13 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.11.1 – 2026-11-02
+
+- **Sessions überstehen Kontext-Kompression**: ersetzt ein Agent ältere Nachrichten durch eine Zusammenfassung, wird der
+  neue Fingerabdruck über gemeinsame jüngste Nachrichten bzw. die letzte Antwort der bisherigen Session zugeordnet
+  (gleicher API-Token und System-Prompt, letzte 3 h; von mehreren Sessions geteilte Texte zählen nicht).
+  Die Session-Details zeigen „Kontext komprimiert: n×“
+
 ## 1.11.0 – 2026-11-02
 
 - **Session-Details** in „Letzte Anfragen“: Klick auf die Session-Kennung öffnet ein Fenster mit Erkennung (inkl. vom

@@ -458,6 +458,14 @@ kurze Session-Kennung (8 Zeichen, Klick filtert darauf). Ermittelt wird sie in d
 2. sonst ein Fingerabdruck aus System-Prompt und erster Nutzer-Nachricht – gleich für alle Schritte einer Unterhaltung,
    verschieden für zwei Aufgaben, auch wenn sie vom gleichen API-Token und Rechner kommen
 
+**Kontext-Kompression:** Wird der Verlauf zu lang, ersetzen Agenten wie Hermes ältere Nachrichten durch eine
+Zusammenfassung – die erste Nachricht und damit der Fingerabdruck ändern sich. Der Balancer merkt sich deshalb pro
+Session die letzten Nachrichten (nur als Hash) und den Anfang jeder erzeugten Antwort. Taucht ein neuer Fingerabdruck
+auf, der mit demselben API-Token und System-Prompt mindestens zwei dieser Nachrichten (oder die letzte Antwort) wieder
+mitschickt, gilt er als Fortsetzung der bisherigen Session. Nachrichten, die mehrere Sessions gemeinsam haben
+(eingespielte Standardtexte), zählen dabei nicht; berücksichtigt werden Sessions der letzten 3 Stunden. Die
+Session-Details zeigen, wie oft das passiert ist. Schickt der Client eine eigene Session-ID, ist das nicht nötig.
+
 Die Kennung ist ein Hash (zusammen mit dem API-Token), die eigentliche ID oder der Text wird nicht angezeigt. Der Tooltip
 nennt die Quelle. Startet ein Agent mit identischem Prompt neu, landen beide Läufe in derselben Session.
 

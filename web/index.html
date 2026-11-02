@@ -1340,6 +1340,7 @@ async function openSession(id) {
   $('s-body').innerHTML = si.error ? `<p class="muted">${esc(si.error)}</p>` + (reqs.length ? `<dl class="kv">${row('Clients', list(uniq(reqs.map(r => r.client))))}${row('API-Token', list(uniq(reqs.map(r => r.token))))}</dl>` : '') :
     `<dl class="kv">
       ${row('Erkannt über', esc(si.source) + (si.explicit_id ? ` – <code>${esc(si.explicit_id)}</code>` : ''))}
+      ${row('Kontext komprimiert', si.linked?.length ? `${si.linked.length}× – danach am gleichen Verlauf (gemeinsame Nachrichten) wiedererkannt` : '')}
       ${row('Zeitraum', `${dateFmt(si.first)} – ${dateFmt(si.last)} · ${si.requests} Anfragen · ${si.turns} Nutzer-Nachrichten im letzten Verlauf`)}
       ${row('API-Token', list(si.tokens))}
       ${row('Quell-IP (Verbindung)', list(si.clients))}

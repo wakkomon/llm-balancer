@@ -227,7 +227,9 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var explicitSess string
 	req.Session, req.SessionSrc, explicitSess = detectSessionRaw(r, body, tokenName)
-	px.sessions.note(req.Session, req.SessionSrc, explicitSess, r, body, tokenName, req.Model)
+	var linkedFrom string
+	req.Session, linkedFrom = px.sessions.resolve(req.Session, req.SessionSrc, tokenName, body)
+	px.sessions.note(req.Session, req.SessionSrc, explicitSess, linkedFrom, r, body, tokenName, req.Model)
 	if si := px.sessions.get(req.Session); si != nil {
 		req.SessTitle = si.Title
 	}
@@ -389,7 +391,10 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		scan := newUsageScanner(resp.Header.Get("Content-Type"))
 		if resp.StatusCode < 300 {
 			scan.tags = newTagChecker(px.cfg.TagCheck)
-			scan.onContent = func() {
+			scan.onContent = func(text string) {
+				if req.Session != "" && req.respHead.Len() < 2000 {
+					req.respHead.WriteString(text) // start of the answer: links the session across context compression
+				}
 				req.chunks.Add(1)
 				req.lastChunk.Store(time.Now().UnixNano())
 			}
@@ -429,6 +434,9 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		px.pool.Release(b, req, errMsg)
 		if ctx.Err() != nil && errMsg == "" {
 			errMsg = "client disconnected"
+		}
+		if resp.StatusCode < 300 {
+			px.sessions.noteAnswer(req.Session, req.respHead.String())
 		}
 		px.pool.Finish(req, b, resp.StatusCode, errMsg)
 		_ = n

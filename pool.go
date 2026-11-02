@@ -116,6 +116,7 @@ type ReqInfo struct {
 	Requested string   `json:"requested,omitempty"` // model the client asked for, if a router replaced it
 	Router    string   `json:"router,omitempty"`    // router decision, e.g. "auto: Regel Code"
 	alts      []string // router chose several equivalent models: any of them may answer
+	respHead  strings.Builder
 	stopped   atomic.Bool
 	State     string    `json:"state"` // queued | running | done
 	Backend   string    `json:"backend,omitempty"`

@@ -62,7 +62,7 @@ func TestScannerFindsTagIssuesInStream(t *testing.T) {
 	s := newUsageScanner("text/event-stream")
 	s.tags = newTagChecker(DefaultTagCheck)
 	chunks := 0
-	s.onContent = func() { chunks++ }
+	s.onContent = func(string) { chunks++ }
 	for _, c := range []string{sse("<tool"), sse("_call>{\"a\":1}"), sse(" fertig"),
 		"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n", "data: [DONE]\n\n"} {
 		s.Write([]byte(c))

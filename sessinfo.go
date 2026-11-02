@@ -33,13 +33,16 @@ type SessionInfo struct {
 	System     string            `json:"system,omitempty"`  // start of the system prompt
 	FirstMsg   string            `json:"first_message,omitempty"`
 	LastMsg    string            `json:"last_message,omitempty"`
-	Turns      int               `json:"turns"` // user turns in the latest request
+	Turns      int               `json:"turns"`            // user turns in the latest request
+	Linked     []string          `json:"linked,omitempty"` // later fingerprints joined after context compression
 }
 
 type sessionStore struct {
-	mu   sync.Mutex
-	m    map[string]*SessionInfo
-	keys []string // oldest first
+	mu    sync.Mutex
+	m     map[string]*SessionInfo
+	keys  []string             // oldest first
+	links map[string]*sessLink // session → recent message keys (compression linking)
+	alias map[string]string    // later fingerprint → session it continues
 }
 
 var identHeaders = []string{"X-Title", "Http-Referer", "Referer", "Origin", "X-Client-Name", "X-Client-Id", "X-App", "X-Application",
@@ -90,7 +93,7 @@ func guessTitle(doc map[string]any, first string) string {
 	return clip(line, 120)
 }
 
-func (s *sessionStore) note(id, src, explicit string, r *http.Request, body []byte, token, model string) {
+func (s *sessionStore) note(id, src, explicit, linkedFrom string, r *http.Request, body []byte, token, model string) {
 	if id == "" {
 		return
 	}
@@ -134,6 +137,9 @@ func (s *sessionStore) note(id, src, explicit string, r *http.Request, body []by
 	}
 	si.Last = now
 	si.Requests++
+	if linkedFrom != "" {
+		si.Linked = addUniq(si.Linked, linkedFrom, 20)
+	}
 	si.Tokens = addUniq(si.Tokens, token, 5)
 	si.Clients = addUniq(si.Clients, peerAddr(r), 10)
 	si.Forwarded = addUniq(si.Forwarded, r.Header.Get("X-Forwarded-For"), 10)

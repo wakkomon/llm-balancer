@@ -204,3 +204,54 @@ func TestSessionDetails(t *testing.T) {
 		t.Errorf("title: %q", g)
 	}
 }
+
+func TestSessionSurvivesCompression(t *testing.T) {
+	a := newFakeLLM(t, "a", 5*time.Millisecond)
+	srv, _ := setup(t, nil, a)
+	sys := map[string]any{"role": "system", "content": "Du bist Hermes, ein hilfreicher Agent."}
+	msg := func(role, text string) map[string]any { return map[string]any{"role": role, "content": text} }
+	send := func(msgs ...map[string]any) string {
+		b, _ := json.Marshal(map[string]any{"model": "m", "messages": append([]map[string]any{sys}, msgs...)})
+		resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", strings.NewReader(string(b)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		time.Sleep(30 * time.Millisecond) // booked a moment after the response
+		st := status(t, srv.URL)
+		return st.Recent[0].Session
+	}
+	u1 := msg("user", "Bitte analysiere die Backup-Logs vom Proxmox-Server der letzten Woche gründlich.")
+	a1 := msg("assistant", "Ich habe die Logs gelesen: die Sicherung von VM 101 dauert seit Dienstag doppelt so lange.")
+	u2 := msg("user", "Woran könnte das liegen, prüfe bitte auch die Auslastung des NAS in dem Zeitraum.")
+	a2 := msg("assistant", "Das NAS war zur selben Zeit mit einem Scrub beschäftigt, das erklärt die langsameren Schreibraten.")
+	u3 := msg("user", "Gut, dann schlag mir bitte einen besseren Zeitplan für Scrub und Backup vor.")
+	s1 := send(u1)
+	if s2 := send(u1, a1, u2); s2 != s1 {
+		t.Fatalf("same conversation got a new session: %s vs %s", s2, s1)
+	}
+	// compressed: the first message is replaced by a summary, recent turns stay
+	summary := msg("user", "[Zusammenfassung] Analyse der Backup-Logs, VM 101 langsamer seit Dienstag.")
+	if s3 := send(summary, a1, u2, a2, u3); s3 != s1 {
+		t.Errorf("after compression: %s, want %s", s3, s1)
+	}
+	// later requests of the compressed conversation stay too
+	if s4 := send(summary, a1, u2, a2, u3, msg("assistant", "Vorschlag: Scrub am Sonntag 02:00, Backup täglich 23:00 – so überschneiden sie sich nicht."), msg("user", "Passt, bitte umsetzen.")); s4 != s1 {
+		t.Errorf("follow-up: %s", s4)
+	}
+	// a new, unrelated conversation stays separate
+	if s5 := send(msg("user", "Schreib mir ein Gedicht über den Herbst im Schwarzwald, bitte mit Reimen.")); s5 == s1 {
+		t.Error("unrelated conversation was merged")
+	}
+	resp, _ := http.Get(srv.URL + "/balancer/api/sessions/" + s1)
+	var si SessionInfo
+	json.NewDecoder(resp.Body).Decode(&si)
+	resp.Body.Close()
+	if len(si.Linked) != 1 || !strings.HasPrefix(si.FirstMsg, "Bitte analysiere") || si.Requests != 4 {
+		t.Errorf("info: linked=%v first=%q requests=%d", si.Linked, si.FirstMsg, si.Requests)
+	}
+	if msgKey("<think>hm</think>  Das NAS war zur selben Zeit mit einem Scrub beschäftigt, das erklärt die langsameren Schreibraten.") !=
+		msgKey("Das NAS war zur selben Zeit mit einem Scrub beschäftigt,\n das erklärt die langsameren Schreibraten.") {
+		t.Error("normalization")
+	}
+}

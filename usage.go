@@ -24,10 +24,10 @@ type usageScanner struct {
 	u      Usage
 	// optional: follow the generated text
 	tags      *tagChecker
-	onContent func() // called for every chunk that carries generated text (live tokens/s)
-	content   bool   // any generated text seen
-	done      bool   // stream end marker seen ([DONE], finish_reason, done:true, message_stop)
-	streamErr string // an error the server reported inside the answer
+	onContent func(text string) // called for every chunk that carries generated text (live tokens/s)
+	content   bool              // any generated text seen
+	done      bool              // stream end marker seen ([DONE], finish_reason, done:true, message_stop)
+	streamErr string            // an error the server reported inside the answer
 }
 
 const maxUsageBody = 8 << 20
@@ -154,7 +154,7 @@ func (s *usageScanner) parse(b []byte) {
 			s.content = true
 			s.tags.Feed(*p)
 			if s.onContent != nil {
-				s.onContent()
+				s.onContent(*p)
 			}
 		}
 	}
