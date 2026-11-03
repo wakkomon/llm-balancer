@@ -46,4 +46,11 @@ func TestTotalSlotsOnlyEnabled(t *testing.T) {
 	if st := pool.Status(); st.TotalSlots != 1 || st.FreeSlots != 1 {
 		t.Errorf("disabled server still counted: %d/%d", st.FreeSlots, st.TotalSlots)
 	}
+	pool.SetEnabled("b", true)
+	pool.mu.Lock()
+	pool.backends[0].healthy = false // a is down
+	pool.mu.Unlock()
+	if st := pool.Status(); st.TotalSlots != 2 || st.FreeSlots != 2 {
+		t.Errorf("down server still counted: %d/%d", st.FreeSlots, st.TotalSlots)
+	}
 }

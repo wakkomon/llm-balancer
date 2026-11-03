@@ -3,6 +3,11 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.13.2 – 2026-11-03
+
+- „freie Slots“: Server, die nicht erreichbar sind oder am Kostendeckel stehen, zählen in der Gesamtzahl auch nicht mehr
+  mit (wie schon deaktivierte) – außer sie haben noch laufende Anfragen
+
 ## 1.13.1 – 2026-11-03
 
 - **Deutlich weniger CPU pro Anfrage** (bei großen Agenten-Anfragen etwa 7-mal weniger): Der Anfrage-Body wird nur noch

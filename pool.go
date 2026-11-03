@@ -887,10 +887,10 @@ func (p *Pool) Status() Status {
 			bs.AvgDurMs = (b.sumDur / time.Duration(b.finished)).Milliseconds()
 			bs.AvgTTFBMs = (b.sumTTFB / time.Duration(b.finished)).Milliseconds()
 		}
-		if b.enabled && !b.groupOff { // only switched-on servers count; down ones do, they may come back any moment
+		if b.usable(now) || (b.enabled && !b.groupOff && b.active > 0) { // reachable, switched-on servers only (+ ones still finishing requests)
 			st.TotalSlots += b.Max
 		}
-		if b.enabled && b.usable(now) {
+		if b.usable(now) {
 			st.FreeSlots += max(0, b.Max-b.active)
 		}
 		st.Backends = append(st.Backends, bs)
