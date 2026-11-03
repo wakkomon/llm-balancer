@@ -72,6 +72,7 @@ tr.sum td{border-top:1px solid var(--line);font-weight:600}
 #daychart .hit{fill:transparent} #daychart .hit:hover{fill:var(--ink);fill-opacity:.05}
 .gcard.off{opacity:.6} .tstate.goff{background:var(--off)}
 .tile b{display:block;font:600 24px/1.1 var(--mono)}
+.sysload .warn{color:var(--warn)} .sysload .bad{color:var(--down);font-weight:600}
 .tile b .unit{font:400 11px system-ui,sans-serif;color:var(--muted);margin-left:5px;letter-spacing:0}
 .tile span{color:var(--muted);font-size:12px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
@@ -287,13 +288,14 @@ tr.child td{background:var(--bg);font-size:12px} tr.child td:first-child{padding
     <nav class="nav"><a href="#" data-page="main">Übersicht</a><a href="#gruppen" data-page="groups">Gruppen</a><a href="#router" data-page="routers">Router</a><a href="#modelle" data-page="models">Modelle</a><a href="#statistik" data-page="stats">Statistik</a><a href="#anfragen" data-page="recent">Letzte Anfragen</a><a href="#zugriff" data-page="tokens">API-Zugriff</a><a href="#report" data-page="report">Report</a><a href="#einstellungen" data-page="settings">Einstellungen</a></nav>
     <span class="sub live" id="live"><i></i><span id="livetxt">verbinde …</span></span>
     <span class="sub" id="uptime"></span>
+    <span class="sub sysload" id="sysload"></span>
     <span class="sub" id="version"></span>
     <span class="sub who" id="whoami"></span>
   </header>
 
   <div id="page-main">
   <div class="tiles">
-    <div class="tile"><b id="t-free">–</b><span>freie Slots</span></div>
+    <div class="tile" title="freie Slots auf erreichbaren Servern / alle Slots der eingeschalteten Server"><b id="t-free">–</b><span>freie Slots</span></div>
     <div class="tile" title="Anfragen, die gerade auf einem Server laufen"><b id="t-run">–</b><span>laufend</span></div>
     <div class="tile" title="Anfragen in der Warteschlange"><b id="t-queue">–</b><span>wartend</span></div>
     <div class="tile" title="Erzeugte Tokens pro Sekunde über alle Server, Ø der letzten 10 s"><b id="t-tps">–</b><span id="t-tpssub">tok/s</span></div>
@@ -988,6 +990,22 @@ const stateLabel = b => (b.group_disabled && b.enabled ? 'Gruppe aus' : STATE[b.
   + (b.state === 'busy' && b.max > 1 ? ` ${b.active}/${b.max}` : '')
   + (b.state !== 'busy' && b.active > 0 ? ` · ${b.active} läuft noch` : ''); // e.g. disabled/down while requests finish
 
+// load of the machine the balancer runs on (header)
+const pctTxt = v => (v < 10 ? v.toLocaleString('de-DE', {maximumFractionDigits: 1}) : Math.round(v)) + ' %';
+const mb = b => b >= 1 << 30 ? (b / (1 << 30)).toLocaleString('de-DE', {maximumFractionDigits: 1}) + ' GB' : Math.round(b / (1 << 20)) + ' MB';
+function renderSysLoad(s) {
+  const el = $('sysload');
+  if (!s || !s.available) { el.textContent = ''; return; }
+  const lvl = v => v >= 85 ? 'bad' : v >= 60 ? 'warn' : '';
+  el.innerHTML = `CPU <span class="${lvl(s.proc_cpu_share)}">Balancer ${pctTxt(s.proc_cpu_share)}</span> · <span class="${lvl(s.host_cpu)}">Host ${pctTxt(s.host_cpu)}</span>`;
+  el.title = [
+    `Balancer-Prozess: ${pctTxt(s.proc_cpu)} eines Kerns = ${pctTxt(s.proc_cpu_share)} der nutzbaren CPU${s.cpu_limit ? ` (Container-Limit ${s.cpu_limit.toLocaleString('de-DE')} Kerne)` : ''}`,
+    `Host gesamt: ${pctTxt(s.host_cpu)} von ${s.cores} Kernen · Last ${s.load.map(x => x.toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2})).join(' / ')} (1/5/15 min)`,
+    `Spitze der letzten 5 min: Balancer ${pctTxt(s.proc_cpu_peak)}, Host ${pctTxt(s.host_cpu_peak)}`,
+    `RAM: Balancer ${mb(s.proc_rss)}${s.mem_limit ? ` (Limit ${mb(s.mem_limit)})` : ''} · Host ${mb(s.mem_total - s.mem_available)} von ${mb(s.mem_total)} belegt`,
+    `${s.goroutines} Goroutinen`].join('\n');
+}
+
 // state counters in the tile row; the tile lights up when the count is > 0, hover shows which servers
 function renderOverview(st) {
   const n = st.states || {};
@@ -1207,6 +1225,7 @@ async function refresh() {
     $('t-rps').textContent = rps.toLocaleString('de-DE', {minimumFractionDigits: rps && rps < 10 ? 1 : 0, maximumFractionDigits: rps < 10 ? 1 : 0});
     $('t-rpsbox').title = `Anfragen pro Sekunde, Ø der letzten 10 s (${(rps * 60).toLocaleString('de-DE', {maximumFractionDigits: 0})} pro Minute)\nseit Start: ${num(st.total_requests)} Anfragen, ${num(st.rejected)} abgelehnt`;
     $('uptime').textContent = 'Laufzeit ' + up(st.uptime_sec) + ' · max. Queue ' + st.max_queue_seen;
+    renderSysLoad(st.system);
     renderOverview(st);
     renderAccessNote(st);
     renderServers(st);

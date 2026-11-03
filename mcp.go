@@ -717,6 +717,9 @@ func mcpStatus(_ context.Context, px *Proxy, _ mcpArgs, _ *MCPToken) (any, error
 		"tok_per_s": round1(st.Live.TPS), "requests_per_s": round1(st.Live.RPS), "server_states": st.States,
 		"requests_since_start": st.TotalReqs, "rejected_since_start": st.Rejected,
 		"servers": servers, "groups": groups, "routers": routers, "queue": queue,
+		"balancer_host": map[string]any{"balancer_cpu_pct_of_one_core": round1(st.System.ProcCPU), "balancer_cpu_pct": round1(st.System.ProcShare),
+			"host_cpu_pct": round1(st.System.HostCPU), "cores": st.System.Cores, "load": st.System.Load,
+			"balancer_ram_mb": st.System.ProcRSS >> 20, "host_ram_free_mb": st.System.MemAvail >> 20, "peak_5min_balancer_cpu_pct": round1(st.System.PeakProc), "peak_5min_host_cpu_pct": round1(st.System.PeakHost)},
 	}, nil
 }
 

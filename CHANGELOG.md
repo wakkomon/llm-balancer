@@ -3,6 +3,16 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.13.0 – 2026-11-03
+
+- **CPU-Last des Balancer-Rechners** oben im Kopf: Anteil des Balancer-Prozesses und Last des ganzen Hosts (gelb ab
+  60 %, rot ab 85 %), im Tooltip Load Average, Spitzen der letzten 5 Minuten, RAM von Balancer und Host,
+  Container-Limits. Auch in `/balancer/metrics` (`llm_balancer_process_cpu_percent`, `llm_balancer_host_cpu_percent`,
+  `llm_balancer_host_load1`, `llm_balancer_process_rss_bytes`, `llm_balancer_goroutines`), in `/api/status` (`system`)
+  und im MCP-Tool `get_status`
+- „freie Slots“: die Gesamtzahl zählt nur noch eingeschaltete Server (deaktivierte Server und Server in deaktivierten
+  Gruppen nicht mehr)
+
 ## 1.12.1 – 2026-11-03
 
 - Bricht ein Client eine Anfrage ab (Timeout, Stop in Open WebUI, Agent-Abbruch) oder wird sie per Stop beendet, gab der

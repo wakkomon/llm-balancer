@@ -221,6 +221,13 @@ func writeMetrics(w http.ResponseWriter, st Status) {
 		}
 		return 0
 	}
+	if sys := st.System; sys.Available {
+		fmt.Fprintf(w, "# TYPE llm_balancer_process_cpu_percent gauge\nllm_balancer_process_cpu_percent %.1f\n", sys.ProcCPU)
+		fmt.Fprintf(w, "# TYPE llm_balancer_host_cpu_percent gauge\nllm_balancer_host_cpu_percent %.1f\n", sys.HostCPU)
+		fmt.Fprintf(w, "# TYPE llm_balancer_host_load1 gauge\nllm_balancer_host_load1 %.2f\n", sys.Load[0])
+		fmt.Fprintf(w, "# TYPE llm_balancer_process_rss_bytes gauge\nllm_balancer_process_rss_bytes %d\n", sys.ProcRSS)
+	}
+	fmt.Fprintf(w, "# TYPE llm_balancer_goroutines gauge\nllm_balancer_goroutines %d\n", st.System.Goroutines)
 	fmt.Fprintln(w, "# TYPE llm_balancer_backend_active gauge")
 	for _, b := range st.Backends {
 		fmt.Fprintf(w, "llm_balancer_backend_active{backend=%q} %d\n", b.Name, b.Active)

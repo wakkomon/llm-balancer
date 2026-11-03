@@ -747,6 +747,7 @@ type Status struct {
 	States     map[string]int  `json:"states"` // state → number of backends
 	TotalSlots int             `json:"total_slots"`
 	Live       LiveStatus      `json:"live"`
+	System     SysStatus       `json:"system"` // load of the machine the balancer runs on
 }
 
 func snapshot(r *ReqInfo, now time.Time) *ReqInfo {
@@ -790,6 +791,7 @@ func fmtTime(t time.Time) string {
 }
 
 func (p *Pool) Status() Status {
+	sys := sysMon.get() // reads /proc – outside the pool lock
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.syncGroupsLocked()
@@ -803,6 +805,7 @@ func (p *Pool) Status() Status {
 		st.AccessAuth = p.access.Enabled()
 	}
 	st.Live = p.liveLocked()
+	st.System = sys
 	st.Currency = p.cfg.Currency
 	st.Version = versionString()
 	st.Commit = shortCommit()
@@ -884,7 +887,9 @@ func (p *Pool) Status() Status {
 			bs.AvgDurMs = (b.sumDur / time.Duration(b.finished)).Milliseconds()
 			bs.AvgTTFBMs = (b.sumTTFB / time.Duration(b.finished)).Milliseconds()
 		}
-		st.TotalSlots += b.Max
+		if b.enabled && !b.groupOff { // only switched-on servers count; down ones do, they may come back any moment
+			st.TotalSlots += b.Max
+		}
 		if b.enabled && b.usable(now) {
 			st.FreeSlots += max(0, b.Max-b.active)
 		}

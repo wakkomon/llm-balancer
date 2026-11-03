@@ -110,7 +110,13 @@ Balancer das Modell selbst wählen soll.
 
 ### Übersicht
 
-Oben die Kacheln: freie Slots, **laufende** Anfragen, Länge der Warteschlange, **Durchsatz** (erzeugte Tokens pro
+Oben rechts im Kopf steht die **CPU-Last** des Rechners, auf dem der Balancer läuft: „Balancer“ ist der Anteil des
+Balancer-Prozesses an der CPU, die er nutzen darf (beachtet ein Container-Limit), „Host“ die Last des ganzen Rechners.
+Ab 60 % wird der Wert gelb, ab 85 % rot; der Tooltip zeigt Load Average, Spitzen der letzten 5 Minuten und den
+Speicher. So fällt auf, wenn der Balancer selbst zum Engpass wird. Die Werte gibt es auch unter `/balancer/metrics`
+und im MCP-Tool `get_status`.
+
+Die Kacheln: freie Slots (auf erreichbaren Servern / alle Slots der eingeschalteten Server), **laufende** Anfragen, Länge der Warteschlange, **Durchsatz** (erzeugte Tokens pro
 Sekunde über alle Server) und **Anfragen pro Sekunde** (beides Ø der letzten 10 s; der Tooltip nennt Anfragen und
 Ablehnungen seit Start) sowie wie viele **Server** gerade beschäftigt, frei, fehlerhaft, nicht erreichbar oder deaktiviert
 sind – „2 Server beschäftigt“ zählt Server, nicht Anfragen; ein Server mit drei Slots ist mit einer wie mit drei
