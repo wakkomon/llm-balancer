@@ -67,6 +67,7 @@ type Config struct {
 	dnsServers           []string
 	DataDir              string `json:"data_dir"`               // where backends.json (UI changes) is stored (default "data", Docker: /data)
 	UnhealthyCooldownSec int    `json:"unhealthy_cooldown_sec"` // used when health checks are disabled (default 10)
+	AbortGraceSec        int    `json:"abort_grace_sec"`        // slot stays taken this long after an aborted request (default 3, 0 = off)
 }
 
 func defaultConfig() Config {
@@ -82,6 +83,7 @@ func defaultConfig() Config {
 		MaxBodyMB:            64,
 		RecentRequests:       300,
 		UnhealthyCooldownSec: 10,
+		AbortGraceSec:        3,
 		DataDir:              "data",
 		StatsDays:            400,
 		StreamUsage:          true,
@@ -140,6 +142,7 @@ func loadConfig() (Config, error) {
 		"MAX_QUEUE":           &cfg.MaxQueue,
 		"HEALTH_INTERVAL_SEC": &cfg.HealthIntervalSec,
 		"STATS_DAYS":          &cfg.StatsDays,
+		"ABORT_GRACE_SEC":     &cfg.AbortGraceSec,
 	} {
 		if err := envInt(name, dst); err != nil {
 			return cfg, err
@@ -254,6 +257,9 @@ func (c *Config) validate() error {
 	}
 	if c.UnhealthyCooldownSec <= 0 {
 		c.UnhealthyCooldownSec = 10
+	}
+	if c.AbortGraceSec < 0 {
+		c.AbortGraceSec = 0
 	}
 	for i, m := range c.SlotMethods {
 		c.SlotMethods[i] = strings.ToUpper(m)

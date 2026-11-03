@@ -777,8 +777,10 @@ func (p *Pool) applyRouter(req *ReqInfo, r *http.Request, body []byte) {
 	if d == nil || d.Model == "" {
 		return
 	}
-	req.Router = d.Router + ": " + d.Reason
 	models := splitModels(d.Model)
+	p.mu.Lock() // the request is already visible in the status
+	defer p.mu.Unlock()
+	req.Router = d.Router + ": " + d.Reason
 	if len(models) > 1 {
 		req.alts = models // any of them – the first free server decides
 	}

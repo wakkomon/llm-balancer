@@ -60,6 +60,7 @@ type Backend struct {
 	healthAt     time.Time
 	unhealthyTil time.Time // used when active health checks are disabled
 	active       int
+	draining     int // of active: slots held a moment after an aborted request (see ReleaseAborted)
 	lastAssigned time.Time
 	total        int64
 	errors       int64
@@ -262,11 +263,17 @@ func (p *Pool) idleTargets() []healthTarget {
 }
 
 func (p *Pool) NewRequest(method, path, client string) *ReqInfo {
+	return p.Register(&ReqInfo{Method: method, Path: path, Client: client})
+}
+
+// Register makes a prepared request visible (status, live view). Fields set before are safe to read
+// for everyone; later changes go through the pool's lock.
+func (p *Pool) Register(r *ReqInfo) *ReqInfo {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.nextID++
 	p.totalReqs++
-	r := &ReqInfo{ID: p.nextID, Method: method, Path: path, Client: client, State: "queued", QueuedAt: time.Now()}
+	r.ID, r.State, r.QueuedAt = p.nextID, "queued", time.Now()
 	p.active[r.ID] = r
 	return r
 }
@@ -530,6 +537,27 @@ func (p *Pool) Release(b *Backend, r *ReqInfo, errMsg string) {
 	p.dispatchLocked()
 }
 
+// ReleaseAborted frees the slot of a request that was aborted (client gone, STOP) after it had reached the
+// server. The server usually keeps working on it for a moment – cancelling only takes effect after the
+// current prompt batch / token – so the slot stays taken for AbortGraceSec before the next request gets it.
+// Otherwise a single-slot server would briefly get two requests at once.
+func (p *Pool) ReleaseAborted(b *Backend, r *ReqInfo) {
+	d := time.Duration(p.cfg.AbortGraceSec) * time.Second
+	if d <= 0 {
+		p.Release(b, r, "")
+		return
+	}
+	p.mu.Lock()
+	b.draining++
+	p.mu.Unlock()
+	time.AfterFunc(d, func() {
+		p.mu.Lock()
+		b.draining--
+		p.mu.Unlock()
+		p.Release(b, r, "")
+	})
+}
+
 // MarkUnhealthy takes a backend out of rotation until the next successful health check.
 func (p *Pool) MarkUnhealthy(b *Backend, msg string) {
 	p.mu.Lock()
@@ -661,6 +689,7 @@ type BackendStatus struct {
 	HealthMsg   string                  `json:"health_msg,omitempty"`
 	HealthAt    string                  `json:"health_at,omitempty"`
 	Active      int                     `json:"active"`
+	Draining    int                     `json:"draining,omitempty"` // of Active: slots held after an aborted request
 	Max         int                     `json:"max"`
 	Priority    int                     `json:"priority"`
 	Total       int64                   `json:"total"`
@@ -820,7 +849,7 @@ func (p *Pool) Status() Status {
 	}
 	for _, b := range p.backends {
 		bs := BackendStatus{Name: b.Name, URL: b.URL, Enabled: b.enabled, GroupOff: b.groupOff, Healthy: b.healthy || (!b.unhealthyTil.IsZero() && now.After(b.unhealthyTil)),
-			HealthMsg: b.healthMsg, HealthAt: fmtTime(b.healthAt), Active: b.active, Max: b.Max, Priority: b.Priority,
+			HealthMsg: b.healthMsg, HealthAt: fmtTime(b.healthAt), Active: b.active, Draining: b.draining, Max: b.Max, Priority: b.Priority,
 			Total: b.total, Errors: b.errors,
 			Running: running[b.Name]}
 		bs.State = backendState(b, now)

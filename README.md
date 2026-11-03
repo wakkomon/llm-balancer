@@ -110,14 +110,19 @@ Balancer das Modell selbst wählen soll.
 
 ### Übersicht
 
-Oben die Kacheln: freie Slots, Länge der Warteschlange, **Durchsatz** (erzeugte Tokens pro Sekunde über alle Server)
-und **Anfragen pro Sekunde** (beides Ø der letzten 10 s; der Tooltip nennt Anfragen und Ablehnungen seit Start) sowie
-wie viele Server gerade beschäftigt, frei, fehlerhaft, nicht erreichbar oder deaktiviert sind. Ein Server am
+Oben die Kacheln: freie Slots, **laufende** Anfragen, Länge der Warteschlange, **Durchsatz** (erzeugte Tokens pro
+Sekunde über alle Server) und **Anfragen pro Sekunde** (beides Ø der letzten 10 s; der Tooltip nennt Anfragen und
+Ablehnungen seit Start) sowie wie viele **Server** gerade beschäftigt, frei, fehlerhaft, nicht erreichbar oder deaktiviert
+sind – „2 Server beschäftigt“ zählt Server, nicht Anfragen; ein Server mit drei Slots ist mit einer wie mit drei
+laufenden Anfragen ein beschäftigter Server. Ein Server am
 Kostendeckel ist auf seiner Karte markiert.
 
 Darunter jeder Server als Karte: Zustand (ein pulsierender ▶ zeigt „beschäftigt“), Priorität, Gruppe, Preise,
 gemeldete Modelle (grüner Punkt = bei Ollama im Speicher geladen), belegte Slots, die laufende Anfrage mit Dauer und
-geschätzten tok/s oder der letzte Fehler, dazu Zähler und Durchschnittswerte. Knöpfe: **Stop** bricht die laufende
+geschätzten tok/s oder der letzte Fehler, dazu Zähler und Durchschnittswerte. Ein schraffierter, nicht animierter Slot
+gehört zu einer gerade **abgebrochenen** Anfrage (Client weg oder Stop): Der Server rechnet sie meist noch kurz zu Ende,
+deshalb bekommt er für `ABORT_GRACE_SEC` (Standard 3 s) keine neue – sonst hätte ein Server mit einem Slot kurz zwei
+Anfragen gleichzeitig. Knöpfe: **Stop** bricht die laufende
 Anfrage ab, **Bearbeiten**, **Deaktivieren** (laufende Anfragen laufen zu Ende) und **Entfernen**.
 
 Im Feld **Modell** einen Modellnamen eintippen: die Übersicht zeigt, welche Gruppe und welche Server es bekommen würden.
@@ -655,6 +660,7 @@ Entweder per Umgebungsvariablen oder per `config.json` (Pfad über `CONFIG`, son
 | `ADMIN_USER` / `ADMIN_PASSWORD` | – | legt beim Start einen Administrator an, falls es noch keinen Benutzer gibt |
 | `LISTEN` / `listen` | `:8080` | Listen-Adresse |
 | `QUEUE_TIMEOUT_SEC` / `queue_timeout_sec` | `900` | Max. Wartezeit in der Queue (0 = unbegrenzt), danach HTTP 504 |
+| `ABORT_GRACE_SEC` / `abort_grace_sec` | `3` | So lange bleibt ein Slot nach einer abgebrochenen Anfrage (Client weg, Stop) belegt, weil der Server sie noch zu Ende rechnet; 0 = sofort frei |
 | `MAX_QUEUE` / `max_queue` | `0` | Max. Länge der Queue (0 = unbegrenzt), danach HTTP 503 |
 | `HEALTH_PATH` / `health_path` | `/v1/models` | Pfad für Health-Checks; leer = deaktiviert (dann 10 s Sperre nach Verbindungsfehler). Für llama.cpp passt auch `/health` |
 | `HEALTH_INTERVAL_SEC` / `health_interval_sec` | `15` | Intervall der Health-Checks |

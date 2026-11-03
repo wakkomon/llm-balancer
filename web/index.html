@@ -48,6 +48,7 @@ h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--mute
 .lplay{display:flex;justify-content:center;width:10px}
 .slot.on{background:repeating-linear-gradient(-45deg, var(--busy) 0 7px, color-mix(in srgb, var(--busy) 72%, #fff) 7px 14px);
   background-size:28px 8px;animation:stripes .9s linear infinite}
+.slot.on.drain{background:repeating-linear-gradient(-45deg, color-mix(in srgb, var(--busy) 45%, var(--line)) 0 4px, var(--line) 4px 8px);animation:none}
 @media (prefers-reduced-motion: reduce){.play,.slot.on{animation:none}}
 /* sortable tables */
 th.sortable{cursor:pointer;user-select:none} th.sortable:hover{color:var(--ink)}
@@ -71,6 +72,7 @@ tr.sum td{border-top:1px solid var(--line);font-weight:600}
 #daychart .hit{fill:transparent} #daychart .hit:hover{fill:var(--ink);fill-opacity:.05}
 .gcard.off{opacity:.6} .tstate.goff{background:var(--off)}
 .tile b{display:block;font:600 24px/1.1 var(--mono)}
+.tile b .unit{font:400 11px system-ui,sans-serif;color:var(--muted);margin-left:5px;letter-spacing:0}
 .tile span{color:var(--muted);font-size:12px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;border-top:4px solid var(--off);
@@ -292,6 +294,7 @@ tr.child td{background:var(--bg);font-size:12px} tr.child td:first-child{padding
   <div id="page-main">
   <div class="tiles">
     <div class="tile"><b id="t-free">–</b><span>freie Slots</span></div>
+    <div class="tile" title="Anfragen, die gerade auf einem Server laufen"><b id="t-run">–</b><span>laufend</span></div>
     <div class="tile" title="Anfragen in der Warteschlange"><b id="t-queue">–</b><span>wartend</span></div>
     <div class="tile" title="Erzeugte Tokens pro Sekunde über alle Server, Ø der letzten 10 s"><b id="t-tps">–</b><span id="t-tpssub">tok/s</span></div>
     <div class="tile" id="t-rpsbox" title="Anfragen pro Sekunde, Ø der letzten 10 s"><b id="t-rps">–</b><span>Anfragen/s</span></div>
@@ -981,17 +984,19 @@ const STATE = {
   disabled: {label:'deaktiviert', icon:'–', text:'bekommt keine neuen Anfragen'},
   capped:   {label:'Kostendeckel', icon:'€', text:'Kostendeckel erreicht – bekommt bis zum nächsten Zeitraum keine Anfragen'},
 };
-const stateLabel = b => (b.group_disabled && b.enabled ? 'Gruppe aus' : STATE[b.state].label) + (b.state === 'busy' && b.max > 1 ? ` ${b.active}/${b.max}` : '');
+const stateLabel = b => (b.group_disabled && b.enabled ? 'Gruppe aus' : STATE[b.state].label)
+  + (b.state === 'busy' && b.max > 1 ? ` ${b.active}/${b.max}` : '')
+  + (b.state !== 'busy' && b.active > 0 ? ` · ${b.active} läuft noch` : ''); // e.g. disabled/down while requests finish
 
 // state counters in the tile row; the tile lights up when the count is > 0, hover shows which servers
 function renderOverview(st) {
   const n = st.states || {};
   for (const k of ['busy', 'idle', 'error', 'down', 'disabled']) {
     const el = $('s-' + k), c = n[k] || 0;
-    el.querySelector('b').textContent = c;
+    el.querySelector('b').innerHTML = `${c}<small class="unit">Server</small>`; // counts servers, not requests
     el.classList.toggle('on', c > 0);
     const names = st.backends.filter(b => b.state === k).map(b => b.name);
-    el.title = STATE[k].text + (names.length ? '\n' + names.join(', ') : '');
+    el.title = 'Server: ' + STATE[k].text + (names.length ? '\n' + names.join(', ') : '');
   }
 }
 
@@ -1010,6 +1015,7 @@ function activity(b) {
     const more = b.running.length > 1 ? `<div class="muted">+ ${b.running.length - 1} weitere laufend</div>` : '';
     return `<div class="act run">${runLine(b.running[0])}${more}</div>`;
   }
+  if (b.draining) return `<div class="act muted" title="Abgebrochene Anfragen rechnet der Server oft noch kurz weiter – so lange bekommt er keine neue (ABORT_GRACE_SEC)">Anfrage abgebrochen – Slot wird gleich frei</div>`;
   if ((b.state === 'down' || !b.healthy) && b.health_msg) return `<div class="act err" title="${esc(b.health_msg)}">${esc(b.health_msg)}</div>`;
   if (b.state === 'capped') return `<div class="act" style="color:var(--warn)">Kostendeckel erreicht: ${esc(capText(b))} – bekommt keine Anfragen bis zum nächsten Zeitraum</div>`;
   if (b.last_error) return `<div class="act err" title="${esc(b.last_error)}">Letzter Fehler ${hms(b.last_error_at)}: ${esc(b.last_error)}</div>`;
@@ -1025,7 +1031,8 @@ const priceBadge = b => (b.price_in || b.price_out ? `<span class="gbadge" title
 
 function backendCard(b) {
   const state = b.state;
-  const slots = Array.from({length: Math.min(b.max, 16)}, (_, i) => `<div class="slot ${i < b.active ? 'on' : ''}" ${i < b.active ? `style="${phase(900)}"` : ''}></div>`).join('');
+  const drainFrom = b.active - (b.draining || 0); // the last slots: held after an aborted request
+  const slots = Array.from({length: Math.min(Math.max(b.max, b.active), 16)}, (_, i) => `<div class="slot ${i < b.active ? 'on' : ''}${i >= drainFrom && i < b.active ? ' drain' : ''}" ${i < drainFrom ? `style="${phase(900)}"` : ''}></div>`).join('');
   const dim = route && route.mode !== 'all' && !route.backends.includes(b.name) ? ' dim' : '';
   const fl = filterModel.toLowerCase();
   const man = b.manual_models || [], rep = b.auto_models === false ? [] : b.models.filter(m => !man.some(x => x.toLowerCase() === m.toLowerCase()));
@@ -1046,7 +1053,7 @@ function backendCard(b) {
       ${b.tls_skip_verify ? '<span class="gbadge" title="TLS-Zertifikat wird nicht geprüft">⚠ TLS</span>' : ''}
     </div>
     <div class="line mchips" title="${esc(chipTitle)}">${chips || '<span class="muted" style="font-size:12px">keine Modelle gemeldet</span>'}</div>
-    <div class="slots" title="${b.active}/${b.max} Slots belegt">${slots}</div>
+    <div class="slots" title="${b.active}/${b.max} Slots belegt${b.draining ? `, davon ${b.draining} nach Abbruch noch kurz gesperrt (der Server rechnet die abgebrochene Anfrage noch zu Ende)` : ''}">${slots}</div>
     ${activity(b)}
     <div class="stats">
       <div><b>${num(b.total)}</b>Anfragen</div><div><b>${num(b.errors)}</b>Fehler</div>
@@ -1058,7 +1065,7 @@ function backendCard(b) {
       ${b.tag_errors ? `<span class="warnc" title="Antworten mit fehlerhaft geöffneten/geschlossenen Tags">⚠ ${b.tag_errors} Tag-Fehler</span>` : ''}
     </div>
     <div class="btns cardbtns">
-      <button class="stop need-op" ${b.active ? '' : 'disabled'} title="Laufende Anfrage sofort abbrechen" onclick='stopBackend(${attr(b.name)})'>■ Stop</button>
+      <button class="stop need-op" ${b.running.length ? '' : 'disabled'} title="Laufende Anfrage sofort abbrechen" onclick='stopBackend(${attr(b.name)})'>■ Stop</button>
       <button class="need-admin" onclick='openEdit(${attr(b.name)})'>Bearbeiten</button>
       <button class="need-op" onclick='toggle(${attr(b.name)}, ${!b.enabled})'>${b.enabled ? 'Deaktivieren' : 'Aktivieren'}</button>
       <button class="danger need-admin" onclick='removeBackend(${attr(b.name)})'>Entfernen</button>
@@ -1088,14 +1095,14 @@ function listRow(b) {
     ${b.state === 'busy' ? `<span class="lplay" title="${esc(STATE.busy.text)}"><i class="play" style="${phase(1400)}"></i></span>` : `<span class="ldot" title="${esc(STATE[b.state].text)}"></span>`}
     <span class="lname ell" title="${esc(b.url)}"><b>${esc(b.name)}</b> <span class="muted">${esc(b.url.replace(/^https?:\/\//, ''))}</span></span>
     <span class="lstate">${esc(stateLabel(b))}</span>
-    <span class="lslots" title="belegte Slots">${b.active}/${b.max}</span>
+    <span class="lslots" title="belegte Slots${b.draining ? `, davon ${b.draining} nach Abbruch noch kurz gesperrt` : ''}">${b.active}/${b.max}</span>
     <span class="lact ell">${act}</span>
     <span class="ln" title="Anfragen / Fehler">${num(b.total)} <span class="muted">/ ${num(b.errors)}</span></span>
     <span class="ln" title="Ø Dauer">${dur(b.avg_duration_ms)}</span>
     <span class="ln" title="Ø tok/s">${tpsFmt(b.avg_tps)} <span class="muted">tok/s</span></span>
     <span class="ln" title="Priorität">P${b.priority}</span>
     <span class="lbtn">
-      <button class="stop need-op" ${b.active ? '' : 'disabled'} title="Laufende Anfrage sofort abbrechen" onclick='stopBackend(${attr(b.name)})'>■</button>
+      <button class="stop need-op" ${b.running.length ? '' : 'disabled'} title="Laufende Anfrage sofort abbrechen" onclick='stopBackend(${attr(b.name)})'>■</button>
       <button class="need-admin" title="Bearbeiten" onclick='openEdit(${attr(b.name)})'>✎</button>
       <button class="need-op" title="${b.enabled ? 'Deaktivieren (drain)' : 'Aktivieren'}" onclick='toggle(${attr(b.name)}, ${!b.enabled})'>${b.enabled ? 'aus' : 'an'}</button>
       <button class="danger need-admin" title="Entfernen" onclick='removeBackend(${attr(b.name)})'>✕</button>
@@ -1195,6 +1202,7 @@ async function refresh() {
     $('version').title = st.commit ? 'Commit ' + st.commit : '';
     $('t-free').textContent = `${st.free_slots}/${st.total_slots}`;
     $('t-queue').textContent = st.queue.length;
+    $('t-run').textContent = st.live?.running ?? st.backends.reduce((a, b) => a + b.running.length, 0);
     const rps = st.live?.rps || 0;
     $('t-rps').textContent = rps.toLocaleString('de-DE', {minimumFractionDigits: rps && rps < 10 ? 1 : 0, maximumFractionDigits: rps < 10 ? 1 : 0});
     $('t-rpsbox').title = `Anfragen pro Sekunde, Ø der letzten 10 s (${(rps * 60).toLocaleString('de-DE', {maximumFractionDigits: 0})} pro Minute)\nseit Start: ${num(st.total_requests)} Anfragen, ${num(st.rejected)} abgelehnt`;

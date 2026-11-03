@@ -217,7 +217,7 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req := px.pool.NewRequest(r.Method, r.URL.Path, clientAddr(r))
+	req := &ReqInfo{Method: r.Method, Path: r.URL.Path, Client: clientAddr(r)}
 	req.Token = tokenName
 	// Model/stream are only extracted for display, the body is forwarded unchanged.
 	var meta struct {
@@ -235,7 +235,6 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if si := px.sessions.get(req.Session); si != nil {
 		req.SessTitle = si.Title
 	}
-	px.pool.applyRouter(req, r, body) // may replace the model before the server is chosen
 	if ollamaAPI {
 		req.ollamaAPI = true
 		var st struct {
@@ -245,6 +244,8 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			req.Stream = true // Ollama streams unless "stream": false
 		}
 	}
+	px.pool.Register(req)             // from here on the UI sees it: fields change only under the pool lock
+	px.pool.applyRouter(req, r, body) // may replace the model before the server is chosen
 	// Ask OpenAI-compatible servers to report token usage at the end of a stream (needed for prices/stats).
 	if px.cfg.StreamUsage && meta.Stream && strings.HasSuffix(r.URL.Path, "/completions") {
 		if nb, ok := withStreamUsage(body); ok {
@@ -309,13 +310,13 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		resp, err := px.transportFor(px.pool.skipVerify(b)).RoundTrip(out)
 		if err != nil {
 			if req.stopped.Load() { // STOP button while the server was processing the prompt
-				px.pool.Release(b, req, "")
+				px.pool.ReleaseAborted(b, req)
 				jsonError(w, 499, errStopped.Error())
 				px.pool.Finish(req, b, 499, stoppedMsg)
 				return
 			}
 			if ctx.Err() != nil { // client gone, not the backend's fault
-				px.pool.Release(b, req, "")
+				px.pool.ReleaseAborted(b, req)
 				px.pool.Finish(req, b, 499, "client disconnected")
 				return
 			}
@@ -362,13 +363,13 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if perr != nil || bad != "" {
 				resp.Body.Close()
 				if req.stopped.Load() {
-					px.pool.Release(b, req, "")
+					px.pool.ReleaseAborted(b, req)
 					jsonError(w, 499, errStopped.Error())
 					px.pool.Finish(req, b, 499, stoppedMsg)
 					return
 				}
 				if ctx.Err() != nil {
-					px.pool.Release(b, req, "")
+					px.pool.ReleaseAborted(b, req)
 					px.pool.Finish(req, b, 499, "client disconnected")
 					return
 				}
@@ -410,7 +411,7 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			px.pool.setResult(req, b, scan.Finish(), nil, px.access)
 			resp.Body.Close()
-			px.pool.Release(b, req, "") // not the server's fault
+			px.pool.ReleaseAborted(b, req) // not the server's fault; it may still be generating for a moment
 			px.pool.Finish(req, b, 499, stoppedMsg)
 			return
 		}
@@ -433,7 +434,11 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if (resp.StatusCode == 401 || resp.StatusCode == 403) && errMsg == "" {
 			errMsg = fmt.Sprintf("Server lehnt den Bearer-Token ab (%d)", resp.StatusCode)
 		}
-		px.pool.Release(b, req, errMsg)
+		if copyErr != nil && ctx.Err() != nil { // client went away mid-answer: the server is still generating
+			px.pool.ReleaseAborted(b, req)
+		} else {
+			px.pool.Release(b, req, errMsg)
+		}
 		if ctx.Err() != nil && errMsg == "" {
 			errMsg = "client disconnected"
 		}

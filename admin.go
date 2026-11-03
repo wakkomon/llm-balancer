@@ -320,7 +320,13 @@ func (p *Pool) replaceLocked(bcs []BackendConfig, groups []GroupConfig) {
 	}
 	var next []*Backend
 	for _, bc := range bcs {
-		if b, ok := old[bc.Name]; ok && b.URL == bc.URL {
+		if b, ok := old[bc.Name]; ok { // same server: keeps its counters and running requests
+			if b.URL != bc.URL {
+				u, _ := url.Parse(bc.URL)
+				b.URL, b.target = bc.URL, u
+				b.healthy, b.healthMsg, b.unhealthyTil = true, "", time.Time{}
+				b.models, b.ollamaVer, b.ollamaTags, b.ollamaPS, b.loaded = nil, "", nil, nil, nil
+			}
 			b.Max, b.Priority, b.enabled, b.apiKey, b.group, b.insecure = bc.MaxConcurrent, bc.Priority, bc.Enabled == nil || *bc.Enabled, bc.APIKey, bc.Group, bc.TLSSkipVerify
 			b.priceIn, b.priceOut = bc.PriceIn, bc.PriceOut
 			b.costCap, b.capPeriod = bc.CostCap, bc.CapPeriod

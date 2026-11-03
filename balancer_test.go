@@ -58,6 +58,7 @@ func newFakeLLM(t *testing.T, name string, delay time.Duration) *fakeLLM {
 func setup(t *testing.T, mod func(*Config), backends ...*fakeLLM) (*httptest.Server, *Pool) {
 	cfg := defaultConfig()
 	cfg.HealthPath = ""
+	cfg.AbortGraceSec = 0 // tests that need it set it
 	for _, b := range backends {
 		cfg.Backends = append(cfg.Backends, BackendConfig{Name: b.name, URL: b.srv.URL})
 	}

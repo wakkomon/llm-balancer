@@ -3,6 +3,18 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.12.1 – 2026-11-03
+
+- Bricht ein Client eine Anfrage ab (Timeout, Stop in Open WebUI, Agent-Abbruch) oder wird sie per Stop beendet, gab der
+  Balancer den Slot sofort frei – der LLM-Server rechnete die abgebrochene Anfrage aber oft noch weiter und bekam schon
+  die nächste. Dann arbeitete ein Server mit einem Slot an zwei Anfragen, während die UI nur eine zeigte. Jetzt bleibt
+  der Slot nach einem Abbruch `ABORT_GRACE_SEC` (Standard 3 s) belegt; die Karte zeigt ihn schraffiert („Anfrage
+  abgebrochen – Slot wird gleich frei“)
+- Übersicht: neue Kachel **laufend** (Anfragen); die Zustands-Kacheln sagen jetzt dazu, dass sie **Server** zählen
+- Ein Server, der deaktiviert, down oder am Deckel ist, zeigt „· N läuft noch“, solange Anfragen auf ihm zu Ende laufen
+- Wird ein Server per Konfigurations-Import mit neuer URL ersetzt, behält er seine laufenden Anfragen im Zähler
+- Interne Datenrennen beim Anlegen einer Anfrage behoben (Status las Felder, die noch geschrieben wurden)
+
 ## 1.12.0 – 2026-11-02
 
 - **MCP-Schnittstelle** unter `/mcp` (Model Context Protocol, Streamable HTTP): KI-Agenten können Status, Anfragen,
