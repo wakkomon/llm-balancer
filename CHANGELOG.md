@@ -3,6 +3,17 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.13.1 – 2026-11-03
+
+- **Deutlich weniger CPU pro Anfrage** (bei großen Agenten-Anfragen etwa 7-mal weniger): Der Anfrage-Body wird nur noch
+  einmal gelesen statt bis zu zehnmal (Token-Prüfung, Session, Kompressions-Verknüpfung, Session-Details, Router,
+  Klassifizierer); Modellname und `stream_options` werden direkt im Body ersetzt statt ihn neu zu kodieren; reguläre
+  Ausdrücke über den ganzen Verlauf (`<think>`, `<system-reminder>`, Leerraum) ersetzt durch Prüfungen, die nur so viel
+  lesen wie nötig
+- Der Router analysiert die Anfrage nicht mehr, während er die interne Sperre hält – andere Anfragen und die Statusseite
+  warten nicht mehr darauf
+- CPU-Profile für Administratoren unter `/balancer/debug/pprof/` (für die Fehlersuche bei hoher Last)
+
 ## 1.13.0 – 2026-11-03
 
 - **CPU-Last des Balancer-Rechners** oben im Kopf: Anteil des Balancer-Prozesses und Last des ganzen Hosts (gelb ab

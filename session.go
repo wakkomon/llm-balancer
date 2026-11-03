@@ -32,6 +32,10 @@ func detectSession(r *http.Request, body []byte, token string) (id, src string) 
 
 // detectSessionRaw also returns the explicit ID the client sent ("" for a fingerprint).
 func detectSessionRaw(r *http.Request, body []byte, token string) (id, src, explicit string) {
+	return detectSessionDoc(r, parseDoc(body), token)
+}
+
+func detectSessionDoc(r *http.Request, doc map[string]any, token string) (id, src, explicit string) {
 	raw := ""
 	for _, h := range sessionHeaders {
 		if v := strings.TrimSpace(r.Header.Get(h)); v != "" {
@@ -39,9 +43,8 @@ func detectSessionRaw(r *http.Request, body []byte, token string) (id, src, expl
 			break
 		}
 	}
-	var doc map[string]any
-	if raw == "" && len(body) > 0 && body[0] == '{' {
-		if json.Unmarshal(body, &doc) == nil {
+	if raw == "" && doc != nil {
+		{
 		fields:
 			for _, path := range sessionFields {
 				var cur any = doc

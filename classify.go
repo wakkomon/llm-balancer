@@ -48,33 +48,32 @@ type turn struct {
 }
 
 // conversationTurns: user/assistant text turns (tool output and system prompts left out), cleaned.
-func conversationTurns(body []byte) []turn {
-	var doc struct {
-		Messages []map[string]any `json:"messages"`
-		Input    []map[string]any `json:"input"`
-		Prompt   string           `json:"prompt"`
-	}
-	if json.Unmarshal(body, &doc) != nil {
-		return nil
-	}
-	msgs := doc.Messages
+func conversationTurns(body []byte) []turn { return conversationTurnsDoc(parseDoc(body)) }
+
+func conversationTurnsDoc(doc map[string]any) []turn {
+	msgs, _ := doc["messages"].([]any)
 	if msgs == nil {
-		msgs = doc.Input
+		msgs, _ = doc["input"].([]any)
 	}
+	prompt, _ := doc["prompt"].(string)
 	var out []turn
-	for _, m := range msgs {
+	for _, x := range msgs {
+		m, ok := x.(map[string]any)
+		if !ok {
+			continue
+		}
 		role, _ := m["role"].(string)
 		if role != "user" && role != "assistant" {
 			continue
 		}
-		text := strings.TrimSpace(systemReminderRe.ReplaceAllString(contentText(m["content"]), ""))
+		text := strings.TrimSpace(stripReminders(contentText(m["content"])))
 		if text == "" {
 			continue // e.g. a turn that only carries tool results
 		}
 		out = append(out, turn{role, text})
 	}
-	if len(out) == 0 && doc.Prompt != "" {
-		out = append(out, turn{"user", doc.Prompt})
+	if len(out) == 0 && prompt != "" {
+		out = append(out, turn{"user", prompt})
 	}
 	return out
 }
@@ -374,9 +373,9 @@ type classResult struct {
 }
 
 // classify runs the router's classifier (no lock held during model calls).
-func (p *Pool) classify(rc *RouterConfig, body []byte) classResult {
+func (p *Pool) classify(rc *RouterConfig, doc map[string]any) classResult {
 	start := time.Now()
-	turns := conversationTurns(body)
+	turns := conversationTurnsDoc(doc)
 	text := lastUserText(turns)
 	heur := func(prefix string) classResult {
 		h := heuristicTier(text, rc.Thresholds)

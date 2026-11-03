@@ -176,21 +176,16 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r = r.WithContext(context.WithValue(r.Context(), tokenKey{}, tokenName))
+	doc := parseDoc(body) // decoded once; everything below reads this
 	// models the API token may use
-	if px.access != nil && tokenName != "" && len(body) > 0 {
-		var m struct {
-			Model string `json:"model"`
-			Name  string `json:"name"`
-		}
-		if json.Unmarshal(body, &m) == nil {
-			if model := cmp.Or(m.Model, m.Name); model != "" && !px.access.Allowed(tokenName, model) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusForbidden)
-				json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
-					"message": fmt.Sprintf("llm-balancer: API key %s may not use model %q", tokenName, model),
-					"type":    "invalid_request_error", "code": "model_not_allowed"}})
-				return
-			}
+	if px.access != nil && tokenName != "" && doc != nil {
+		if model := cmp.Or(docString(doc, "model"), docString(doc, "name")); model != "" && !px.access.Allowed(tokenName, model) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+				"message": fmt.Sprintf("llm-balancer: API key %s may not use model %q", tokenName, model),
+				"type":    "invalid_request_error", "code": "model_not_allowed"}})
+			return
 		}
 	}
 	ollamaAPI := isOllamaPath(r.URL.Path)
@@ -220,34 +215,26 @@ func (px *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	req := &ReqInfo{Method: r.Method, Path: r.URL.Path, Client: clientAddr(r)}
 	req.Token = tokenName
 	// Model/stream are only extracted for display, the body is forwarded unchanged.
-	var meta struct {
-		Model  string `json:"model"`
-		Stream bool   `json:"stream"`
-	}
-	if len(body) > 0 && json.Unmarshal(body, &meta) == nil {
-		req.Model, req.Stream = meta.Model, meta.Stream
-	}
+	stream, _ := doc["stream"].(bool)
+	req.Model, req.Stream = docString(doc, "model"), stream
 	var explicitSess string
-	req.Session, req.SessionSrc, explicitSess = detectSessionRaw(r, body, tokenName)
+	req.Session, req.SessionSrc, explicitSess = detectSessionDoc(r, doc, tokenName)
 	var linkedFrom string
-	req.Session, linkedFrom = px.sessions.resolve(req.Session, req.SessionSrc, tokenName, body)
-	px.sessions.note(req.Session, req.SessionSrc, explicitSess, linkedFrom, r, body, tokenName, req.Model)
+	req.Session, linkedFrom = px.sessions.resolveDoc(req.Session, req.SessionSrc, tokenName, doc)
+	px.sessions.noteDoc(req.Session, req.SessionSrc, explicitSess, linkedFrom, r, doc, tokenName, req.Model)
 	if si := px.sessions.get(req.Session); si != nil {
 		req.SessTitle = si.Title
 	}
 	if ollamaAPI {
 		req.ollamaAPI = true
-		var st struct {
-			Stream *bool `json:"stream"`
-		}
-		if json.Unmarshal(body, &st) == nil && st.Stream == nil && r.URL.Path != "/api/embed" && r.URL.Path != "/api/embeddings" {
+		if _, set := doc["stream"]; doc != nil && !set && r.URL.Path != "/api/embed" && r.URL.Path != "/api/embeddings" {
 			req.Stream = true // Ollama streams unless "stream": false
 		}
 	}
-	px.pool.Register(req)             // from here on the UI sees it: fields change only under the pool lock
-	px.pool.applyRouter(req, r, body) // may replace the model before the server is chosen
+	px.pool.Register(req)                  // from here on the UI sees it: fields change only under the pool lock
+	px.pool.applyRouter(req, r, body, doc) // may replace the model before the server is chosen
 	// Ask OpenAI-compatible servers to report token usage at the end of a stream (needed for prices/stats).
-	if px.cfg.StreamUsage && meta.Stream && strings.HasSuffix(r.URL.Path, "/completions") {
+	if px.cfg.StreamUsage && stream && strings.HasSuffix(r.URL.Path, "/completions") {
 		if nb, ok := withStreamUsage(body); ok {
 			body = nb
 		}

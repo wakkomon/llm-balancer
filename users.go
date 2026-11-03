@@ -462,7 +462,7 @@ func requiredRole(method, rel string) string {
 		return RoleViewer
 	}
 	if method == http.MethodGet || method == http.MethodHead {
-		if rel == "/api/users" || strings.HasPrefix(rel, "/api/config/") {
+		if rel == "/api/users" || strings.HasPrefix(rel, "/api/config/") || strings.HasPrefix(rel, "/debug/") {
 			return RoleAdmin
 		}
 		return RoleViewer

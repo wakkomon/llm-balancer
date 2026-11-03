@@ -772,6 +772,14 @@ funktionieren ohne die Option.)
 
 **`server gave HTTP response to HTTPS client`** – Der Server spricht http: URL mit `http://` eintragen.
 
+**Hohe CPU-Last des Balancers** – Oben im Kopf steht, wie viel CPU der Balancer selbst braucht („Balancer“) und wie
+ausgelastet der ganze Rechner ist („Host“). Ist nur „Host“ hoch, liegt es an anderen Diensten auf dem Rechner (z. B.
+LiteLLM, Open WebUI). Der Balancer verbraucht CPU vor allem pro Anfrage: Agenten schicken mit jeder Runde den ganzen
+Verlauf (oft Hunderte KB bis MB), der für Sessions, Router und Statistik einmal gelesen wird; das Weiterreichen der
+Antwort-Tokens kostet fast nichts. Für eine genaue Analyse kann ein Administrator ein CPU-Profil ziehen und mitschicken:
+`curl -o cpu.prof "http://balancer:8080/balancer/debug/pprof/profile?seconds=30" -H "X-Admin-Token: …"` (mit Benutzern:
+im Browser angemeldet `…/balancer/debug/pprof/profile?seconds=30` öffnen).
+
 ## Entwicklung
 
 ```bash

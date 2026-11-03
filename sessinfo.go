@@ -97,12 +97,14 @@ func guessTitle(doc map[string]any, first string) string {
 }
 
 func (s *sessionStore) note(id, src, explicit, linkedFrom string, r *http.Request, body []byte, token, model string) {
+	s.noteDoc(id, src, explicit, linkedFrom, r, parseDoc(body), token, model)
+}
+
+func (s *sessionStore) noteDoc(id, src, explicit, linkedFrom string, r *http.Request, doc map[string]any, token, model string) {
 	if id == "" {
 		return
 	}
-	var doc map[string]any
-	_ = json.Unmarshal(body, &doc)
-	turns := conversationTurns(body)
+	turns := conversationTurnsDoc(doc)
 	var firstUser string
 	users := 0
 	for _, t := range turns {
@@ -196,7 +198,7 @@ func lastMessage(doc map[string]any) (string, string) {
 		if role == "system" || role == "developer" {
 			continue
 		}
-		text := strings.TrimSpace(systemReminderRe.ReplaceAllString(contentText(m["content"]), ""))
+		text := strings.TrimSpace(stripReminders(contentText(m["content"])))
 		if text == "" {
 			if tc, ok := m["tool_calls"].([]any); ok && len(tc) > 0 { // assistant turn that only calls tools
 				var names []string

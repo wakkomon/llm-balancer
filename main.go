@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"strconv"
@@ -192,6 +193,12 @@ func newMux(cfg Config, pool *Pool, px *Proxy) http.Handler {
 	ui.HandleFunc("GET "+pre+"/metrics", func(w http.ResponseWriter, r *http.Request) {
 		writeMetrics(w, pool.Status())
 	})
+	// CPU/memory profiles for performance analysis (admins only), e.g.
+	// curl -o cpu.prof "http://balancer:8080/balancer/debug/pprof/profile?seconds=30" -H "X-Admin-Token: …"
+	pprofIndex := http.StripPrefix(pre, http.HandlerFunc(pprof.Index)) // Index expects /debug/pprof/<name>
+	ui.HandleFunc("GET "+pre+"/debug/pprof/", adminAuth(cfg.AdminToken, pprofIndex.ServeHTTP))
+	ui.HandleFunc("GET "+pre+"/debug/pprof/profile", adminAuth(cfg.AdminToken, pprof.Profile))
+	ui.HandleFunc("GET "+pre+"/debug/pprof/trace", adminAuth(cfg.AdminToken, pprof.Trace))
 	ui.HandleFunc("GET "+pre+"/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok\n"))
 	})

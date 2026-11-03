@@ -229,36 +229,3 @@ func msgUsage(m *struct {
 	}
 	return m.Usage
 }
-
-// withModel replaces the "model" field of a JSON request body (fallback with replacement model).
-func withModel(body []byte, model string) []byte {
-	var m map[string]json.RawMessage
-	if json.Unmarshal(body, &m) != nil {
-		return body
-	}
-	mb, _ := json.Marshal(model)
-	m["model"] = mb
-	out, err := json.Marshal(m)
-	if err != nil {
-		return body
-	}
-	return out
-}
-
-// withStreamUsage adds stream_options.include_usage=true to an OpenAI-style streaming request
-// that doesn't ask for it, so the final chunk reports token counts. Other fields stay untouched.
-func withStreamUsage(body []byte) ([]byte, bool) {
-	var m map[string]json.RawMessage
-	if json.Unmarshal(body, &m) != nil {
-		return body, false
-	}
-	if _, ok := m["stream_options"]; ok {
-		return body, false
-	}
-	m["stream_options"] = json.RawMessage(`{"include_usage":true}`)
-	out, err := json.Marshal(m)
-	if err != nil {
-		return body, false
-	}
-	return out, true
-}

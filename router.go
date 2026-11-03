@@ -181,10 +181,11 @@ type reqFeatures struct {
 	all       string
 }
 
-func analyzeRequest(body []byte) reqFeatures {
+func analyzeRequest(body []byte) reqFeatures { return analyzeDoc(parseDoc(body)) }
+
+func analyzeDoc(doc map[string]any) reqFeatures {
 	var f reqFeatures
-	var doc map[string]any
-	if json.Unmarshal(body, &doc) != nil {
+	if doc == nil {
 		return f
 	}
 	var sys, all strings.Builder
@@ -479,6 +480,7 @@ type routeCtx struct {
 	header  http.Header
 	session string
 	body    []byte
+	doc     map[string]any // body, decoded once (nil: decoded here)
 	explain bool
 }
 
@@ -600,8 +602,13 @@ func (p *Pool) decide(c routeCtx) *RouteDecision {
 		return nil
 	}
 	rc := *rcp
+	p.mu.Unlock() // analysing a big agent request takes a moment – don't block the pool meanwhile
+	if c.doc == nil {
+		c.doc = parseDoc(c.body)
+	}
+	f := analyzeDoc(c.doc)
+	p.mu.Lock()
 	now := time.Now()
-	f := analyzeRequest(c.body)
 	d := &RouteDecision{Router: rc.Name, Request: f}
 	key := rc.Name + "\x00" + c.session
 	if rc.Sticky && c.session != "" && !c.explain {
@@ -650,7 +657,7 @@ func (p *Pool) decide(c routeCtx) *RouteDecision {
 	}
 	if d.Model == "" && rc.Classifier != "" {
 		p.mu.Unlock()
-		cr := p.classify(&rc, c.body) // may call a model
+		cr := p.classify(&rc, c.doc) // may call a model
 		p.mu.Lock()
 		d.Classifier = &cr
 		switch {
@@ -766,14 +773,14 @@ func (p *Pool) pruneStickyLocked(now time.Time) {
 }
 
 // applyRouter is called by the proxy before the slot is requested.
-func (p *Pool) applyRouter(req *ReqInfo, r *http.Request, body []byte) {
+func (p *Pool) applyRouter(req *ReqInfo, r *http.Request, body []byte, doc map[string]any) {
 	p.mu.Lock()
 	n := len(p.routers)
 	p.mu.Unlock()
 	if n == 0 {
 		return
 	}
-	d := p.decide(routeCtx{model: req.Model, token: req.Token, client: req.Client, header: r.Header, session: req.Session, body: body})
+	d := p.decide(routeCtx{model: req.Model, token: req.Token, client: req.Client, header: r.Header, session: req.Session, body: body, doc: doc})
 	if d == nil || d.Model == "" {
 		return
 	}

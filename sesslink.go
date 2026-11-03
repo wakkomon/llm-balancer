@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"hash/fnv"
 	"regexp"
 	"strings"
@@ -21,17 +20,16 @@ const (
 )
 
 var thinkRe = regexp.MustCompile(`(?s)<think>.*?</think>|^\s*<think>.*$`)
-var spaceRe = regexp.MustCompile(`\s+`)
 
 // msgKey: a hash of the normalized start of a message (0 = too short to count).
 func msgKey(text string) uint64 {
-	t := thinkRe.ReplaceAllString(text, "")
-	t = strings.TrimSpace(spaceRe.ReplaceAllString(systemReminderRe.ReplaceAllString(t, ""), " "))
-	if len([]rune(t)) < linkMinChars {
+	t := stripBlocks(text, "<think>", "</think>")
+	if strings.HasPrefix(strings.TrimSpace(t), "<think>") { // unclosed: still thinking
 		return 0
 	}
-	if r := []rune(t); len(r) > 300 {
-		t = string(r[:300])
+	t, n := normPrefix(stripReminders(t), 300)
+	if n < linkMinChars {
+		return 0
 	}
 	h := fnv.New64a()
 	h.Write([]byte(t))
@@ -39,9 +37,8 @@ func msgKey(text string) uint64 {
 }
 
 // requestKeys: keys of the non-system messages of a request, and a key of its system prompt.
-func requestKeys(body []byte) (keys []uint64, sys uint64) {
-	var doc map[string]any
-	if json.Unmarshal(body, &doc) != nil {
+func requestKeys(doc map[string]any) (keys []uint64, sys uint64) {
+	if doc == nil {
 		return nil, 0
 	}
 	sysText := contentText(doc["system"])
@@ -96,10 +93,14 @@ func (l *sessLink) add(k uint64, now time.Time) {
 // resolve maps a detected session ID to the session it continues (fingerprints only). Returns the ID to use
 // and, if it was linked now or earlier, the original fingerprint ID.
 func (s *sessionStore) resolve(id, src, token string, body []byte) (string, string) {
+	return s.resolveDoc(id, src, token, parseDoc(body))
+}
+
+func (s *sessionStore) resolveDoc(id, src, token string, doc map[string]any) (string, string) {
 	if id == "" {
 		return id, ""
 	}
-	keys, sys := requestKeys(body)
+	keys, sys := requestKeys(doc)
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
