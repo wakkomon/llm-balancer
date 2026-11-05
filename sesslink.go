@@ -70,8 +70,11 @@ type sessLink struct {
 	sys    uint64
 	keys   map[uint64]time.Time
 	last   time.Time
-	answer uint64 // key of the latest generated answer
+	answer uint64              // key of the latest generated answer
+	tail   map[uint64]struct{} // keys of the latest messages of the latest request
 }
+
+const linkTail = 6 // a compressed request keeps (at least) the last turns
 
 func (l *sessLink) add(k uint64, now time.Time) {
 	if k == 0 {
@@ -126,12 +129,20 @@ func (s *sessionStore) resolveDoc(id, src, token string, doc map[string]any) (st
 			if l.token != token || l.sys != sys || now.Sub(l.last) > linkWindow {
 				continue
 			}
-			n, ans := 0, false
+			n, ans, recent := 0, false, false
 			for _, k := range keys {
 				if _, ok := l.keys[k]; ok && shared[k] == 1 {
 					n++
 					ans = ans || k == l.answer
+					_, inTail := l.tail[k]
+					recent = recent || inTail || k == l.answer
 				}
+			}
+			// A continuation after compression carries the session's latest turns. A new conversation that
+			// merely starts with the same injected messages (memory, skills, instructions) only matches the
+			// session's first messages – that is no continuation.
+			if !recent {
+				continue
 			}
 			if n > bestN || (n == bestN && n > 0 && l.last.After(s.links[best].last)) {
 				best, bestN, bestAns = sid, n, ans
@@ -153,6 +164,10 @@ func (s *sessionStore) resolveDoc(id, src, token string, doc map[string]any) (st
 	l.last = now
 	for _, k := range keys {
 		l.add(k, now)
+	}
+	l.tail = map[uint64]struct{}{}
+	for _, k := range keys[max(0, len(keys)-linkTail):] {
+		l.tail[k] = struct{}{}
 	}
 	return id, from
 }

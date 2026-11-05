@@ -16,13 +16,15 @@ import (
 //
 // The result is a short hash (8 hex chars) – raw IDs (often user names or e-mails) are not shown.
 
-var sessionHeaders = []string{"X-Session-Id", "Session-Id", "X-Conversation-Id", "X-Thread-Id", "X-Chat-Id", "X-Litellm-Session-Id"}
+var sessionHeaders = []string{"X-Session-Id", "Session-Id", "X-Conversation-Id", "X-Thread-Id", "X-Chat-Id", "X-Litellm-Session-Id", "X-OpenWebUI-Chat-Id"}
 
 // body paths, first match wins
 var sessionFields = [][]string{
 	{"session_id"}, {"sessionId"}, {"conversation_id"}, {"thread_id"}, {"chat_id"},
 	{"metadata", "session_id"}, {"metadata", "conversation_id"}, {"metadata", "thread_id"}, {"metadata", "user_id"},
-	{"litellm_session_id"}, {"prompt_cache_key"}, {"user"},
+	{"litellm_session_id"}, {"prompt_cache_key"},
+	// not "user": that names the end user (the same for all their conversations), not a conversation –
+	// all sessions of one user would collapse into one. It is still shown in the session details.
 }
 
 func detectSession(r *http.Request, body []byte, token string) (id, src string) {
@@ -57,6 +59,9 @@ func detectSessionDoc(r *http.Request, doc map[string]any, token string) (id, sr
 				}
 				switch v := cur.(type) {
 				case string:
+					if strings.Join(path, ".") == "metadata.user_id" && !strings.Contains(v, "session") {
+						continue // a plain user ID; Claude Code puts "…_session_<uuid>" here, that one is fine
+					}
 					if v = strings.TrimSpace(v); v != "" {
 						raw, src = v, "Feld "+strings.Join(path, ".")
 						break fields

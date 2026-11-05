@@ -93,7 +93,7 @@ func TestSessionDetection(t *testing.T) {
 	if h1 != h2 || src != "Header X-Session-Id" {
 		t.Errorf("header: %q %q %s", h1, h2, src)
 	}
-	_, src = detectSession(mk(nil, ""), []byte(`{"model":"x","metadata":{"user_id":"u_1"},"system":"s","messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`), "t")
+	_, src = detectSession(mk(nil, ""), []byte(`{"model":"x","metadata":{"user_id":"user_ab12_account_cd34_session_5e6f"},"system":"s","messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`), "t")
 	if src != "Feld metadata.user_id" {
 		t.Errorf("anthropic metadata: %s", src)
 	}
@@ -194,7 +194,7 @@ func TestSessionDetails(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&si)
 	resp.Body.Close()
 	if si.Requests != 2 || si.Title != "Backup-Analyse" || si.System != "Du bist Hermes." || !strings.HasPrefix(si.FirstMsg, "Warum") ||
-		si.Forwarded[0] != "192.168.1.77" || si.UserAgents[0] != "hermes-agent/1.0" || si.Headers["X-Title"] != "Hermes" || si.Fields["user"] != "hermes-ui" || si.ExplicitID != "hermes-ui" {
+		si.Forwarded[0] != "192.168.1.77" || si.UserAgents[0] != "hermes-agent/1.0" || si.Headers["X-Title"] != "Hermes" || si.Fields["user"] != "hermes-ui" || si.ExplicitID != "" {
 		t.Errorf("details: %+v", si)
 	}
 	if r, _ := http.Get(srv.URL + "/balancer/api/sessions/unbekannt"); r.StatusCode != 404 {

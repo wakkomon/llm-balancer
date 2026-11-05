@@ -3,6 +3,15 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.13.3 – 2026-11-05
+
+- Sessions: das Feld `user` bestimmt die Session nicht mehr – es nennt den Benutzer, nicht das Gespräch, und hat alle
+  Gespräche eines Benutzers zu einer Session zusammengefasst (steht weiter in den Session-Details). `metadata.user_id`
+  zählt nur noch, wenn es eine Session enthält (Claude Code). Neu erkannt: Header `X-OpenWebUI-Chat-Id`
+- Verknüpfung nach Kontext-Kompression: Ein neues Gespräch, das nur mit denselben eingefügten Nachrichten beginnt
+  (Memory, Skills, Anweisungen), wird nicht mehr an eine laufende Session gehängt – verknüpft wird nur, wenn die neue
+  Anfrage die letzten Nachrichten der alten Session enthält
+
 ## 1.13.2 – 2026-11-03
 
 - „freie Slots“: Server, die nicht erreichbar sind oder am Kostendeckel stehen, zählen in der Gesamtzahl auch nicht mehr
