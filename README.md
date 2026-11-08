@@ -18,9 +18,9 @@ der Balancer, um den richtigen Server zu finden; ändern tut er ihn nur, wenn du
 erzwungenes Modell).
 
 ```
-Hermes-Agent ─► LiteLLM ─► llm-balancer :8080 ─┬─► LLM-Server A (1 Slot)
-Open WebUI ───────────────►                    ├─► LLM-Server B (1 Slot)
-                                               └─► Ollama-Server C (1 Slot)
+Hermes-Agent ─► LiteLLM ─► llm-balancer ─┬─► LLM-Server A (1 Slot)
+Open WebUI ───────────────►  :8080 http  ├─► LLM-Server B (1 Slot)
+                             :8443 https └─► Ollama-Server C (1 Slot)
 ```
 
 ![Übersicht](docs/screenshots/uebersicht.png)
@@ -69,9 +69,10 @@ services:
   llm-balancer:
     image: ghcr.io/wakkomon/llm-balancer:latest   # oder: build: .
     restart: unless-stopped
-    ports: ["8080:8080"]
+    ports: ["8080:8080", "8443:8443"]   # http und https
     environment:
       BACKENDS: "gpu=http://192.168.1.50:8080,amd=http://192.168.1.60:8080@1"
+      TLS_HOSTS: "balancer.lan,192.168.1.20"   # Name/IP des Docker-Hosts fürs HTTPS-Zertifikat
     volumes:
       - llm-balancer-data:/data
 volumes:
@@ -93,7 +94,8 @@ BACKENDS="http://host-a:8080,http://host-b:8080" ./llm-balancer
 
 ## Bedienung
 
-Die Web-UI liegt unter `http://<host>:8080/balancer/` und aktualisiert sich jede Sekunde. Alle Tabellen lassen sich
+Die Web-UI liegt unter `http://<host>:8080/balancer/` bzw. per HTTPS unter `https://<host>:8443/balancer/`
+(selbst signiertes Zertifikat, siehe [HTTPS](#https)) und aktualisiert sich jede Sekunde. Alle Tabellen lassen sich
 per Klick auf die Spaltenüberschrift sortieren. Die Screenshots zeigen eine Beispiel-Installation mit zwei GPU-Servern
 (Gruppe „gross“), einem Ollama-Server (Gruppe „klein“) und einem ausgefallenen Server.
 
@@ -104,7 +106,8 @@ per Klick auf die Spaltenüberschrift sortieren. Die Screenshots zeigen eine Bei
 3. **Übersicht → + Server hinzufügen**: URL des LLM-Servers ohne `/v1` (z. B. `http://192.168.1.50:8080`), Anzahl
    paralleler Anfragen, ggf. Bearer-Token. Der Typ (OpenAI-kompatibel / Ollama) wird automatisch erkannt.
 4. **API-Zugriff → + Token erstellen**: Token für LiteLLM, Hermes oder Open WebUI erzeugen und dort als API-Key eintragen.
-5. Clients auf `http://<host>:8080/v1` (OpenAI) bzw. `http://<host>:8080` (Ollama) zeigen lassen.
+5. Clients auf `http://<host>:8080/v1` (OpenAI) bzw. `http://<host>:8080` (Ollama) zeigen lassen – oder verschlüsselt
+   auf `https://<host>:8443/…`; dann dem Zertifikat aus Einstellungen → HTTPS vertrauen (siehe [HTTPS](#https)).
 
 Optional danach: **Gruppen** anlegen, wenn Server unterschiedliche Modelle bedienen, und einen **Router**, wenn der
 Balancer das Modell selbst wählen soll.
@@ -529,7 +532,7 @@ nennt die Quelle. Startet ein Agent mit identischem Prompt neu, landen beide Lä
 
 ### MCP-Schnittstelle
 
-Unter `/mcp` (gleicher Port wie die LLM-API, z. B. `http://balancer:8080/mcp`) spricht der Balancer das
+Unter `/mcp` (gleicher Port wie die LLM-API, z. B. `http://balancer:8080/mcp` oder `https://balancer.lan:8443/mcp`) spricht der Balancer das
 [Model Context Protocol](https://modelcontextprotocol.io) (Transport „Streamable HTTP“, JSON-Antworten). Ein KI-Agent –
 Claude Desktop/Code, Cursor, LibreChat, Hermes … – kann damit den Balancer abfragen und steuern.
 
@@ -560,8 +563,9 @@ Claude Code; andere Clients sehen ähnlich aus):
 ```
 
 Clients, die nur stdio können, binden die Schnittstelle über eine Brücke wie
-`npx mcp-remote http://balancer:8080/mcp --header "Authorization: Bearer mcp-…"` an. Für Zugriff von außen gehört
-`/mcp` wie die UI hinter HTTPS.
+`npx mcp-remote http://balancer:8080/mcp --header "Authorization: Bearer mcp-…"` an. Das MCP-Token geht im Klartext
+mit – außerhalb des eigenen Netzes daher den HTTPS-Port nutzen (Node-basierte Clients wie `mcp-remote` vertrauen dem
+selbst signierten Zertifikat mit `NODE_EXTRA_CA_CERTS=/pfad/llm-balancer.crt`).
 
 ### Tagesansicht und Warteschlange
 
@@ -729,13 +733,20 @@ model_list:
       stream_timeout: 1800
 ```
 
+Per HTTPS: `api_base: https://balancer.lan:8443/v1` (der Name muss im Zertifikat stehen, siehe [HTTPS](#https)) und dem
+LiteLLM-Container das Zertifikat des Balancers bekannt machen, z. B. als Datei einbinden und
+`SSL_CERT_FILE=/certs/llm-balancer.crt` setzen. Achtung: `SSL_CERT_FILE` ersetzt die Liste der vertrauenswürdigen
+Zertifikate – braucht LiteLLM daneben öffentliche HTTPS-Ziele (Cloud-APIs), eine Datei aus den System-Zertifikaten plus
+`llm-balancer.crt` angeben. Läuft LiteLLM im selben Docker-Netz, ist der http-Port (`http://llm-balancer:8080/v1`)
+weiterhin der einfachste Weg – der Verkehr verlässt den Host dann nicht.
+
 Hinweise:
 
 * Der Modellname wird nicht umgeschrieben. Die Backends müssen den Namen also entweder alle kennen
   (Ollama: gleiches Modell-Tag) oder ihn ignorieren (llama.cpp-Server mit einem geladenen Modell).
 * LiteLLM-Timeouts und Retries so wählen, dass Anfragen nicht abgebrochen werden, während sie in der Queue warten –
-  sonst schickt LiteLLM Duplikate hinterher. Ein vom Client abgebrochener Request wird sauber aus der Queue entfernt
-  bzw. sein Slot sofort freigegeben.
+  sonst schickt LiteLLM Duplikate hinterher. Ein vom Client abgebrochener Request wird sauber aus der Queue entfernt;
+  lief er schon, bleibt sein Slot noch `ABORT_GRACE_SEC` (Standard 3 s) belegt, weil der Server ihn kurz weiterrechnet.
 * Jede Antwort enthält den Header `X-LLM-Balancer-Backend` mit dem verwendeten Server.
 
 ## Web-UI und API
@@ -800,11 +811,23 @@ Alternativ im Stack `dns:` (gilt für den ganzen Container) oder `extra_hosts: [
 Prüfen lässt sich die Auflösung so (gleiches Netz wie der Balancer):
 `docker run --rm --network <netz-des-stacks> busybox nslookup <name>`.
 
-**`certificate signed by unknown authority`** – Der Server nutzt ein selbstsigniertes Zertifikat oder eines einer eigenen CA.
+**`certificate signed by unknown authority`** (im Log des Balancers, beim Verbinden zu einem LLM-Server) – Der Server nutzt ein selbstsigniertes Zertifikat oder eines einer eigenen CA.
 Beim Server „TLS-Zertifikat nicht prüfen“ aktivieren. (Öffentliche Zertifikate, z. B. Let's Encrypt, werden geprüft und
 funktionieren ohne die Option.)
 
 **`server gave HTTP response to HTTPS client`** – Der Server spricht http: URL mit `http://` eintragen.
+
+**Client meldet beim HTTPS-Port `CERTIFICATE_VERIFY_FAILED` / `self signed certificate` / `unable to verify`** – Der
+Client kennt das selbst signierte Zertifikat des Balancers nicht. Zertifikat unter Einstellungen → HTTPS herunterladen
+und beim Client hinterlegen (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, Browser: Ausnahme bestätigen)
+oder für diesen Client weiter den http-Port nutzen.
+
+**`Hostname mismatch` / `certificate is not valid for …`** – Der Name oder die IP, unter der der Client den Balancer
+aufruft, steht nicht im Zertifikat. In `TLS_HOSTS` oder unter Einstellungen → HTTPS ergänzen, Zertifikat neu erzeugen
+und das neue Zertifikat bei den Clients hinterlegen.
+
+**HTTPS-Port antwortet nicht** – Im Stack fehlt die Port-Freigabe `- "8443:8443"`, oder `HTTPS_LISTEN` steht auf `off`.
+Ob HTTPS läuft, steht unter Einstellungen → HTTPS und im Log (`HTTPS on :8443`).
 
 **Hohe CPU-Last des Balancers** – Oben im Kopf steht, wie viel CPU der Balancer selbst braucht („Balancer“) und wie
 ausgelastet der ganze Rechner ist („Host“). Ist nur „Host“ hoch, liegt es an anderen Diensten auf dem Rechner (z. B.
