@@ -32,6 +32,7 @@ type Proxy struct {
 	sessions  sessionStore
 	mcp       *MCPTokens     // MCP interface tokens
 	ollama    *ollamaManager // Ollama model management (UI + MCP)
+	tls       *tlsManager    // https port (nil = off)
 	transport *http.Transport
 	insecure  *http.Transport // for servers with "tls_skip_verify" (self-signed certificates)
 }

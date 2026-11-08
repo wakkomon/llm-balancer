@@ -42,7 +42,12 @@ type BackendConfig struct {
 
 // Config is the full balancer configuration.
 type Config struct {
-	Listen               string          `json:"listen"`    // default ":8080"
+	Listen               string   `json:"listen"`       // default ":8080"
+	HTTPSListen          string   `json:"https_listen"` // additional https port, default ":8443", "" = off
+	TLSCert              string   `json:"tls_cert"`     // certificate file (PEM); empty: self-signed in DATA_DIR/tls
+	TLSKey               string   `json:"tls_key"`
+	TLSHosts             []string `json:"tls_hosts"` // extra names/IPs for the self-signed certificate
+	httpsErr             string
 	UIPrefix             string          `json:"ui_prefix"` // default "/balancer"
 	Backends             []BackendConfig `json:"backends"`
 	Groups               []GroupConfig   `json:"groups"`              // server groups, routed by model name
@@ -73,6 +78,7 @@ type Config struct {
 func defaultConfig() Config {
 	return Config{
 		Listen:               ":8080",
+		HTTPSListen:          ":8443",
 		UIPrefix:             "/balancer",
 		QueueTimeoutSec:      900,
 		HealthPath:           "/v1/models",
@@ -119,6 +125,23 @@ func loadConfig() (Config, error) {
 	// Environment overrides (handy for docker-compose / Portainer).
 	if v := os.Getenv("LISTEN"); v != "" {
 		cfg.Listen = v
+	}
+	if v, ok := os.LookupEnv("HTTPS_LISTEN"); ok {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "", "off", "false", "no", "0", "none":
+			cfg.HTTPSListen = ""
+		default:
+			cfg.HTTPSListen = strings.TrimSpace(v)
+		}
+	}
+	if v := os.Getenv("TLS_CERT"); v != "" {
+		cfg.TLSCert = v
+	}
+	if v := os.Getenv("TLS_KEY"); v != "" {
+		cfg.TLSKey = v
+	}
+	if v := os.Getenv("TLS_HOSTS"); v != "" {
+		cfg.TLSHosts = strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' })
 	}
 	if v := os.Getenv("BACKENDS"); v != "" {
 		bs, err := parseBackendsEnv(v)

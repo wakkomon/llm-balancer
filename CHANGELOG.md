@@ -3,6 +3,17 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.14.0 – 2026-11-08
+
+- **HTTPS-Port** zusätzlich zum http-Port (`HTTPS_LISTEN`, Standard `:8443`, `off` = aus) mit derselben API, Web-UI und
+  MCP-Schnittstelle; der http-Port läuft unverändert weiter
+- **Selbst signiertes Zertifikat** wird automatisch in `/data/tls/` erzeugt (ECDSA P-256, 825 Tage) und vor Ablauf
+  erneuert; Namen/IPs: localhost, Container, `TLS_HOSTS` und in der UI eingetragene. Alternativ eigenes Zertifikat über
+  `TLS_CERT`/`TLS_KEY` (wird bei Änderung ohne Neustart neu geladen)
+- Einstellungen → **HTTPS**: Gültigkeit, Namen, SHA-256-Fingerabdruck, Zertifikat herunterladen, mit weiteren Namen neu
+  erzeugen
+- Docker-Image und Stack-Vorlagen geben Port 8443 frei
+
 ## 1.13.3 – 2026-11-05
 
 - Sessions: das Feld `user` bestimmt die Session nicht mehr – es nennt den Benutzer, nicht das Gespräch, und hat alle

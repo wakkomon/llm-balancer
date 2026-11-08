@@ -91,11 +91,30 @@ func main() {
 		}
 	}()
 
+	if cfg.HTTPSListen != "" {
+		tm, err := newTLSManager(cfg)
+		if err != nil {
+			cfg.httpsErr = err.Error()
+			log.Printf("HTTPS disabled: %v", err)
+		}
+		px.tls = tm
+	}
+	handler := newMux(cfg, pool, px)
 	srv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           newMux(cfg, pool, px),
+		Handler:           handler,
 		ReadHeaderTimeout: 30 * time.Second,
 		// no Read/WriteTimeout: generations can stream for a long time
+	}
+	var tlsSrv *http.Server
+	if px.tls != nil {
+		tlsSrv = newHTTPSServer(cfg.HTTPSListen, handler, px.tls)
+		go func() {
+			log.Printf("HTTPS on %s (same API and UI as on %s)", cfg.HTTPSListen, cfg.Listen)
+			if err := tlsSrv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+				log.Printf("HTTPS port %s: %v – http keeps running", cfg.HTTPSListen, err)
+			}
+		}()
 	}
 
 	log.Printf("llm-balancer v%s (commit %s, started %s) listening on %s, UI at %s/", versionString(), shortCommit(), started.Format(time.RFC3339), cfg.Listen, cfg.UIPrefix)
@@ -131,6 +150,9 @@ func main() {
 		log.Printf("shutting down, waiting up to 30s for running requests")
 		sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
+		if tlsSrv != nil {
+			go tlsSrv.Shutdown(sctx)
+		}
 		_ = srv.Shutdown(sctx)
 		persistAll(pool, access) // again, including requests that finished during shutdown
 		px.mcp.Flush()
@@ -180,6 +202,7 @@ func newMux(cfg Config, pool *Pool, px *Proxy) http.Handler {
 		px.mcp = NewMCPTokens("")
 	}
 	registerMCPTokens(ui, pre, px.mcp, cfg.AdminToken)
+	registerTLS(ui, pre, px.tls, cfg, cfg.AdminToken)
 	registerConfigIO(ui, pre, pool, px.access, users, px.mcp, cfg.AdminToken)
 	px.ollama = registerOllama(ui, pre, px, cfg.AdminToken)
 	registerRouters(ui, pre, pool, cfg.AdminToken)

@@ -47,6 +47,7 @@ Open WebUI ───────────────►                    �
 * API-Tokens für die LLM-API mit **erlaubten Modellen**, Preisen (eingehend), Kostendeckel und Sperre
 * Preise und Kostendeckel pro Server (ausgehend) – mit Saldo in der Statistik
 * **Benutzerverwaltung** für die Web-UI mit Rollen Administrator / Operator / Betrachter
+* **HTTPS** auf einem zusätzlichen Port (selbst signiertes Zertifikat, automatisch erzeugt und erneuert, oder ein eigenes)
 * **MCP-Schnittstelle** für KI-Agenten (Status, Statistik, Anfragen, Sessions abfragen; Server/Gruppen schalten, Anfragen abbrechen, Ollama-Modelle verwalten) – geschützt mit eigenen MCP-Tokens mit Rolle
 * E-Mail-Benachrichtigung bei Ausfällen, Fehlern und erreichten Kostendeckeln
 * Konfiguration exportieren/importieren (mit oder ohne Geheimnisse)
@@ -254,6 +255,12 @@ importieren. Solange es keinen Benutzer gibt, ist die Web-UI offen; hier wird da
 
 ![Einstellungen](docs/screenshots/einstellungen.png)
 
+Ganz unten steht **HTTPS**: Port, Gültigkeit, Namen/IPs und Fingerabdruck des Zertifikats, ein Knopf zum Herunterladen
+und – für Administratoren – zusätzliche Namen, mit denen das selbst signierte Zertifikat neu erzeugt wird
+(siehe [HTTPS](#https)).
+
+![HTTPS](docs/screenshots/https.png)
+
 ## Konfiguration
 
 ### Server-Liste: Startwert und Änderungen in der UI
@@ -340,6 +347,29 @@ und welche Server es bekommen, und blendet die übrigen Server aus. `GET /balanc
 
 Ohne Gruppen verhält sich der Balancer wie bisher (alle Server bedienen alle Modelle).
 
+### HTTPS
+
+Zusätzlich zum http-Port (`LISTEN`, Standard `:8080`) läuft ein **HTTPS-Port** (`HTTPS_LISTEN`, Standard `:8443`) mit
+derselben LLM-API, Web-UI und MCP-Schnittstelle. Der http-Port bleibt unverändert; im Docker-Stack muss nur der zweite
+Port freigegeben werden (`- "8443:8443"`). `HTTPS_LISTEN=off` schaltet HTTPS ab.
+
+**Zertifikat:** Ohne weitere Einstellung erzeugt der Balancer beim ersten Start ein **selbst signiertes Zertifikat**
+(ECDSA P-256, 825 Tage gültig) in `/data/tls/` (`cert.pem`, `key.pem` mit Rechten 0600) und erneuert es automatisch
+30 Tage vor Ablauf. Es enthält `localhost`, Hostname und IPs des Containers sowie die Namen aus `TLS_HOSTS` und die in
+der UI eingetragenen. **Wichtig:** Der Container kennt den Namen und die IP des Docker-Hosts nicht – also die Adresse,
+unter der LiteLLM, Hermes oder der Browser den Balancer aufrufen, in `TLS_HOSTS` (z. B. `balancer.lan,192.168.1.20`)
+oder unter Einstellungen → HTTPS eintragen. Kommt ein neuer Name in `TLS_HOSTS` dazu, wird das Zertifikat beim Start neu
+erzeugt.
+
+Clients müssen dem Zertifikat vertrauen: im Browser einmal die Warnung bestätigen; für Programme das Zertifikat unter
+Einstellungen → HTTPS herunterladen (oder `/data/tls/cert.pem`) und hinterlegen – bei Python-Programmen wie LiteLLM,
+Hermes oder Open WebUI z. B. über `SSL_CERT_FILE=/pfad/llm-balancer.crt` bzw. `REQUESTS_CA_BUNDLE`, bei Node über
+`NODE_EXTRA_CA_CERTS`. Zum schnellen Testen: `curl --cacert llm-balancer.crt https://balancer.lan:8443/v1/models`.
+
+**Eigenes Zertifikat** (z. B. von der eigenen CA oder Let's Encrypt): `TLS_CERT` und `TLS_KEY` auf PEM-Dateien im
+Container zeigen lassen (Volume). Ändern sich die Dateien, lädt der Balancer sie ohne Neustart neu (spätestens nach einer
+Minute).
+
 ### Was wird wann gespeichert?
 
 Alles liegt im Volume `/data` (`DATA_DIR`):
@@ -349,6 +379,7 @@ Alles liegt im Volume `/data` (`DATA_DIR`):
 | `backends.json` | Server, Gruppen, Server-Tokens | sofort bei jeder Änderung |
 | `access.json` | API-Tokens (Hash), Preise, verbrauchte Tokens und Kosten | sofort bei Änderungen, Zähler jede Minute |
 | `stats.json` | Tagesstatistik pro Server, Modell und API-Token | jede Minute |
+| `tls/cert.pem`, `tls/key.pem`, `tls/hosts.json` | selbst signiertes HTTPS-Zertifikat, Schlüssel, zusätzliche Namen | beim Erzeugen / Erneuern |
 | `counters.json` | Zähler der Server-Karten (Anfragen, Fehler, Ø Dauer, tok/s, Tag-Fehler, letzter Fehler) und der Kacheln oben | jede Minute |
 
 Minütlich wird nur geschrieben, was sich geändert hat, jeweils über eine temporäre Datei und Umbenennen (kein halb
@@ -664,7 +695,10 @@ Entweder per Umgebungsvariablen oder per `config.json` (Pfad über `CONFIG`, son
 | `DNS_SERVERS` / `dns_servers` | – | DNS-Server (IPs, optional mit Port) für die Namen der LLM-Server; danach Fallback auf den Container-Resolver |
 | `ADMIN_TOKEN` / `admin_token` | – | Ohne Benutzer: Änderungen in UI/API nur mit diesem Token. Mit Benutzern: Administrator-Zugang für Skripte (Header `X-Admin-Token`) |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | – | legt beim Start einen Administrator an, falls es noch keinen Benutzer gibt |
-| `LISTEN` / `listen` | `:8080` | Listen-Adresse |
+| `LISTEN` / `listen` | `:8080` | Listen-Adresse (http) |
+| `HTTPS_LISTEN` / `https_listen` | `:8443` | zusätzlicher HTTPS-Port; `off` = aus |
+| `TLS_HOSTS` / `tls_hosts` | – | weitere Namen/IPs für das selbst signierte Zertifikat (kommagetrennt), z. B. Name und IP des Docker-Hosts |
+| `TLS_CERT`, `TLS_KEY` / `tls_cert`, `tls_key` | – | eigenes Zertifikat und Schlüssel (PEM) statt des selbst signierten |
 | `QUEUE_TIMEOUT_SEC` / `queue_timeout_sec` | `900` | Max. Wartezeit in der Queue (0 = unbegrenzt), danach HTTP 504 |
 | `ABORT_GRACE_SEC` / `abort_grace_sec` | `3` | So lange bleibt ein Slot nach einer abgebrochenen Anfrage (Client weg, Stop) belegt, weil der Server sie noch zu Ende rechnet; 0 = sofort frei |
 | `MAX_QUEUE` / `max_queue` | `0` | Max. Länge der Queue (0 = unbegrenzt), danach HTTP 503 |

@@ -16,6 +16,6 @@ COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certifica
 COPY --from=build --chown=65534:65534 /out/data /data
 ENV DATA_DIR=/data
 VOLUME /data
-EXPOSE 8080
+EXPOSE 8080 8443
 USER 65534:65534
 ENTRYPOINT ["/llm-balancer"]

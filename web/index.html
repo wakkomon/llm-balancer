@@ -590,6 +590,9 @@ tr.child td{background:var(--bg);font-size:12px} tr.child td:first-child{padding
     </div>
   </div>
   </div>
+
+  <div class="sechead"><h2>HTTPS</h2></div>
+  <div class="panel" id="tlsinfo"></div>
   </div>
 </main>
 <div id="loginview" hidden>
@@ -1592,6 +1595,41 @@ $('tform').addEventListener('submit', async ev => {
 async function deleteToken(name) {
   if (confirm(`Token „${name}“ löschen? Clients mit diesem Token bekommen danach 401.`)) { await call('DELETE', `/tokens/${enc(name)}`); loadTokens(); }
 }
+// ---------------- HTTPS ----------------
+async function loadTLS() {
+  let t;
+  try { t = await (await fetch(base + '/api/tls', {cache: 'no-store'})).json(); } catch { return; }
+  const el = $('tlsinfo');
+  if (!t.enabled) {
+    el.innerHTML = `<div class="muted">HTTPS ist aus${t.error ? ` – <span class="err">${esc(t.error)}</span>` : ' (<code>HTTPS_LISTEN</code> leer oder <code>off</code>)'}.</div>`;
+    return;
+  }
+  const port = (t.listen || '').replace(/^.*:/, '');
+  const here = `https://${location.hostname}:${port}${base}/`;
+  const days = Math.round((Date.parse(t.not_after) - Date.now()) / 864e5);
+  el.innerHTML = `<dl class="kv" style="margin-top:0">
+    <dt>Port</dt><dd><code>${esc(t.listen)}</code> – zusätzlich zu http, gleiche API und Oberfläche: <a href="${esc(here)}">${esc(here)}</a></dd>
+    <dt>Zertifikat</dt><dd>${t.source === 'files' ? 'aus <code>TLS_CERT</code>/<code>TLS_KEY</code> (wird bei Änderung neu geladen)' : 'selbst signiert, wird vor Ablauf automatisch erneuert'}</dd>
+    <dt>Gültig bis</dt><dd>${dateFmt(t.not_after)} (noch ${days} Tage)</dd>
+    <dt>Namen / IPs</dt><dd>${t.hosts.map(h => `<code>${esc(h)}</code>`).join(', ')}</dd>
+    <dt>SHA-256</dt><dd style="font-family:var(--mono);font-size:11.5px;word-break:break-all">${esc(t.sha256)}</dd>
+    </dl>
+    ${t.error ? `<div class="err">${esc(t.error)}</div>` : ''}
+    <div class="hint">Clients müssen dem selbst signierten Zertifikat vertrauen: im Browser einmal die Warnung bestätigen; für LiteLLM, Hermes, Open WebUI usw. das Zertifikat herunterladen und als vertrauenswürdig hinterlegen (z. B. <code>SSL_CERT_FILE</code> / <code>REQUESTS_CA_BUNDLE</code> bei Python). Der Name, unter dem Clients den Balancer aufrufen, muss in der Liste oben stehen.</div>
+    <div class="btns" style="justify-content:flex-start"><button onclick="location.href=base + '/api/tls/cert.pem'">Zertifikat herunterladen</button></div>
+    ${t.source === 'files' ? '' : `<div class="need-admin" style="margin-top:12px">
+      <label for="tls-extra">Zusätzliche Namen / IPs (z. B. DNS-Name und IP des Docker-Hosts, kommagetrennt)</label>
+      <input id="tls-extra" value="${esc((t.extra_hosts || []).join(', '))}" placeholder="balancer.lan, 192.168.1.20">
+      ${t.env_hosts?.length ? `<div class="hint">Aus <code>TLS_HOSTS</code>: ${t.env_hosts.map(esc).join(', ')}</div>` : ''}
+      <div class="btns" style="justify-content:flex-start"><button onclick="regenTLS()">Zertifikat neu erzeugen</button></div>
+    </div>`}`;
+}
+async function regenTLS() {
+  if (!confirm('Neues Zertifikat erzeugen? Clients, denen das alte Zertifikat hinterlegt wurde, brauchen danach das neue.')) return;
+  const hosts = $('tls-extra').value.split(/[\s,;]+/).filter(Boolean);
+  if (await call('POST', '/tls/regenerate', {extra_hosts: hosts})) { toast('Neues Zertifikat erzeugt'); loadTLS(); }
+}
+
 // ---------------- MCP tokens ----------------
 let mcpList = [], mcpEdit = null;
 const mcpURL = () => location.origin + '/mcp';
@@ -2577,7 +2615,7 @@ function showPage() {
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.page === page));
   if (page === 'tokens') loadTokens();
   if (page === 'report') { loadEvents(); loadNotify(); }
-  if (page === 'settings') loadUsers();
+  if (page === 'settings') { loadUsers(); loadTLS(); }
   if (page === 'models') { loadOllama(true); loadJobs(); }
   if (page === 'stats') { renderChart(); renderStatTables(); if (stRange === 1) loadDay(); }
 }
