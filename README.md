@@ -167,7 +167,8 @@ das gewählte Modell, die erkannten Merkmale und warum andere Regeln nicht gepas
 
 Im Dialog stehen Standardmodell, übernommene echte Modellnamen, Session-Bindung, die Regeln mit allen Bedingungen und
 der Klassifizierer. Mehrere Modelle mit Komma gelten als gleichwertig – die Anfrage nimmt den ersten freien Server
-mit einem davon. Details im Abschnitt [Modell-Router](#modell-router).
+mit einem davon. Statt eines Modells geht auch eine **Gruppe** als Ziel (`@gpu`). Details im Abschnitt
+[Modell-Router](#modell-router).
 
 ![Router bearbeiten](docs/screenshots/router-dialog.png)
 
@@ -455,6 +456,13 @@ passende Gruppe und den Server, der das Modell hat (Seite **Router**, `#router`)
   (`qwen3:30b-a3b, qwen3:32b`). Die Anfrage geht an den ersten freien Server, der eins davon hat (bei mehreren freien an
   das weiter vorne genannte Modell); sind alle belegt, wartet sie auf den, der zuerst frei wird. Der Modellname in der
   Anfrage wird passend zum Server gesetzt.
+* **Gruppe als Ziel** (`@Gruppenname`, auch in Listen und Stufen): Ist das Modell egal, geht die Anfrage an irgendeinen
+  Server der Gruppe – streng nach **Priorität** und freien Slots, wie bei einer direkten Anfrage an die Gruppe; der
+  Fallback der Gruppe gilt ebenfalls. Jeder Server bekommt sein eigenes Modell: das erzwungene Modell der Gruppe bzw. des
+  Servers, sonst das geladene (Ollama), das einzige gemeldete, das erste namentlich im Filter eingetragene oder das erste
+  gemeldete; meldet er keins (z. B. llama.cpp mit einem Modell), bleibt der angefragte Name. Wird die Gruppe umbenannt,
+  ziehen die Router-Ziele mit. Beispiel: Router `local` mit Standardmodell `@gpu` – Server mit Priorität 0 zuerst, dann
+  alle Slots des Servers mit Priorität 5, erst dann der mit Priorität 9.
 * **Standardmodell**, wenn keine Regel passt (leer: übernommene echte Modelle bleiben unverändert).
 * **Fähigkeiten beachten** (Standard an): kann das gewählte Modell nachweislich etwas nicht, was die Anfrage braucht
   (Bilder, Tools, Kontext), weicht der Router auf ein fähiges Modell aus.

@@ -139,10 +139,42 @@ func (b *Backend) serveLevel(model string) int {
 	if model == "" {
 		return matchNone
 	}
+	if g, ok := groupTarget(model); ok { // "@group": every member of the group, whatever it serves
+		if strings.EqualFold(b.group, g) {
+			return matchExact
+		}
+		return matchNone
+	}
 	if b.autoModels && b.reports(model) {
 		return matchExact
 	}
 	return patternLevel(b.manual, model)
+}
+
+// groupTarget: a router target "@name" means "any server of group name" instead of a model.
+func groupTarget(model string) (string, bool) {
+	g, ok := strings.CutPrefix(strings.TrimSpace(model), "@")
+	return strings.TrimSpace(g), ok && strings.TrimSpace(g) != ""
+}
+
+// defaultModel: the model a server gets for a group target – the loaded one, the only one it has,
+// the first listed by name in its filter, or the first it reports ("" if it reports none).
+func (b *Backend) defaultModel() string {
+	if len(b.loaded) > 0 {
+		return b.loaded[0]
+	}
+	if len(b.models) == 1 {
+		return b.models[0]
+	}
+	for _, m := range b.manual {
+		if !strings.Contains(m, "*") {
+			return m
+		}
+	}
+	if len(b.models) > 0 {
+		return b.models[0]
+	}
+	return ""
 }
 
 // patternLevel: how a list of names/patterns matches a model.
@@ -358,6 +390,18 @@ func (p *Pool) routeWaitBase(model string, waited time.Duration, level int) Rout
 func (p *Pool) routeLocked(model string) Route {
 	if model == "" {
 		return Route{Mode: "all"}
+	}
+	if name, ok := groupTarget(model); ok {
+		for i := range p.groups {
+			if g := &p.groups[i]; strings.EqualFold(g.Name, name) {
+				allow := map[*Backend]bool{}
+				for _, b := range p.membersLocked(g.Name) {
+					allow[b] = true
+				}
+				return Route{allow: allow, Group: g.Name, Mode: "group", groups: []string{g.Name}}
+			}
+		}
+		return Route{allow: map[*Backend]bool{}, Mode: "reject"} // unknown group
 	}
 	allow := map[*Backend]bool{}
 	var names []string
@@ -661,12 +705,47 @@ func (p *Pool) UpdateGroup(name string, g GroupConfig, members []string) error {
 			p.groups[i].Fallback = g.Name
 		}
 	}
+	if g.Name != name {
+		p.renameGroupTargetsLocked(name, g.Name)
+	}
 	if members != nil {
 		p.setMembersLocked(g.Name, members)
 	}
 	log.Printf("group %s updated via UI (models %v)", g.Name, g.Models)
 	p.dispatchLocked()
 	return p.persistLocked()
+}
+
+// renameGroupTargetsLocked lets router targets "@old" follow a group rename.
+func (p *Pool) renameGroupTargetsLocked(old, name string) {
+	fix := func(list string) string {
+		ms := splitModels(list)
+		for i, m := range ms {
+			if g, ok := groupTarget(m); ok && strings.EqualFold(g, old) {
+				ms[i] = "@" + name
+			}
+		}
+		return strings.Join(ms, ", ")
+	}
+	fixAll := func(ms []string) {
+		for i := range ms {
+			ms[i] = fix(ms[i])
+		}
+	}
+	for i := range p.routers {
+		rc := &p.routers[i]
+		rc.Default = fix(rc.Default)
+		for k := range rc.Rules {
+			rc.Rules[k].Model = fix(rc.Rules[k].Model)
+			rc.Rules[k].WhenBusy = fix(rc.Rules[k].WhenBusy)
+		}
+		for _, ms := range rc.Tiers {
+			fixAll(ms)
+		}
+		for k := range rc.Routes {
+			fixAll(rc.Routes[k].Models)
+		}
+	}
 }
 
 func (p *Pool) DeleteGroup(name string) error {

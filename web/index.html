@@ -729,7 +729,7 @@ tr.child td{background:var(--bg);font-size:12px} tr.child td:first-child{padding
       <div><label for="r-name">Name = virtuelles Modell</label><input id="r-name" required placeholder="z. B. auto" autocomplete="off">
         <div class="hint">Clients fragen dieses Modell an, z. B. <code>"model": "auto"</code>; es erscheint in /v1/models.</div></div>
       <div><label for="r-default">Standardmodell(e)</label><input id="r-default" class="multi" placeholder="wenn keine Regel passt – mehrere mit Komma" autocomplete="off">
-        <div class="hint">Leer: bei übernommenen echten Modellen bleibt das angefragte.</div></div>
+        <div class="hint">Modell oder <code>@Gruppe</code> (jeder Server der Gruppe, nach Priorität, mit seinem eigenen Modell). Leer: bei übernommenen echten Modellen bleibt das angefragte.</div></div>
     </div>
     <label for="r-take">Übernimmt außerdem diese angefragten Modelle (eins pro Zeile, * erlaubt)</label>
     <textarea id="r-take" rows="2" placeholder="z. B.&#10;gpt-4*&#10;qwen3:32b"></textarea>
@@ -2398,7 +2398,7 @@ function ruleBlock(r) {
       <button type="button" title="nach oben" onclick="moveRule(this,-1)">↑</button><button type="button" title="nach unten" onclick="moveRule(this,1)">↓</button>
       <button type="button" class="danger" title="entfernen" onclick="this.closest('.rule').remove()">✕</button></div>
     <div class="rgrid">
-      <div class="wide2"><label>Ziel: Modell(e) <span class="muted">– mehrere mit Komma = gleichwertig</span></label><input data-f="model" class="multi" value="${esc(r.model || '')}" placeholder="z. B. qwen3:30b-a3b, qwen3:32b" autocomplete="off"></div>
+      <div class="wide2"><label>Ziel: Modell(e) oder @Gruppe <span class="muted">– mehrere mit Komma = gleichwertig</span></label><input data-f="model" class="multi" value="${esc(r.model || '')}" placeholder="z. B. qwen3:30b-a3b, qwen3:32b oder @gpu" autocomplete="off"></div>
       <div><label>… oder Stufe</label><select data-f="tier"><option value="">–</option>${['SIMPLE', 'MEDIUM', 'COMPLEX', 'REASONING'].map(t => `<option ${r.tier === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
       <div class="wide2"><label>… oder Modell mit</label><div class="chklist inline">${Object.entries(NEEDS).map(([k, l]) => `<label><input type="checkbox" data-need="${k}" ${needs.includes(k) ? 'checked' : ''}> ${l}</label>`).join('')}</div></div>
       <div><label>Tokens ab (≈)</label><input data-f="min_tokens" type="number" min="0" value="${r.min_tokens || ''}"></div>
@@ -2447,7 +2447,7 @@ function openRouter(name) {
   $('r-default').value = rc?.default || ''; $('r-take').value = (rc?.models || []).join('\n');
   $('r-sticky').checked = !!rc?.sticky; $('r-caps').checked = rc ? rc.auto_caps !== false : true; $('r-off').checked = !!rc?.disabled;
   const all = new Set(); current.backends.forEach(b => (b.models || []).concat((b.manual_models || []).filter(m => !m.includes('*'))).forEach(m => all.add(m)));
-  $('r-models').innerHTML = [...all].sort().map(m => `<option value="${esc(m)}">`).join('');
+  $('r-models').innerHTML = [...all].sort().concat((current.groups || []).map(g => '@' + g.name)).map(m => `<option value="${esc(m)}">`).join('');
   renderRules(rc ? rc.rules : [
     {name: 'Bilder', images: true, needs: ['vision']},
     {name: 'Code', pattern: '```|programmier|funktion|python|javascript|code', model: ''},

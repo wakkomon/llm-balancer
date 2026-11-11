@@ -352,6 +352,9 @@ func (p *Pool) assignRoute(b *Backend, r *ReqInfo, rt Route) {
 		model = b.forceModel
 	}
 	final := cmp.Or(model, base)
+	if _, isGroup := groupTarget(final); isGroup { // router target "@group": the server's own model
+		final = cmp.Or(b.defaultModel(), r.Requested, r.Model)
+	}
 	if !strings.EqualFold(final, cmp.Or(r.Requested, r.Model)) { // differs from what the client sent
 		r.rewrite = final
 		if !strings.EqualFold(final, r.Model) || r.Requested != "" {

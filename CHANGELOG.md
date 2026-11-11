@@ -3,6 +3,15 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.15.0 – 2026-11-11
+
+- **Router-Ziel „Gruppe“**: Regel-Ziel, Standardmodell, Stufen und Routen nehmen statt eines Modells auch `@Gruppe`. Die
+  Anfrage geht dann an irgendeinen Server der Gruppe – nach Priorität und freien Slots, mit dem Fallback der Gruppe –,
+  und jeder Server bekommt sein eigenes Modell (erzwungenes, geladenes, einziges gemeldetes …). Vorschläge im
+  Router-Dialog enthalten die Gruppen; beim Umbenennen einer Gruppe ziehen die Router-Ziele mit
+- Bisher bevorzugte ein Router mit mehreren Zielmodellen das zuerst genannte Modell vor der Server-Priorität; wem das
+  Modell egal ist, nimmt jetzt `@Gruppe`
+
 ## 1.14.0 – 2026-11-08
 
 - **HTTPS-Port** zusätzlich zum http-Port (`HTTPS_LISTEN`, Standard `:8443`, `off` = aus) mit derselben API, Web-UI und
