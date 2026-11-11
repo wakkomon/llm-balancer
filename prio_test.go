@@ -97,3 +97,42 @@ func TestRouterGroupTarget(t *testing.T) {
 		t.Error("request after rename failed")
 	}
 }
+
+func TestForceReportedModel(t *testing.T) {
+	a := newFakeLLM(t, "a", 0)
+	srv, pool := setup(t, func(cfg *Config) {
+		cfg.Backends[0].ForceReported = true
+		cfg.Backends[0].Models = []string{"*"}
+	}, a)
+	pool.mu.Lock()
+	pool.backends[0].models = []string{"qwen3-30b.gguf"}
+	pool.mu.Unlock()
+	effective := func() string {
+		if be, _ := post(t, srv.URL); be != "a" {
+			t.Fatalf("backend %q", be)
+		}
+		r := pool.RecentAfter(0)
+		return r[0].Effective
+	}
+	if got := effective(); got != "qwen3-30b.gguf" {
+		t.Errorf("one reported model: sent %q", got)
+	}
+	pool.mu.Lock()
+	pool.backends[0].models = []string{"m1", "m2"}
+	pool.mu.Unlock()
+	if got := effective(); got != "" {
+		t.Errorf("several reported models must not be forced: %q", got)
+	}
+	// an update that does not mention the force setting keeps it
+	w := newWeb(t, srv.URL)
+	if c, b := w.do("PUT", "/api/backends/a", `{"name":"a","url":"`+a.srv.URL+`","max_concurrent":1}`); c != 204 {
+		t.Fatalf("update: %d %s", c, b)
+	}
+	if !pool.Status().Backends[0].ForceRep {
+		t.Error("force_reported lost on update")
+	}
+	w.do("PUT", "/api/backends/a", `{"name":"a","url":"`+a.srv.URL+`","max_concurrent":1,"force_model":"","force_reported":false}`)
+	if pool.Status().Backends[0].ForceRep {
+		t.Error("force_reported not switched off")
+	}
+}

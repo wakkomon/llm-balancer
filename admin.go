@@ -89,6 +89,7 @@ func newBackend(bc BackendConfig) *Backend {
 		manual:     bc.Models,
 		autoModels: bc.AutoModels == nil || *bc.AutoModels,
 		forceModel: bc.ForceModel,
+		forceRep:   bc.ForceReported,
 		kind:       bc.Type,
 		features:   bc.Features,
 		healthy:    true, // optimistic until the first health check says otherwise
@@ -98,7 +99,7 @@ func newBackend(bc BackendConfig) *Backend {
 func (b *Backend) config() BackendConfig {
 	en := b.enabled
 	c := BackendConfig{Name: b.Name, URL: b.URL, MaxConcurrent: b.Max, Priority: b.Priority, Enabled: &en, APIKey: b.apiKey, Group: b.group, TLSSkipVerify: b.insecure, PriceIn: b.priceIn, PriceOut: b.priceOut,
-		CostCap: b.costCap, CapPeriod: b.capPeriod, Models: append([]string(nil), b.manual...), ForceModel: b.forceModel, Type: b.kind, Features: append([]ModelFeature(nil), b.features...)}
+		CostCap: b.costCap, CapPeriod: b.capPeriod, Models: append([]string(nil), b.manual...), ForceModel: b.forceModel, ForceReported: b.forceRep, Type: b.kind, Features: append([]ModelFeature(nil), b.features...)}
 	if !b.autoModels {
 		f := false
 		c.AutoModels = &f
@@ -227,7 +228,7 @@ func (p *Pool) UpdateBackend(name string, bc BackendConfig, key, group *string) 
 	}
 	b.manual = bc.Models
 	if bc.keep&keepForce == 0 {
-		b.forceModel = bc.ForceModel
+		b.forceModel, b.forceRep = bc.ForceModel, bc.ForceReported
 	}
 	if bc.keep&keepFeatures == 0 {
 		b.features = bc.Features
@@ -330,7 +331,7 @@ func (p *Pool) replaceLocked(bcs []BackendConfig, groups []GroupConfig) {
 			b.Max, b.Priority, b.enabled, b.apiKey, b.group, b.insecure = bc.MaxConcurrent, bc.Priority, bc.Enabled == nil || *bc.Enabled, bc.APIKey, bc.Group, bc.TLSSkipVerify
 			b.priceIn, b.priceOut = bc.PriceIn, bc.PriceOut
 			b.costCap, b.capPeriod = bc.CostCap, bc.CapPeriod
-			b.manual, b.autoModels, b.forceModel = bc.Models, bc.AutoModels == nil || *bc.AutoModels, bc.ForceModel
+			b.manual, b.autoModels, b.forceModel, b.forceRep = bc.Models, bc.AutoModels == nil || *bc.AutoModels, bc.ForceModel, bc.ForceReported
 			b.kind, b.features = bc.Type, bc.Features
 			next = append(next, b)
 		} else {
@@ -397,6 +398,7 @@ type backendInput struct {
 	Models        *[]string       `json:"models"`
 	AutoModels    *bool           `json:"auto_models"`
 	ForceModel    *string         `json:"force_model"`
+	ForceReported *bool           `json:"force_reported"` // part of the force setting: sent together with force_model
 	Type          *string         `json:"type"`
 	Features      *[]ModelFeature `json:"features"`
 }
@@ -449,8 +451,11 @@ func decodeBackend(r *http.Request) (BackendConfig, *string, *string, error) {
 	} else {
 		bc.keep |= keepType
 	}
-	if in.ForceModel != nil {
-		bc.ForceModel = *in.ForceModel
+	if in.ForceModel != nil || in.ForceReported != nil {
+		if in.ForceModel != nil {
+			bc.ForceModel = *in.ForceModel
+		}
+		bc.ForceReported = in.ForceReported != nil && *in.ForceReported
 	} else {
 		bc.keep |= keepForce
 	}

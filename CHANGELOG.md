@@ -3,6 +3,15 @@
 Versionsnummer: `VERSION` (wird ins Programm eingebaut und oben in der Web-UI angezeigt).
 Zu jeder Version gibt es ein Image `ghcr.io/wakkomon/llm-balancer:<version>`; `latest` ist immer der neueste Stand von `main`.
 
+## 1.16.0 – 2026-11-11
+
+- Server: neue Option **„gemeldetes Modell erzwingen“** – meldet der Server genau ein Modell, bekommt jede Anfrage dieses
+  (folgt automatisch, wenn der Server ein anderes Modell lädt); bei mehreren oder keinem gemeldeten Modell ausgegraut
+- Seite Modelle: neue Tabelle **„Gemeldete Modelle“** mit den Modellen aller Nicht-Ollama-Server (Server, Gruppe, Zustand,
+  Fähigkeiten, welches Modell gesendet wird, Zeitpunkt der Abfrage), filter- und sortierbar; die Seite ist jetzt auch ohne
+  Ollama-Server nützlich
+- Router-Ziel `@Gruppe`: ein beim Server eingetragenes erzwungenes Modell hat Vorrang vor dessen gemeldetem Modell
+
 ## 1.15.0 – 2026-11-11
 
 - **Router-Ziel „Gruppe“**: Regel-Ziel, Standardmodell, Stufen und Routen nehmen statt eines Modells auch `@Gruppe`. Die

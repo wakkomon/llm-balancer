@@ -157,6 +157,15 @@ func groupTarget(model string) (string, bool) {
 	return strings.TrimSpace(g), ok && strings.TrimSpace(g) != ""
 }
 
+// reportedForce: the model to always send when "force the reported model" is on and the server
+// reports exactly one ("" otherwise).
+func (b *Backend) reportedForce() string {
+	if b.forceRep && len(b.models) == 1 {
+		return b.models[0]
+	}
+	return ""
+}
+
 // defaultModel: the model a server gets for a group target – the loaded one, the only one it has,
 // the first listed by name in its filter, or the first it reports ("" if it reports none).
 func (b *Backend) defaultModel() string {

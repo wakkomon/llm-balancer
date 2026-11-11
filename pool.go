@@ -39,6 +39,7 @@ type Backend struct {
 	manual       []string          // model filter set by the admin (names / patterns)
 	autoModels   bool              // models reported by the server count as well
 	forceModel   string            // replacement model when the requested one is not known by name
+	forceRep     bool              // always send the one model the server reports
 	kind         string            // auto | openai | ollama
 	ollamaVer    string            // detected Ollama version ("" = not Ollama / not detected)
 	ollamaTags   []json.RawMessage // /api/tags entries (for the aggregated /api/tags of the balancer)
@@ -353,7 +354,10 @@ func (p *Pool) assignRoute(b *Backend, r *ReqInfo, rt Route) {
 	}
 	final := cmp.Or(model, base)
 	if _, isGroup := groupTarget(final); isGroup { // router target "@group": the server's own model
-		final = cmp.Or(b.defaultModel(), r.Requested, r.Model)
+		final = cmp.Or(b.forceModel, b.defaultModel(), r.Requested, r.Model)
+	}
+	if m := b.reportedForce(); m != "" { // "force the reported model": whatever was asked for
+		final = m
 	}
 	if !strings.EqualFold(final, cmp.Or(r.Requested, r.Model)) { // differs from what the client sent
 		r.rewrite = final
@@ -719,6 +723,8 @@ type BackendStatus struct {
 	Manual      []string                `json:"manual_models"` // admin's filter
 	AutoModels  bool                    `json:"auto_models"`
 	ForceModel  string                  `json:"force_model,omitempty"`
+	ForceRep    bool                    `json:"force_reported,omitempty"`
+	ModelsAt    string                  `json:"models_at,omitempty"`      // when the model list was fetched
 	Type        string                  `json:"type"`                     // auto | openai | ollama (setting)
 	Ollama      string                  `json:"ollama_version,omitempty"` // detected / reported Ollama version
 	IsOllama    bool                    `json:"is_ollama"`
@@ -875,7 +881,10 @@ func (p *Pool) Status() Status {
 		bs.PriceIn, bs.PriceOut = b.priceIn, b.priceOut
 		bs.Group = b.group
 		bs.Models = append([]string{}, b.models...)
-		bs.Manual, bs.AutoModels, bs.ForceModel = append([]string{}, b.manual...), b.autoModels, b.forceModel
+		bs.Manual, bs.AutoModels, bs.ForceModel, bs.ForceRep = append([]string{}, b.manual...), b.autoModels, b.forceModel, b.forceRep
+		if !b.modelsAt.IsZero() {
+			bs.ModelsAt = fmtTime(b.modelsAt)
+		}
 		bs.Type, bs.Ollama, bs.IsOllama, bs.Loaded = cmp.Or(b.kind, "auto"), b.ollamaVer, b.isOllama(), b.loaded
 		bs.Features, bs.Caps = append([]ModelFeature{}, b.features...), map[string]ModelFeature{}
 		for _, m := range b.servedModels() {

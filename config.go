@@ -33,6 +33,8 @@ type BackendConfig struct {
 	// ForceModel: sent instead of the requested model when the server does not know that model by
 	// name (it got the request via a * filter or as part of its group).
 	ForceModel string `json:"force_model,omitempty"`
+	// ForceReported: always send the one model the server reports (ignored while it reports several or none)
+	ForceReported bool `json:"force_reported,omitempty"`
 	// Type: "auto" (default, Ollama is detected via /api/version), "openai" or "ollama"
 	Type string `json:"type,omitempty"`
 	// Features: what the models of this server can do (for the router); Ollama is detected

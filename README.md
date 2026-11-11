@@ -172,12 +172,17 @@ mit einem davon. Statt eines Modells geht auch eine **Gruppe** als Ziel (`@gpu`)
 
 ![Router bearbeiten](docs/screenshots/router-dialog.png)
 
-### Modelle (Ollama)
+### Modelle
 
-Alle Modelle aller Ollama-Server mit Größe, Parametern, Quantisierung, Familie, Fähigkeiten und Speicherbelegung.
-Oben ein Modell herunterladen (Name wie auf ollama.com oder `hf.co/…`, auf einen oder mehrere Server) – der Fortschritt
-erscheint darunter und läuft weiter, auch wenn die Seite geschlossen wird. Pro Modell: **Entladen** aus dem Speicher,
-**Kopieren …** auf weitere Server, **Löschen**.
+**Ollama-Modelle**: alle Modelle aller Ollama-Server mit Größe, Parametern, Quantisierung, Familie, Fähigkeiten und
+Speicherbelegung. Oben ein Modell herunterladen (Name wie auf ollama.com oder `hf.co/…`, auf einen oder mehrere Server) –
+der Fortschritt erscheint darunter und läuft weiter, auch wenn die Seite geschlossen wird. Pro Modell: **Entladen** aus
+dem Speicher, **Kopieren …** auf weitere Server, **Löschen**.
+
+**Gemeldete Modelle**: was die übrigen Server (OpenAI-kompatibel: llama.cpp, vLLM, LM Studio …) unter `/v1/models`
+melden – mit Server, Gruppe, Zustand, Fähigkeiten, welches Modell der Server tatsächlich bekommt (z. B. „immer dieses“
+bei erzwungenem gemeldetem Modell) und wann die Liste zuletzt abgefragt wurde. Server ohne gemeldete Modelle stehen mit
+„meldet keine Modelle“ dabei. Verwalten lassen sich diese Modelle nicht, das geht nur beim Server selbst.
 
 ![Modelle](docs/screenshots/modelle.png)
 
@@ -344,6 +349,11 @@ nicht exakt kennt – etwa bei Filter `qwen*` und Ersatz `qwen3:8b`: eine Anfrag
 `qwen3:8b` an, exakt gemeldete oder eingetragene Modelle gehen unverändert durch. Greift nach „Modellname erzwingen“ der
 Gruppe bzw. „Modell dort“ der Fallback-Gruppe, falls der Server auch deren Ergebnis nicht kennt. In „Letzte Anfragen“
 erscheint das als `qwen2.5-72b → qwen3:8b`.
+
+**Gemeldetes Modell erzwingen** (Haken darunter): Meldet der Server genau ein Modell – typisch für llama.cpp mit einem
+geladenen Modell –, bekommt jede Anfrage dieses Modell, egal was angefragt wurde; lädt der Server ein anderes Modell,
+zieht die Einstellung mit. Meldet er mehrere oder keins, ist der Haken ausgegraut bzw. wirkungslos (das Feld „Modell
+erzwingen“ gilt dann wieder).
 
 Groß-/Kleinschreibung spielt keine Rolle. Die Modelle der Server werden beim Health-Check (alle 15 s, nur bei freien Servern)
 neu abgefragt. Im Feld **Modell** über der Serverliste lässt sich ein Modell auswählen: die UI zeigt dann, welche Gruppe

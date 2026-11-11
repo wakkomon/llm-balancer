@@ -254,6 +254,7 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .hint{font-size:11.5px;color:var(--muted);margin-top:3px}
 .chk{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:var(--ink)}
+.chk.dis{opacity:.55}
 .chk input{width:auto}
 .formerr{color:var(--down);font-size:12.5px;min-height:1em;margin-top:10px}
 body[data-role=viewer] .need-op,body[data-role=viewer] .need-admin,body[data-role=operator] .need-admin,body[data-role=none] .need-op,body[data-role=none] .need-admin{display:none!important}
@@ -553,6 +554,18 @@ tr.child td{background:var(--bg);font-size:12px} tr.child td:first-child{padding
     </table></div>
     <div class="srcnote" id="omsum" style="margin-top:8px"></div>
   </div>
+  <div class="sechead" style="margin-top:22px">
+    <h2>Gemeldete Modelle</h2>
+    <div class="row"><span class="srcnote">was die übrigen Server (OpenAI-kompatibel: llama.cpp, vLLM, LM Studio …) unter /v1/models melden</span></div>
+  </div>
+  <div class="filterbar">
+    <input id="rmq" placeholder="Modelle filtern …" autocomplete="off">
+    <select id="rmserver" style="width:auto"><option value="">alle Server</option></select>
+  </div>
+  <div class="tbl"><table data-sort>
+    <thead><tr><th>Modell</th><th>Server</th><th>Gruppe</th><th>Zustand</th><th>Fähigkeiten</th><th>Wird gesendet</th><th data-type="date">Abgefragt</th></tr></thead>
+    <tbody id="rmodels"></tbody>
+  </table></div>
   </div>
   <div id="page-settings" hidden>
   <div class="sechead"><h2>Mein Konto</h2></div>
@@ -645,6 +658,7 @@ tr.child td{background:var(--bg);font-size:12px} tr.child td:first-child{padding
     <div class="hint" id="f-featshint">Modellname oder Muster mit *; „–“ = unbekannt. Ollama-Modelle werden automatisch erkannt, Einträge hier haben Vorrang.</div>
     <label for="f-force">Modell erzwingen (optional)</label>
     <input id="f-force" placeholder="z. B. qwen3:8b" autocomplete="off" list="f-forcelist"><datalist id="f-forcelist"></datalist>
+    <label class="chk" style="margin-top:6px" id="f-forcerep-row"><input id="f-forcerep" type="checkbox"> <span id="f-forcerep-txt">gemeldetes Modell erzwingen</span></label>
     <div class="hint">Wird statt des angefragten Modells gesendet, wenn der Server dieses nicht exakt kennt – also bei Treffern über * im Filter
       oder wenn er die Anfrage als Teil seiner Gruppe bekommt. Exakt bekannte Modelle gehen unverändert durch.</div>
     <div class="hint">Bestimmt, welcher Server einer Gruppe eine Anfrage bekommt. Ein exakt bekanntes Modell (vom Server gemeldet oder hier
@@ -949,6 +963,13 @@ function openEdit(name) {
   $('f-models').value = b ? (b.manual_models || []).join('\n') : '';
   $('f-auto').checked = b ? b.auto_models !== false : true;
   $('f-force').value = b?.force_model || '';
+  const rep = b?.models || [];
+  $('f-forcerep').checked = !!b?.force_reported;
+  $('f-forcerep').disabled = rep.length !== 1 && !b?.force_reported;
+  $('f-forcerep-row').classList.toggle('dis', rep.length !== 1);
+  $('f-forcerep-txt').innerHTML = rep.length === 1 ? `gemeldetes Modell erzwingen: <b>${esc(rep[0])}</b> <span class="muted">– jede Anfrage bekommt dieses Modell</span>`
+    : `gemeldetes Modell erzwingen <span class="muted">– nur möglich, wenn der Server genau ein Modell meldet (${b ? (rep.length ? `er meldet ${rep.length}` : 'er meldet keins') : 'erst nach dem Anlegen'})${b?.force_reported ? ' – wirkt gerade nicht' : ''}</span>`;
+  forceRepSync();
   $('f-type').value = b?.type || 'auto';
   renderFeats(b?.features || []);
   const det = b ? Object.entries(b.caps || {}).filter(([, c]) => c.vision != null || c.tools != null || c.reasoning != null || c.context) : [];
@@ -963,6 +984,8 @@ function openEdit(name) {
   dlg.showModal();
   $('f-url').focus();
 }
+function forceRepSync() { $('f-force').disabled = $('f-forcerep').checked; }
+$('f-forcerep').addEventListener('change', forceRepSync);
 $('form').addEventListener('submit', async ev => {
   ev.preventDefault();
   $('formerr').textContent = '';
@@ -970,7 +993,7 @@ $('form').addEventListener('submit', async ev => {
     name: $('f-name').value.trim(), url: $('f-url').value.trim(),
     max_concurrent: parseInt($('f-max').value, 10) || 1, priority: parseInt($('f-prio').value, 10) || 0,
     enabled: $('f-en').checked, group: $('f-group').value, tls_skip_verify: $('f-tls').checked,
-    models: $('f-models').value.split('\n').map(x => x.trim()).filter(Boolean), auto_models: $('f-auto').checked, force_model: $('f-force').value.trim(), type: $('f-type').value, features: readFeats(),
+    models: $('f-models').value.split('\n').map(x => x.trim()).filter(Boolean), auto_models: $('f-auto').checked, force_model: $('f-force').value.trim(), force_reported: $('f-forcerep').checked, type: $('f-type').value, features: readFeats(),
     price_in: parseFloat($('f-pin').value) || 0, price_out: parseFloat($('f-pout').value) || 0,
     cost_cap: parseFloat($('f-cap').value) || 0, cap_period: $('f-capp').value,
   };
@@ -1241,6 +1264,7 @@ async function refresh() {
     if (location.hash === '#statistik' && stRange === 1) renderDay(false);
     if (location.hash === '#zugriff' && tokenList.length) renderTokens();
     if (location.hash === '#anfragen') renderRecent();
+    if (location.hash === '#modelle') renderReported();
     const lv = st.live || {};
     $('t-tps').textContent = tpsTxt(lv.tps || 0).replace(' tok/s', '');
     $('t-tpssub').parentElement.title = `Erzeugte Tokens pro Sekunde über alle Server, Ø der letzten 10 s\n${lv.running || 0} Anfragen laufen${lv.queued ? ', ' + lv.queued + ' warten' : ''}`;
@@ -2567,6 +2591,37 @@ function renderOllama() {
       (s.loaded.length ? ` · geladen: ${s.loaded.map(l => esc(l.name) + ' ' + gb(l.size_vram || l.size)).join(', ')}` : '')).join('<br>');
   $('omnote').textContent = `${olData.length} Ollama-Server`;
 }
+// models reported by the non-Ollama servers (no management – just what they offer)
+function renderReported() {
+  if (!current) return;
+  const servers = current.backends.filter(b => !b.is_ollama);
+  const sel = $('rmserver'), cur = sel.value, opts = '<option value="">alle Server</option>' + servers.map(b => `<option>${esc(b.name)}</option>`).join('');
+  if (sel.__opts !== opts) { sel.__opts = opts; sel.innerHTML = opts; sel.value = servers.some(b => b.name === cur) ? cur : ''; }
+  const q = $('rmq').value.trim().toLowerCase(), srvF = sel.value;
+  const rows = [];
+  for (const b of servers) {
+    if (srvF && b.name !== srvF) continue;
+    const st = `<span class="pill ${esc(b.state)}">${esc(stateLabel(b))}</span>`;
+    const forced = b.force_reported && (b.models || []).length === 1 ? b.models[0] : '';
+    const list = b.models || [];
+    if (!list.length) {
+      if (!q) rows.push(`<tr><td class="muted">${b.auto_models === false ? 'gemeldete Modelle ausgeschaltet' : 'meldet keine Modelle'}</td><td>${esc(b.name)}</td><td>${esc(b.group || '–')}</td><td>${st}</td><td></td>
+        <td>${b.force_model ? `<code>${esc(b.force_model)}</code> <span class="muted">(erzwungen bei unbekanntem Namen)</span>` : '<span class="muted">angefragtes Modell</span>'}</td><td></td></tr>`);
+      continue;
+    }
+    for (const m of list) {
+      if (q && ![m, b.name, b.group].some(x => (x || '').toLowerCase().includes(q))) continue;
+      const send = forced ? `<b>immer dieses</b> <span class="muted">(gemeldetes Modell erzwungen)</span>`
+        : b.force_model ? `bei Anfrage danach; sonst <code>${esc(b.force_model)}</code>` : '<span class="muted">bei Anfrage danach</span>';
+      rows.push(`<tr><td><b>${esc(m)}</b></td><td>${esc(b.name)}</td><td>${esc(b.group || '–')}</td><td>${st}</td><td>${capBadges(b.caps?.[m])}</td>
+        <td>${send}</td><td data-v="${Date.parse(b.models_at) || ''}">${b.models_at ? dateFmt(b.models_at) : '–'}</td></tr>`);
+    }
+  }
+  setHTML($('rmodels'), rows.join('') || `<tr><td colspan="7" class="empty">${servers.length ? 'Keine Modelle für diesen Filter.' : 'Alle Server sind Ollama-Server – ihre Modelle stehen oben.'}</td></tr>`);
+}
+$('rmq').addEventListener('input', renderReported);
+$('rmserver').addEventListener('change', renderReported);
+
 function renderJobs() {
   const box = $('pulljobs');
   if (!olJobs.length) { setHTML(box, ''); return; }
