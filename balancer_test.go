@@ -23,6 +23,7 @@ type fakeLLM struct {
 	delay    time.Duration
 	inflight atomic.Int32
 	served   atomic.Int32
+	parallel atomic.Int32 // slots the fake server has (0 = 1)
 	srv      *httptest.Server
 }
 
@@ -33,7 +34,7 @@ func newFakeLLM(t *testing.T, name string, delay time.Duration) *fakeLLM {
 			w.Write([]byte(`{"data":[]}`))
 			return
 		}
-		if n := f.inflight.Add(1); n > 1 {
+		if n := f.inflight.Add(1); n > max(1, f.parallel.Load()) {
 			t.Errorf("%s: %d concurrent requests", name, n)
 		}
 		defer f.inflight.Add(-1)
